@@ -1,0 +1,11 @@
+plugins:
+  engine-interface:
+    description: Engine plugin contract, lifecycle, and pass-through argument rules.
+
+runs:
+  result-schema:
+    description: Benchmark run manifest and result row schema for JSON, CSV, and markdown exports.
+
+server:
+  api-conventions:
+    description: API route, validation, response envelope, and error handling conventions for the server.
