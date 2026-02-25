@@ -31,6 +31,7 @@ jobs:
           permission-contents: write
 
       - name: CLA Assistant
+        id: cla_assistant
         uses: contributor-assistant/github-action@v2.6.1
         with:
           path-to-signatures: signatures/version1/cla.json
@@ -39,7 +40,19 @@ jobs:
           remote-organization-name: ${{ github.repository_owner }}
           remote-repository-name: ${{ github.event.repository.name }}
           allowlist: dependabot[bot],github-actions[bot]
+          custom-notsigned-prcomment: >-
+            Thanks for the contribution. Before this PR can be merged, each
+            committer must sign our CLA once. Please comment exactly:
+            `I have read the CLA Document and I hereby sign the CLA`
+            Then comment `recheck` (or push a new commit) to re-run this check.
           lock-pullrequest-aftermerge: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PERSONAL_ACCESS_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: CLA signing instructions
+        if: ${{ failure() && steps.cla_assistant.outcome == 'failure' }}
+        run: |
+          echo "::error::CLA check failed. At least one PR committer has not signed the CLA yet."
+          echo "::error::To sign, comment exactly: I have read the CLA Document and I hereby sign the CLA"
+          echo "::notice::After signing, comment recheck (or push a new commit) to re-run this check."
