@@ -1,5 +1,9 @@
 # Product Roadmap
 
+## Foundation
+
+- **Spec 0 - Local Development Environment (Nix Flake):** Establish reproducible contributor tooling (`flake.nix`, `.envrc`, `Justfile`) before feature implementation. This foundational spec intentionally precedes the numbered product roadmap phases below.
+
 ## Phase 1: Server-First MVP
 
 - **Spec 1 - Server Plugin llama.cpp Foundation:** Build a headless `serve` command, baseline server APIs (`/global/health`, `/event`, `/doc`), plugin registry, and first `llama.cpp` plugin.

@@ -14,6 +14,7 @@ Deliver the first usable backend server with a stable engine plugin boundary and
 - Product docs (`agent-os/product/`) are baseline guidance and can evolve as implementation decisions mature.
 - Visual context: none provided; no internal reference implementation exists yet in this repo.
 - Expose a documented OpenAPI 3.1 surface so future clients and SDKs can integrate without reverse-engineering routes.
+- If a dev-only runtime switch becomes necessary in this phase, introduce and document `CHIMERA_BENCH_DEV` here (with an actual usage site), rather than defining it early as an unused env var.
 
 ## Deliverables
 
@@ -74,6 +75,7 @@ Deliver the first usable backend server with a stable engine plugin boundary and
 7. Persist run artifacts and expose read APIs.
 8. Generate and validate OpenAPI/SDK artifacts.
 9. Add smoke tests and operator docs.
+10. If dev-only behavior gating is added, define and document `CHIMERA_BENCH_DEV` (behavior, defaults, and contributor setup updates).
 
 ## Exit criteria
 

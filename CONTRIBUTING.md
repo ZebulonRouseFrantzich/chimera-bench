@@ -8,6 +8,34 @@ Thanks for your interest in contributing to `chimera-bench`.
 - For code changes, submit a pull request with a clear description of what changed and why.
 - Keep pull requests focused and small when possible.
 
+## Local development environment
+
+This repository uses Nix + direnv for local development.
+
+- `flake.nix` defines the development shell.
+- `.envrc` uses `use flake` to auto-enter/exit the shell.
+- `Justfile` provides developer convenience commands.
+
+### One-time setup
+
+- Install Nix (with flakes enabled).
+- Install `direnv`.
+- Install `nix-direnv` and load it from your direnv config (typically `~/.config/direnv/direnvrc`).
+- Enable direnv in your shell (`eval "$(direnv hook <your-shell>)"`).
+
+### Per-repo setup
+
+- Run `direnv allow` once in the repository root.
+- Use `just --list` to see available developer commands.
+
+Common commands:
+
+- `just check` - run `nix flake check`
+- `just fmt` - run `nix fmt flake.nix`
+- `just shell` - enter the dev shell manually
+
+`just` is for developer ergonomics only. End users should run `chimera-bench ...` commands directly.
+
 ## Pull request checklist
 
 - Include tests or verification steps when relevant.
