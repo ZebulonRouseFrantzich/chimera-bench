@@ -41,7 +41,8 @@ jobs:
           remote-repository-name: ${{ github.event.repository.name }}
           allowlist: dependabot[bot],github-actions[bot]
           custom-notsigned-prcomment: >-
-            Thanks for the contribution. Before this PR can be merged, each
+            @${{ github.event.pull_request.user.login || github.event.issue.user.login || github.actor }}
+            thanks for the contribution. Before this PR can be merged, each
             committer must sign our CLA once. Please comment exactly:
             `I have read the CLA Document and I hereby sign the CLA`
             Then comment `recheck` (or push a new commit) to re-run this check.
