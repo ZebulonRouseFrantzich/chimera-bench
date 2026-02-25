@@ -31,7 +31,7 @@ This repository uses Nix + direnv for local development.
 Common commands:
 
 - `just check` - run `nix flake check`
-- `just fmt` - run `nix fmt`
+- `just fmt` - run `nix fmt flake.nix`
 - `just shell` - enter the dev shell manually
 
 `just` is for developer ergonomics only. End users should run `chimera-bench ...` commands directly.

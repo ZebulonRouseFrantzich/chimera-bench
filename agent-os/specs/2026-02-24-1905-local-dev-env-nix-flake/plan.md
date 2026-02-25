@@ -8,6 +8,7 @@ Make local development reproducible and low-friction via a Nix flake `devShell`,
 
 - Product direction: Bun + TypeScript server-first; frontend later.
 - This spec is a prerequisite for the other specs in `agent-os/specs/`.
+- The product roadmap in `agent-os/product/roadmap.md` starts at Spec 1; this "Spec 0" is intentionally a foundational dev-tooling spec.
 - `just` is for developers only; end users run `chimera-bench ...` directly.
 
 ## Deliverables

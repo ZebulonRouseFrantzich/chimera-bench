@@ -39,7 +39,6 @@
           shellHook = ''
             echo "Entering chimera-bench dev shell"
             echo "Run 'just --list' to see developer commands."
-            export CHIMERA_BENCH_DEV=1
           '';
         };
       }
