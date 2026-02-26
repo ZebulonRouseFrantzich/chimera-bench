@@ -5,6 +5,8 @@ import type { BasicAuthSettings } from "../types.ts";
 const AUTH_REALM = 'Basic realm="chimera-bench"';
 const AUTH_WINDOW_MS = 60_000;
 const AUTH_MAX_FAILURES = 10;
+const AUTH_MAX_TRACKED_CLIENTS = 5000;
+const AUTH_CLEANUP_INTERVAL = 128;
 const RETRY_AFTER_SECONDS = Math.ceil(AUTH_WINDOW_MS / 1000);
 
 export function basicAuthMiddleware(auth: BasicAuthSettings): MiddlewareHandler {
@@ -15,7 +17,12 @@ export function basicAuthMiddleware(auth: BasicAuthSettings): MiddlewareHandler 
   }
 
   const configuredPassword = auth.password;
-  const limiter = new AuthFailureLimiter(AUTH_MAX_FAILURES, AUTH_WINDOW_MS);
+  const limiter = new AuthFailureLimiter(
+    AUTH_MAX_FAILURES,
+    AUTH_WINDOW_MS,
+    AUTH_MAX_TRACKED_CLIENTS,
+    AUTH_CLEANUP_INTERVAL,
+  );
 
   return async (context, next) => {
     if (context.req.method === "OPTIONS") {
@@ -93,13 +100,18 @@ export function basicAuthMiddleware(auth: BasicAuthSettings): MiddlewareHandler 
 
 class AuthFailureLimiter {
   private readonly records = new Map<string, AuthFailureRecord>();
+  private operationCounter = 0;
 
   constructor(
     private readonly maxFailures: number,
     private readonly windowMs: number,
+    private readonly maxTrackedClients: number,
+    private readonly cleanupInterval: number,
   ) {}
 
   isBlocked(key: string, now: number): boolean {
+    this.maybeCleanup(now);
+
     const record = this.records.get(key);
     if (!record) {
       return false;
@@ -110,31 +122,83 @@ class AuthFailureLimiter {
       return false;
     }
 
+    this.touchRecord(key, record, now);
+
     return record.failures > this.maxFailures;
   }
 
   recordFailure(key: string, now: number): void {
+    this.maybeCleanup(now);
+
     const existing = this.records.get(key);
 
     if (!existing || now >= existing.windowEndsAt) {
-      this.records.set(key, {
+      this.ensureCapacity(now, key);
+
+      const record: AuthFailureRecord = {
         failures: 1,
         windowEndsAt: now + this.windowMs,
-      });
+        updatedAt: now,
+      };
+
+      this.records.set(key, record);
       return;
     }
 
     existing.failures += 1;
+    this.touchRecord(key, existing, now);
   }
 
   clear(key: string): void {
     this.records.delete(key);
+  }
+
+  private maybeCleanup(now: number): void {
+    this.operationCounter += 1;
+
+    if (this.operationCounter % this.cleanupInterval !== 0) {
+      return;
+    }
+
+    this.pruneExpired(now);
+  }
+
+  private pruneExpired(now: number): void {
+    for (const [key, record] of this.records) {
+      if (now >= record.windowEndsAt) {
+        this.records.delete(key);
+      }
+    }
+  }
+
+  private ensureCapacity(now: number, key: string): void {
+    if (this.records.has(key) || this.records.size < this.maxTrackedClients) {
+      return;
+    }
+
+    this.pruneExpired(now);
+
+    while (this.records.size >= this.maxTrackedClients) {
+      const oldestKey = this.records.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+
+      this.records.delete(oldestKey);
+    }
+  }
+
+  private touchRecord(key: string, record: AuthFailureRecord, now: number): void {
+    record.updatedAt = now;
+    this.records.delete(key);
+    this.records.set(key, record);
   }
 }
 
 interface AuthFailureRecord {
   failures: number;
   windowEndsAt: number;
+  updatedAt: number;
 }
 
 function unauthorized(context: Context): Response {

@@ -82,23 +82,16 @@ function parseServeFlags(args: string[]): ServeCliFlags {
     }
 
     if (current === "--hostname") {
-      const value = args[index + 1];
-      if (!value) {
-        throw new ServeCommandUsageError("--hostname requires a value.");
-      }
-
-      flags.hostname = value;
+      flags.hostname = parseNonEmptyOptionValue(args[index + 1], "--hostname");
       index += 1;
       continue;
     }
 
     if (current.startsWith("--hostname=")) {
-      const value = current.slice("--hostname=".length).trim();
-      if (!value) {
-        throw new ServeCommandUsageError("--hostname requires a non-empty value.");
-      }
-
-      flags.hostname = value;
+      flags.hostname = parseNonEmptyOptionValue(
+        current.slice("--hostname=".length),
+        "--hostname",
+      );
       continue;
     }
 
@@ -120,23 +113,15 @@ function parseServeFlags(args: string[]): ServeCliFlags {
     }
 
     if (current === "--cors") {
-      const value = args[index + 1];
-      if (!value) {
-        throw new ServeCommandUsageError("--cors requires an origin value.");
-      }
-
-      flags.corsOrigins.push(value);
+      flags.corsOrigins.push(parseNonEmptyOptionValue(args[index + 1], "--cors"));
       index += 1;
       continue;
     }
 
     if (current.startsWith("--cors=")) {
-      const value = current.slice("--cors=".length).trim();
-      if (!value) {
-        throw new ServeCommandUsageError("--cors requires an origin value.");
-      }
-
-      flags.corsOrigins.push(value);
+      flags.corsOrigins.push(
+        parseNonEmptyOptionValue(current.slice("--cors=".length), "--cors"),
+      );
       continue;
     }
 
@@ -146,23 +131,16 @@ function parseServeFlags(args: string[]): ServeCliFlags {
     }
 
     if (current === "--mdns-domain") {
-      const value = args[index + 1];
-      if (!value) {
-        throw new ServeCommandUsageError("--mdns-domain requires a value.");
-      }
-
-      flags.mdnsDomain = value;
+      flags.mdnsDomain = parseNonEmptyOptionValue(args[index + 1], "--mdns-domain");
       index += 1;
       continue;
     }
 
     if (current.startsWith("--mdns-domain=")) {
-      const value = current.slice("--mdns-domain=".length).trim();
-      if (!value) {
-        throw new ServeCommandUsageError("--mdns-domain requires a non-empty value.");
-      }
-
-      flags.mdnsDomain = value;
+      flags.mdnsDomain = parseNonEmptyOptionValue(
+        current.slice("--mdns-domain=".length),
+        "--mdns-domain",
+      );
       continue;
     }
 
@@ -170,6 +148,22 @@ function parseServeFlags(args: string[]): ServeCliFlags {
   }
 
   return flags;
+}
+
+function parseNonEmptyOptionValue(
+  value: string | undefined,
+  optionName: string,
+): string {
+  if (value === undefined) {
+    throw new ServeCommandUsageError(`${optionName} requires a value.`);
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new ServeCommandUsageError(`${optionName} requires a non-empty value.`);
+  }
+
+  return normalized;
 }
 
 function parsePort(value: string): number {
