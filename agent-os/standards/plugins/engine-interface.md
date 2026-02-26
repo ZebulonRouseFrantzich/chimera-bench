@@ -23,6 +23,17 @@ Each plugin must implement these lifecycle methods:
 
 The core runner only calls this interface and must not branch on engine-specific behavior.
 
+## Validation expectations
+
+- `validateEnvironment()` verifies required external tooling is present and runnable (for example `llama-server`).
+- Plugins must not install, download, build, or upgrade engine software; they only detect + validate + report actionable errors.
+- Prefer capability checks over version caps (i.e. verify the specific flags/endpoints/features needed for the requested run).
+- Plugins validate engine-specific inputs before execution:
+  - `engine.serverArgs` (launch flags)
+  - `engine.requestParams` (request payload params)
+  - Unknown args/params should be rejected by default; allow an explicit opt-in permissive mode for experimentation.
+- Core owns generic benchmark config (`model`, `workload`, `sweep`, `target`); plugins own how those map onto engine launches and requests.
+
 ## Config boundaries
 
 - Core owns generic benchmark config (`model`, `workload`, `sweep`, `target`).
