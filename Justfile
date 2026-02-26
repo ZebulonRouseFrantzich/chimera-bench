@@ -34,9 +34,11 @@ test:
       echo "No package.json yet; test is a placeholder until app scaffolding lands."; \
     fi
 
-serve:
+serve *args:
     @if [ -f package.json ]; then \
-      bun run serve; \
+      set -- {{args}}; \
+      if [ "${1:-}" = "--" ]; then shift; fi; \
+      exec ./bin/chimera-bench serve "$@"; \
     else \
       echo "No package.json yet; serve is a placeholder until app scaffolding lands."; \
     fi

@@ -77,6 +77,10 @@ function parseServeFlags(args: string[]): ServeCliFlags {
       continue;
     }
 
+    if (current === "--") {
+      continue;
+    }
+
     if (current === "--hostname") {
       const value = args[index + 1];
       if (!value) {
