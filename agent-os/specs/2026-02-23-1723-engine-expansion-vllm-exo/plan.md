@@ -19,14 +19,13 @@ Add additional engine plugins after the core system proves stable with `llama.cp
 
 ## Standards applied
 
+- `agent-os/standards/server/api-conventions.md`
 - `agent-os/standards/plugins/engine-interface.md`
 - `agent-os/standards/runs/result-schema.md`
 
 ## Reference implementations
 
-- vLLM project: `https://github.com/vllm-project/vllm`
-- exo project: `https://github.com/exo-explore/exo`
-- `llama.cpp` baseline plugin reference target: `https://github.com/ggml-org/llama.cpp`
+- See `references.md`.
 
 ## Non-goals
 
@@ -36,10 +35,51 @@ Add additional engine plugins after the core system proves stable with `llama.cp
 ## Implementation tasks
 
 1. Map each engine's launch and request model to the plugin contract.
+   - For each engine (`vllm`, `exo`), document:
+     - how to start the engine (CLI/module entrypoint)
+     - how to specify a model
+     - which OpenAI-compatible endpoints are available
+     - readiness endpoint(s) and expected responses
+     - how to stop the process reliably
+   - Define engine IDs and capability flags (streaming, remote compatibility, metrics support).
+   - Manual testing steps:
+     - On a machine with the engine installed, run `--help` for the engine entrypoint and confirm required flags exist.
+
 2. Implement plugin lifecycle and readiness checks for each engine.
+   - Implement `vllm` plugin:
+     - `validateEnvironment()` checks required binaries/runtime are present.
+     - `start()` spawns the server bound to loopback with safe defaults.
+     - `waitUntilReady()` polls a health/models endpoint with a bounded timeout.
+   - Implement `exo` plugin similarly, based on the documented integration surface.
+   - Ensure strict-by-default validation for `engine.serverArgs`/`engine.requestParams`.
+   - Manual testing steps:
+     - Start server, run a single case, and verify the run completes:
+       - `curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/engines` (verify new engines listed)
+       - `POST /runs` using `engineId` for the new engine
+
 3. Add parser adapters for available metrics.
+   - Prefer response timings when exposed by the engine.
+   - If deep metrics are unavailable, set nullable fields (`ttftMs`, `promptEvalTokensPerSecond`, `acceptanceRatio`) to `null` and record reasons in `metricsExtra`.
+   - Manual testing steps:
+     - Run the same workload on `llama-cpp` and on the new engine and compare which metrics are populated.
+
 4. Validate schema/export compatibility for multi-engine runs.
+   - Ensure `result.json` always conforms to required fields.
+   - Ensure `cases.csv` and `summary.md` generation works for the new engines.
+   - Manual testing steps:
+     - Complete a run on each engine and verify:
+       - `runs/RUN_ID/result.json`
+       - `runs/RUN_ID/cases.csv`
+       - `runs/RUN_ID/summary.md`
+
 5. Document caveats and unsupported features by engine.
+   - Add per-engine docs:
+     - install/run prerequisites
+     - known limitations
+     - recommended defaults
+   - Provide a capability matrix comparing the engines.
+   - Manual testing steps:
+     - Review docs against an actual run setup and confirm they are sufficient to reproduce a run.
 
 ## Exit criteria
 

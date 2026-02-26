@@ -56,6 +56,12 @@ Spec 1 intentionally starts narrow (`llama-server`, chat-only). This follow-on s
    - Download to a configurable cache dir (default under an XDG cache location) and store resolved metadata:
      - resolved local path, file size, and a content hash (sha256) for reproducibility.
    - Ensure downloaded/resolved GGUF paths remain compatible with `CHIMERA_MODEL_ROOTS` confinement.
+   - Manual testing steps:
+     - Verify missing `hf` CLI fails with an actionable error.
+     - Resolve a model identifier:
+       - `model.identifier: "hf:org/model-repo#model.gguf"`
+       - Confirm the resolved GGUF is downloaded into the cache and the resolved local path is persisted in run metadata.
+     - Re-run the same identifier and confirm it hits the cache (no re-download).
 
 2. Implement `llama-cpp-cli` plugin with strict-by-default param validation and metrics parsing.
    - Environment validation: `llama-cli` present and runnable.
@@ -63,22 +69,35 @@ Spec 1 intentionally starts narrow (`llama-server`, chat-only). This follow-on s
      - Strict by default with an explicit permissive mode escape hatch.
      - Validate args against `llama-cli --help` (best-effort parsing with clear failure mode).
    - Execution:
-     - Run per-case `llama-cli` subprocesses; capture stdout/stderr with bounded buffers.
-     - Map per-case outputs to the run result schema; record errors per case.
+      - Run per-case `llama-cli` subprocesses; capture stdout/stderr with bounded buffers.
+      - Map per-case outputs to the run result schema; record errors per case.
+   - Manual testing steps:
+     - Run a `llama-cpp-cli` case:
+       - `POST /runs` with `engineId: "llama-cpp-cli"` and a small workload.
+     - Verify strict validation rejects unknown args, and permissive mode accepts them.
+     - Verify `result.json` contains per-case outputs and latency fields.
 
 3. Define `llama-bench` integration approach and map outputs to `runs/result-schema` artifacts.
    - Decide whether this is a separate engine id (`llama-cpp-bench`) or a workload type.
    - Parse `llama-bench` outputs into per-case records (or `metricsExtra`) without breaking required fields.
+   - Manual testing steps:
+     - Run a `llama-bench` workflow on a known model and verify parsed metrics appear in `result.json` and exports.
 
 4. Add optional `llama-server` host/port override support with safe defaults and clear docs.
    - Keep loopback binding as the default.
    - For non-loopback binding overrides:
-     - Require server auth to be enabled.
-     - Emit explicit operator warnings about exposure and cross-talk.
+      - Require server auth to be enabled.
+      - Emit explicit operator warnings about exposure and cross-talk.
+   - Manual testing steps:
+     - Attempt a non-loopback override without server auth enabled and verify it is rejected.
+     - Enable auth and repeat; verify the override works and the operator warning is emitted.
 
 5. Add docs, examples, and tests.
    - Unit tests for identifier parsing, download resolver, and validation logic.
    - Integration tests for each execution path (gated where engine binaries are required).
+   - Manual testing steps:
+     - Run unit/integration tests: `bun test`
+     - (Optional, gated) Run engine-required tests: `CHIMERA_E2E=1 bun test`
 
 ## Exit criteria
 

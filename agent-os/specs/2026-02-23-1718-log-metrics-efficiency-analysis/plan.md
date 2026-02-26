@@ -25,9 +25,7 @@ Extract deeper performance signals from engine logs and classify inefficient con
 
 ## Reference implementations
 
-- draftbench (acceptance-ratio framing and sweep analysis): `https://github.com/alexziskind1/draftbench`
-- llama-benchy (latency and realistic workload orientation): `https://github.com/eugr/llama-benchy`
-- llama.cpp (engine log source characteristics): `https://github.com/ggml-org/llama.cpp`
+- See `references.md`.
 
 ## Non-goals
 
@@ -37,10 +35,58 @@ Extract deeper performance signals from engine logs and classify inefficient con
 ## Implementation tasks
 
 1. Define metric event model and parser interfaces.
+   - Define a typed internal model for captured engine output:
+     - timestamped `stdout`/`stderr` line events
+     - optional structured markers (when available)
+   - Define parser interfaces:
+     - `parseLogs(events) -> { metrics, confidence, errors, excerpts }`
+     - Keep parsing pure (no filesystem/network).
+   - Define a standard way to attach parse results to cases:
+     - fill result-schema fields (`ttftMs`, `promptEvalTokensPerSecond`, `acceptanceRatio`) when extracted
+     - include additional fields under `metricsExtra` when needed
+   - Manual testing steps:
+     - Run unit tests that feed known log lines and assert parsed outputs.
+
 2. Implement `llama.cpp` parser rules and fallback behavior.
+   - Inputs:
+     - `llama-server` stdout/stderr captured during case execution.
+   - Extract (best-effort):
+     - `ttftMs`
+     - `promptEvalTokensPerSecond`
+     - `acceptanceRatio` (when speculative decoding logs expose it)
+   - Fallback behavior:
+     - If parsing fails for a metric: keep the run alive and set the metric field to `null`.
+     - Record a bounded raw excerpt and a reason (e.g., "pattern_not_found", "format_changed").
+   - Manual testing steps:
+     - Run a benchmark and inspect `runs/RUN_ID/result.json` for non-null deep metrics.
+     - Modify logs/fixtures to force a parse miss and verify metrics become `null` with a reason.
+
 3. Add efficiency scoring and threshold flags.
+   - Compute lightweight heuristics:
+     - flag low `acceptanceRatio` configurations (configurable threshold)
+     - flag unusually low throughput or high latency relative to the run median
+   - Persist as:
+     - per-case flags under `metricsExtra.flags`
+     - run-level summary aggregates under `result.json.summary`
+   - Manual testing steps:
+     - Run a sweep with varying parameters and verify flagged cases appear in `summary.md`.
+
 4. Integrate parsed metrics into `result.json`, CSV, and summary markdown.
+   - Ensure `result.json` fills result-schema deep metric fields where available.
+   - Ensure exporters include these fields and remain stable:
+     - CSV: `ttft_ms`, `prompt_eval_tokens_per_second`, `acceptance_ratio`, plus `metrics_extra_json`.
+     - Markdown: include a deep-metrics section and parse coverage summary.
+   - Manual testing steps:
+     - Complete a run and verify:
+       - `runs/RUN_ID/result.json` has deep metric fields
+       - `runs/RUN_ID/cases.csv` includes deep metric columns
+       - `runs/RUN_ID/summary.md` includes parse coverage notes
+
 5. Add parser tests with real log fixtures.
+   - Capture representative `llama.cpp` logs into fixtures.
+   - Add golden tests for the parser output and for exporter output stability.
+   - Manual testing steps:
+     - Run tests: `bun test`
 
 ## Exit criteria
 
