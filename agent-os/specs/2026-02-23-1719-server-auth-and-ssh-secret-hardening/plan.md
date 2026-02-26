@@ -1,4 +1,4 @@
-# Spec 5 - Server Auth and SSH Secret Hardening
+# Spec 6 - Server Auth and SSH Secret Hardening
 
 ## Objective
 

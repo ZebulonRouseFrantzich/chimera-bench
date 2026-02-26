@@ -1,4 +1,4 @@
-# Spec - Engine Enhancements: llama.cpp Tools
+# Spec 10 - Engine Enhancements: llama.cpp Tools
 
 ## Objective
 
@@ -29,6 +29,13 @@ Spec 1 intentionally starts narrow (`llama-server`, chat-only). This follow-on s
   - Support explicit host/port overrides.
   - Add operator-facing security guidance (auth, exposure, cross-talk prevention).
 
+## Security and safety requirements
+
+- Never execute subprocesses via a shell; always use argv-array spawning.
+- Never log secrets (API keys, auth headers, tokens). Redact on error paths.
+- Model acquisition must not allow path traversal outside the configured model roots/cache.
+- For any non-loopback binding overrides, require server auth to be enabled and emit explicit operator warnings.
+
 ## Standards applied
 
 - `agent-os/standards/plugins/engine-interface.md`
@@ -44,12 +51,41 @@ Spec 1 intentionally starts narrow (`llama-server`, chat-only). This follow-on s
 ## Implementation tasks
 
 1. Define model identifier extensions and `hf` CLI download/resolve behavior.
+   - Add an explicit Hugging Face identifier format (example: `hf:<repo_id>#<filename>.gguf`).
+   - Require the `hf` CLI to be installed and runnable; provide actionable install errors.
+   - Download to a configurable cache dir (default under an XDG cache location) and store resolved metadata:
+     - resolved local path, file size, and a content hash (sha256) for reproducibility.
+   - Ensure downloaded/resolved GGUF paths remain compatible with `CHIMERA_MODEL_ROOTS` confinement.
+
 2. Implement `llama-cpp-cli` plugin with strict-by-default param validation and metrics parsing.
-3. Define the `llama-bench` integration approach and map outputs to `runs/result-schema` artifacts.
+   - Environment validation: `llama-cli` present and runnable.
+   - Validation:
+     - Strict by default with an explicit permissive mode escape hatch.
+     - Validate args against `llama-cli --help` (best-effort parsing with clear failure mode).
+   - Execution:
+     - Run per-case `llama-cli` subprocesses; capture stdout/stderr with bounded buffers.
+     - Map per-case outputs to the run result schema; record errors per case.
+
+3. Define `llama-bench` integration approach and map outputs to `runs/result-schema` artifacts.
+   - Decide whether this is a separate engine id (`llama-cpp-bench`) or a workload type.
+   - Parse `llama-bench` outputs into per-case records (or `metricsExtra`) without breaking required fields.
+
 4. Add optional `llama-server` host/port override support with safe defaults and clear docs.
-5. Add docs, examples, and smoke tests for each new execution path.
+   - Keep loopback binding as the default.
+   - For non-loopback binding overrides:
+     - Require server auth to be enabled.
+     - Emit explicit operator warnings about exposure and cross-talk.
+
+5. Add docs, examples, and tests.
+   - Unit tests for identifier parsing, download resolver, and validation logic.
+   - Integration tests for each execution path (gated where engine binaries are required).
 
 ## Exit criteria
 
 - Users can run comparable benchmarks via `llama-server` or `llama-cli` through the same orchestrator APIs.
 - Hugging Face identifiers resolve via the `hf` CLI to local GGUF paths, and runs remain reproducible via persisted resolved paths/metadata.
+
+## Dependencies
+
+- Requires `server-plugin-llama-cpp-foundation`.
+- Remote execution integration may benefit from `ssh-remote-execution-profiles` (running `llama-cli` over SSH without opening remote ports).
