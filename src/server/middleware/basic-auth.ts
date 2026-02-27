@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
+import { jsonError } from "../api/envelope.ts";
 import type { BasicAuthSettings } from "../types.ts";
 
 const AUTH_REALM = 'Basic realm="chimera-bench"';
@@ -203,32 +204,20 @@ interface AuthFailureRecord {
 
 function unauthorized(context: Context): Response {
   context.header("WWW-Authenticate", AUTH_REALM);
-  return context.json(
-    {
-      success: false,
-      error: {
-        code: "AUTH_REQUIRED",
-        message: "Valid HTTP basic auth credentials are required.",
-      },
-    },
-    401,
-  );
+  return jsonError(context, 401, {
+    code: "AUTH_REQUIRED",
+    message: "Valid HTTP basic auth credentials are required.",
+  });
 }
 
 function rateLimited(context: Context): Response {
   context.header("Retry-After", String(RETRY_AFTER_SECONDS));
   context.header("WWW-Authenticate", AUTH_REALM);
 
-  return context.json(
-    {
-      success: false,
-      error: {
-        code: "AUTH_RATE_LIMITED",
-        message: "Too many authentication failures. Please retry later.",
-      },
-    },
-    429,
-  );
+  return jsonError(context, 429, {
+    code: "AUTH_RATE_LIMITED",
+    message: "Too many authentication failures. Please retry later.",
+  });
 }
 
 function getClientKey(context: Context): string {

@@ -20,6 +20,7 @@ describe("RuntimeControl", () => {
 
     runtime.closeSseStreams("shutdown");
     expect(closedReasons).toEqual(["shutdown"]);
+    expect(runtime.getOpenSseStreamCount()).toBe(0);
   });
 
   test("cancels active run once and clears canceller", async () => {

@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono";
+import { jsonError } from "../api/envelope.ts";
 
 const ALLOWED_HEADERS = new Map<string, string>([
   ["authorization", "Authorization"],
@@ -24,16 +25,10 @@ export function corsAllowlistMiddleware(origins: readonly string[]): MiddlewareH
 
       const normalizedMethod = requestMethod?.toUpperCase() ?? "GET";
       if (!ALLOWED_METHODS.has(normalizedMethod)) {
-        return context.json(
-          {
-            success: false,
-            error: {
-              code: "CORS_METHOD_NOT_ALLOWED",
-              message: `CORS preflight method '${normalizedMethod}' is not allowed.`,
-            },
-          },
-          405,
-        );
+        return jsonError(context, 405, {
+          code: "CORS_METHOD_NOT_ALLOWED",
+          message: `CORS preflight method '${normalizedMethod}' is not allowed.`,
+        });
       }
 
       const { allowHeaders, invalidHeaders } = buildAllowHeaders(
@@ -41,16 +36,10 @@ export function corsAllowlistMiddleware(origins: readonly string[]): MiddlewareH
       );
 
       if (invalidHeaders.length > 0) {
-        return context.json(
-          {
-            success: false,
-            error: {
-              code: "CORS_HEADER_NOT_ALLOWED",
-              message: `CORS preflight headers are not allowlisted: ${invalidHeaders.join(", ")}.`,
-            },
-          },
-          400,
-        );
+        return jsonError(context, 400, {
+          code: "CORS_HEADER_NOT_ALLOWED",
+          message: `CORS preflight headers are not allowlisted: ${invalidHeaders.join(", ")}.`,
+        });
       }
 
       context.header(

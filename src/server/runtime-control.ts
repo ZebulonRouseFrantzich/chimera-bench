@@ -79,4 +79,8 @@ export class RuntimeControl {
 
     this.sseStreams.clear();
   }
+
+  getOpenSseStreamCount(): number {
+    return this.sseStreams.size;
+  }
 }
