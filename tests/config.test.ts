@@ -102,4 +102,17 @@ describe("resolveServeConfig", () => {
 
     expect(config.modelRoots).toEqual(["/models", "/other-models"]);
   });
+
+  test("enables trust proxy mode when configured", async () => {
+    const config = await resolveServeConfig(DEFAULT_FLAGS, {
+      CHIMERA_SERVER_PASSWORD: "devpass",
+      CHIMERA_SERVER_TRUST_PROXY: "true",
+    });
+
+    expect(config.auth.enabled).toBe(true);
+    expect(config.auth.trustProxy).toBe(true);
+    expect(
+      config.startupWarnings.some((warning) => warning.includes("CHIMERA_SERVER_TRUST_PROXY")),
+    ).toBe(true);
+  });
 });

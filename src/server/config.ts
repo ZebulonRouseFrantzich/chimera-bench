@@ -16,6 +16,7 @@ export async function resolveServeConfig(
 ): Promise<ServeConfig> {
   const password = sanitizeEnv(env.CHIMERA_SERVER_PASSWORD);
   const username = sanitizeEnv(env.CHIMERA_SERVER_USERNAME) ?? DEFAULT_USERNAME;
+  const trustProxy = parseBooleanEnv(env.CHIMERA_SERVER_TRUST_PROXY);
   const startupWarnings: string[] = [];
   const nonLoopback = !(await isLoopbackHost(flags.hostname));
   const appVersion = await getAppVersion();
@@ -23,6 +24,12 @@ export async function resolveServeConfig(
   if (!password) {
     startupWarnings.push(
       "CHIMERA_SERVER_PASSWORD is unset; HTTP basic auth is disabled.",
+    );
+  }
+
+  if (trustProxy) {
+    startupWarnings.push(
+      "CHIMERA_SERVER_TRUST_PROXY is enabled; only use this behind a trusted reverse proxy that sanitizes forwarding headers.",
     );
   }
 
@@ -51,10 +58,12 @@ export async function resolveServeConfig(
           enabled: true,
           username,
           password,
+          trustProxy,
         }
       : {
           enabled: false,
           username,
+          trustProxy,
         },
     startupWarnings,
     version: appVersion,
@@ -113,6 +122,15 @@ function sanitizeMdnsDomain(domain: string): string {
   }
 
   return normalized;
+}
+
+function parseBooleanEnv(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function normalizeCorsOrigins(origins: string[]): string[] {

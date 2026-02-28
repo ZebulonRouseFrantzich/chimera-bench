@@ -35,12 +35,13 @@ export class RuntimeControl {
   }
 
   async cancelActiveRun(reason: string): Promise<void> {
-    if (!this.activeRunCanceller) {
+    const activeCanceller = this.activeRunCanceller;
+    if (!activeCanceller) {
       return;
     }
 
-    await this.activeRunCanceller(reason);
     this.activeRunCanceller = null;
+    await activeCanceller(reason);
   }
 
   registerEngineProcess(handle: EngineProcessHandle): () => void {
@@ -56,7 +57,7 @@ export class RuntimeControl {
     this.engineProcesses.clear();
 
     await Promise.allSettled(
-      processHandles.map((handle) => Promise.resolve(handle.stop(reason))),
+      processHandles.map((handle) => Promise.resolve().then(() => handle.stop(reason))),
     );
   }
 
@@ -78,5 +79,9 @@ export class RuntimeControl {
     }
 
     this.sseStreams.clear();
+  }
+
+  getOpenSseStreamCount(): number {
+    return this.sseStreams.size;
   }
 }

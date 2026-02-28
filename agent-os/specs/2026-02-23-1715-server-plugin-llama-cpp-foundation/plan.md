@@ -119,13 +119,19 @@ Deliver the first usable backend server with a stable engine plugin boundary and
         - macOS: `dns-sd -B _chimera-bench._tcp`
 
 2. Define API routes and envelopes (Hono + zod), including `/global/health`, `/event`, `/doc`, and run/engine domains:
-    - Response envelope is always `{ success, data|error, meta }` (per `server/api-conventions`).
-    - Initial route table:
-     - `GET /global/health` -> `{ healthy: true, version: string }`
-     - `GET /doc` -> OpenAPI 3.1 docs
-     - `GET /event` -> global SSE (`server.connected`, `server.heartbeat`)
-     - `GET /engines` -> engine capabilities + environment validation summary
-     - `POST /runs` -> create run, return `runId` immediately
+     - Response envelope is always `{ success, data|error, meta }` (per `server/api-conventions`).
+     - Implementation layout:
+       - `src/server/app.ts` is the composition root.
+       - Route registration lives in `src/server/routes/`.
+       - Request parsing/validation helpers live in `src/server/http/`.
+       - SSE response helpers live in `src/server/sse/`.
+       - In-memory run state/capacity policy lives in `src/server/runs/`.
+     - Initial route table:
+      - `GET /global/health` -> `{ success: true, data: { healthy: true, version: string }, meta: { requestId: string } }`
+      - `GET /doc` -> OpenAPI 3.1 docs
+      - `GET /event` -> global SSE (`server.connected`, `server.heartbeat`)
+      - `GET /engines` -> engine capabilities + environment validation summary
+      - `POST /runs` -> create run, return `runId` immediately
      - `GET /runs/:runId` -> run status + summary
      - `GET /runs/:runId/result` -> retrieve `result.json`
       - `POST /runs/:runId/cancel` -> cancel an active run

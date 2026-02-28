@@ -20,6 +20,7 @@ describe("RuntimeControl", () => {
 
     runtime.closeSseStreams("shutdown");
     expect(closedReasons).toEqual(["shutdown"]);
+    expect(runtime.getOpenSseStreamCount()).toBe(0);
   });
 
   test("cancels active run once and clears canceller", async () => {
@@ -36,9 +37,44 @@ describe("RuntimeControl", () => {
     expect(cancelCalls).toBe(1);
   });
 
+  test("clears active run canceller even when cancellation fails", async () => {
+    const runtime = new RuntimeControl();
+    let cancelCalls = 0;
+
+    runtime.setActiveRunCanceller(async () => {
+      cancelCalls += 1;
+      throw new Error("cancel failed");
+    });
+
+    await expect(runtime.cancelActiveRun("shutdown")).rejects.toThrow("cancel failed");
+    await runtime.cancelActiveRun("shutdown");
+
+    expect(cancelCalls).toBe(1);
+  });
+
   test("stops registered engine subprocesses during cleanup", async () => {
     const runtime = new RuntimeControl();
     const stopReasons: string[] = [];
+
+    runtime.registerEngineProcess({
+      stop(reason: string) {
+        stopReasons.push(reason);
+      },
+    });
+
+    await runtime.cleanupEngineSubprocesses("shutdown");
+    expect(stopReasons).toEqual(["shutdown"]);
+  });
+
+  test("continues engine cleanup when one stop throws synchronously", async () => {
+    const runtime = new RuntimeControl();
+    const stopReasons: string[] = [];
+
+    runtime.registerEngineProcess({
+      stop() {
+        throw new Error("boom");
+      },
+    });
 
     runtime.registerEngineProcess({
       stop(reason: string) {

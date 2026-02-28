@@ -1,42 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { createApp } from "../src/server/app.ts";
-import { RuntimeControl } from "../src/server/runtime-control.ts";
-import type { BasicAuthSettings } from "../src/server/types.ts";
+import { buildApp, createBasicAuthorization } from "./helpers/app-fixture.ts";
 
-function buildApp(input: {
-  auth: BasicAuthSettings;
-  corsAllowlist?: string[];
-}) {
-  const runtime = new RuntimeControl();
-
-  return {
-    runtime,
-    app: createApp({
-      version: "0.1.0",
-      auth: input.auth,
-      corsAllowlist: input.corsAllowlist ?? [],
-      runtime,
-    }),
-  };
-}
-
-describe("server app", () => {
-  test("returns health payload", async () => {
-    const { app } = buildApp({
-      auth: {
-        enabled: false,
-        username: "chimera",
-      },
-    });
-
-    const response = await app.request("http://localhost/global/health");
-    expect(response.status).toBe(200);
-
-    const payload = await response.json();
-    expect(payload.healthy).toBe(true);
-    expect(payload.version).toBe("0.1.0");
-  });
-
+describe("auth and CORS middleware", () => {
   test("requires auth when configured", async () => {
     const { app } = buildApp({
       auth: {
@@ -53,14 +18,36 @@ describe("server app", () => {
     });
     expect(unauthorized.status).toBe(401);
 
-    const token = Buffer.from("chimera:devpass").toString("base64");
     const authorized = await app.request("http://localhost/global/health", {
       headers: {
-        Authorization: `Basic ${token}`,
+        Authorization: createBasicAuthorization(),
       },
     });
 
     expect(authorized.status).toBe(200);
+  });
+
+  test("applies auth middleware to docs and SSE endpoints", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: true,
+        username: "chimera",
+        password: "devpass",
+      },
+    });
+
+    const docsUnauthorized = await app.request("http://localhost/doc");
+    expect(docsUnauthorized.status).toBe(401);
+
+    const sseUnauthorized = await app.request("http://localhost/event");
+    expect(sseUnauthorized.status).toBe(401);
+
+    const docsAuthorized = await app.request("http://localhost/doc", {
+      headers: {
+        Authorization: createBasicAuthorization(),
+      },
+    });
+    expect(docsAuthorized.status).toBe(200);
   });
 
   test("rate-limits repeated authentication failures", async () => {
@@ -89,6 +76,66 @@ describe("server app", () => {
 
     expect(blocked.status).toBe(429);
     expect(blocked.headers.get("Retry-After")).toBeDefined();
+  });
+
+  test("ignores forwarded headers unless trust proxy mode is enabled", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: true,
+        username: "chimera",
+        password: "devpass",
+      },
+    });
+
+    for (let index = 0; index < 10; index += 1) {
+      const response = await app.request("http://localhost/global/health", {
+        headers: {
+          "X-Forwarded-For": `10.0.0.${index + 1}`,
+        },
+      });
+      expect(response.status).toBe(401);
+    }
+
+    const blocked = await app.request("http://localhost/global/health", {
+      headers: {
+        "X-Forwarded-For": "10.0.0.200",
+      },
+    });
+    expect(blocked.status).toBe(429);
+  });
+
+  test("uses forwarded headers for rate limiting in trust proxy mode", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: true,
+        username: "chimera",
+        password: "devpass",
+        trustProxy: true,
+      },
+    });
+
+    for (let index = 0; index < 10; index += 1) {
+      const response = await app.request("http://localhost/global/health", {
+        headers: {
+          "X-Forwarded-For": "10.10.10.10",
+        },
+      });
+      expect(response.status).toBe(401);
+    }
+
+    const blocked = await app.request("http://localhost/global/health", {
+      headers: {
+        "X-Forwarded-For": "10.10.10.10",
+      },
+    });
+    expect(blocked.status).toBe(429);
+
+    const differentAddress = await app.request("http://localhost/global/health", {
+      headers: {
+        "X-Forwarded-For": "10.10.10.11",
+      },
+    });
+    expect(differentAddress.status).toBe(401);
   });
 
   test("handles auth preflight requests", async () => {
@@ -181,40 +228,5 @@ describe("server app", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
-  });
-
-  test("streams server connection events and closes cleanly", async () => {
-    const { app, runtime } = buildApp({
-      auth: {
-        enabled: false,
-        username: "chimera",
-      },
-    });
-
-    const response = await app.request("http://localhost/event");
-    expect(response.status).toBe(200);
-
-    const body = response.body;
-    expect(body).not.toBeNull();
-    if (!body) {
-      return;
-    }
-
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-
-    const firstChunk = await reader.read();
-    const firstPayload = firstChunk.value ? decoder.decode(firstChunk.value) : "";
-    expect(firstPayload).toContain("event: server.connected");
-
-    runtime.closeSseStreams("test-shutdown");
-
-    const secondChunk = await reader.read();
-    const secondPayload = secondChunk.value ? decoder.decode(secondChunk.value) : "";
-    expect(secondChunk.done || secondPayload.includes("event: server.disconnected")).toBe(
-      true,
-    );
-
-    await reader.cancel();
   });
 });

@@ -1,13 +1,15 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
+import { jsonError } from "../api/envelope.ts";
 import type { BasicAuthSettings } from "../types.ts";
 
-const AUTH_REALM = 'Basic realm="chimera-bench"';
+const AUTH_REALM = "Basic realm=\"chimera-bench\"";
 const AUTH_WINDOW_MS = 60_000;
 const AUTH_MAX_FAILURES = 10;
 const AUTH_MAX_TRACKED_CLIENTS = 5000;
 const AUTH_CLEANUP_INTERVAL = 128;
 const RETRY_AFTER_SECONDS = Math.ceil(AUTH_WINDOW_MS / 1000);
+const DIRECT_CLIENT_KEY = "direct-client";
 
 export function basicAuthMiddleware(auth: BasicAuthSettings): MiddlewareHandler {
   if (!auth.enabled || !auth.password) {
@@ -17,6 +19,7 @@ export function basicAuthMiddleware(auth: BasicAuthSettings): MiddlewareHandler 
   }
 
   const configuredPassword = auth.password;
+  const trustProxyHeaders = auth.trustProxy === true;
   const limiter = new AuthFailureLimiter(
     AUTH_MAX_FAILURES,
     AUTH_WINDOW_MS,
@@ -31,7 +34,7 @@ export function basicAuthMiddleware(auth: BasicAuthSettings): MiddlewareHandler 
     }
 
     const now = Date.now();
-    const clientKey = getClientKey(context);
+    const clientKey = getClientKey(context, trustProxyHeaders);
 
     if (limiter.isBlocked(clientKey, now)) {
       return rateLimited(context);
@@ -203,35 +206,27 @@ interface AuthFailureRecord {
 
 function unauthorized(context: Context): Response {
   context.header("WWW-Authenticate", AUTH_REALM);
-  return context.json(
-    {
-      success: false,
-      error: {
-        code: "AUTH_REQUIRED",
-        message: "Valid HTTP basic auth credentials are required.",
-      },
-    },
-    401,
-  );
+  return jsonError(context, 401, {
+    code: "AUTH_REQUIRED",
+    message: "Valid HTTP basic auth credentials are required.",
+  });
 }
 
 function rateLimited(context: Context): Response {
   context.header("Retry-After", String(RETRY_AFTER_SECONDS));
   context.header("WWW-Authenticate", AUTH_REALM);
 
-  return context.json(
-    {
-      success: false,
-      error: {
-        code: "AUTH_RATE_LIMITED",
-        message: "Too many authentication failures. Please retry later.",
-      },
-    },
-    429,
-  );
+  return jsonError(context, 429, {
+    code: "AUTH_RATE_LIMITED",
+    message: "Too many authentication failures. Please retry later.",
+  });
 }
 
-function getClientKey(context: Context): string {
+function getClientKey(context: Context, trustProxyHeaders: boolean): string {
+  if (!trustProxyHeaders) {
+    return DIRECT_CLIENT_KEY;
+  }
+
   const forwardedFor = context.req.header("X-Forwarded-For");
   if (forwardedFor) {
     const firstAddress = forwardedFor
@@ -252,7 +247,7 @@ function getClientKey(context: Context): string {
     }
   }
 
-  return "unknown-client";
+  return DIRECT_CLIENT_KEY;
 }
 
 function secureEquals(left: string, right: string): boolean {
