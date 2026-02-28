@@ -15,7 +15,13 @@ Keep changes small, focused, and consistent with existing patterns.
 ## Repository Layout
 - `src/cli.ts`: top-level CLI entrypoint and exit-code mapping
 - `src/cli/serve-command.ts`: `serve` argument parsing + startup/shutdown flow
-- `src/server/`: app wiring, middleware, runtime lifecycle, config
+- `src/server/app.ts`: server composition root (middleware + route registration)
+- `src/server/routes/`: domain route registration (`global`, `engines`, `runs`)
+- `src/server/http/`: request parsing/validation helpers
+- `src/server/sse/`: SSE response construction and lifecycle handling
+- `src/server/runs/`: in-memory run state/capacity/transition policy
+- `src/server/middleware/`: auth and CORS middleware
+- `src/server/`: runtime lifecycle, config, startup, networking
 - `tests/`: Bun tests (`*.test.ts`)
 - `bin/chimera-bench`: executable entry script
 
@@ -40,7 +46,8 @@ Prefer `just` wrappers for common tasks; use `bun` directly for targeted runs.
 ### Tests (single file)
 - `bun test tests/network.test.ts`
 - `bun test tests/config.test.ts`
-- `bun test tests/app.test.ts`
+- `bun test tests/app-runs.test.ts`
+- `bun test tests/app-auth-cors.test.ts`
 
 ### Tests (single test case)
 - `bun test tests/network.test.ts -t "accepts loopback hostnames"`
@@ -117,11 +124,14 @@ Follow the style already present in `src/` and `tests/`.
 
 ### HTTP/API Conventions
 - Preserve current baseline endpoints
-  - `GET /global/health` -> `{ healthy: true, version }`
+  - `GET /global/health` -> `{ success: true, data: { healthy: true, version }, meta: { requestId } }`
   - `GET /event` -> SSE connect/heartbeat/disconnect events
-- Preserve existing JSON error envelope shape
+- JSON API responses use envelope shape `{ success, data|error, meta }`
+- JSON API responses include `meta.requestId` and response header `X-Request-Id`
+- `/doc` is intentionally raw OpenAPI JSON (not enveloped)
 - Prefer stable error codes (for example `AUTH_REQUIRED`, `CORS_HEADER_NOT_ALLOWED`)
 - Keep auth and CORS behavior explicit and conservative by default
+- Do not trust forwarding headers by default; only honor them when trust-proxy mode is explicitly enabled
 
 ## Test Style and Practices
 - Use Bun test APIs: `describe`, `test`, `expect` from `bun:test`

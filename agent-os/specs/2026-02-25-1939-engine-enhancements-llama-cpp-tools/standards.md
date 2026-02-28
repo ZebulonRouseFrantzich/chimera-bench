@@ -25,6 +25,19 @@ Use Bun + Hono with zod validation for all public server routes.
 - Validate `params`, `query`, and `json` payloads with zod before route handlers.
 - Generate OpenAPI from route schemas so docs and validation stay in sync.
 
+## Server code layout
+
+- Keep `src/server/app.ts` as a composition root (middleware + error handling + route registration).
+- Register domain routes in `src/server/routes/`:
+  - `global-routes.ts` (`/global/*`, `/doc`, `/event`)
+  - `engine-routes.ts` (`/engines`)
+  - `run-routes.ts` (`/runs/*`)
+- Keep shared HTTP parsing/validation helpers in `src/server/http/`.
+- Keep SSE stream helpers in `src/server/sse/`.
+- Keep run state/storage/capacity policy in `src/server/runs/`.
+- Keep engine metadata helpers in `src/server/engines/`.
+- Keep middleware in `src/server/middleware/`.
+
 ## Auth and exposure defaults
 
 - Support HTTP basic auth for server mode via environment variables.
@@ -32,6 +45,8 @@ Use Bun + Hono with zod validation for all public server routes.
 - Use `CHIMERA_SERVER_USERNAME` optionally; default username is `chimera`.
 - If auth is unset, print an explicit startup warning.
 - Treat non-loopback hosts without auth as unsupported for production usage.
+- Do not trust `X-Forwarded-For` / `X-Real-IP` by default.
+- Only honor forwarding headers when `CHIMERA_SERVER_TRUST_PROXY=1` and the server is behind a trusted reverse proxy that sanitizes those headers.
 
 ## OpenAPI and SDK
 
@@ -41,7 +56,10 @@ Use Bun + Hono with zod validation for all public server routes.
 
 ## Baseline operational endpoints
 
-- `GET /global/health` returns `{ healthy: true, version: string }`.
+- All API responses include an `X-Request-Id` response header.
+- JSON API responses always include `meta.requestId` and it matches `X-Request-Id`.
+
+- `GET /global/health` returns `{ success: true, data: { healthy: true, version: string }, meta: { requestId: string } }`.
 - `GET /event` provides SSE with an initial `server.connected` event and heartbeat events.
 - `GET /global/event` may be added for cross-project/global event streams when needed.
 - Use typed event payloads so clients can consume streams safely.
@@ -69,7 +87,8 @@ Error responses:
 ```
 
 - Never mix `data` and `error` in the same response.
-- `meta` is optional; use it for IDs, pagination, and timing.
+- `meta.requestId` is required for JSON API responses.
+- `/doc` is an exception: it returns raw OpenAPI JSON (not enveloped).
 
 ## Error handling
 
@@ -77,11 +96,18 @@ Error responses:
 - Return `500` with `INTERNAL_ERROR` for unexpected failures.
 - Log full diagnostics server-side; return safe messages to API clients.
 
+## Defensive request limits
+
+- For JSON body endpoints (for example `POST /runs`):
+  - Require `Content-Type: application/json` (reject others with `415`).
+  - Apply a conservative request body size limit (reject oversized payloads with `413`).
+
 ## Long-running benchmarks
 
 - Create and return a `runId` immediately for async run workflows.
 - Stream progress with typed events (SSE or WebSocket) for client updates.
 - Terminal run states are `completed`, `failed`, or `cancelled`.
+- Enforce run capacity limits atomically at creation time (avoid check-then-act across `await` boundaries).
 
 ---
 
