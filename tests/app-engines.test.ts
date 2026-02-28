@@ -79,6 +79,7 @@ describe("engine routes", () => {
 
   test("re-validates environment once cache ttl expires", async () => {
     let validationCalls = 0;
+    let nowMs = 100;
 
     const { app } = buildApp({
       auth: {
@@ -87,6 +88,7 @@ describe("engine routes", () => {
       },
       engineEnvironmentValidation: {
         successCacheTtlMs: 25,
+        now: () => nowMs,
       },
       engines: createEngineCatalog([
         createTestPlugin({
@@ -104,7 +106,7 @@ describe("engine routes", () => {
     expect(firstResponse.status).toBe(200);
     expect(validationCalls).toBe(1);
 
-    await Bun.sleep(40);
+    nowMs += 26;
 
     const secondResponse = await app.request("http://localhost/engines");
     expect(secondResponse.status).toBe(200);
@@ -113,6 +115,7 @@ describe("engine routes", () => {
 
   test("uses shorter cache ttl for environment validation errors", async () => {
     let validationCalls = 0;
+    let nowMs = 200;
 
     const { app } = buildApp({
       auth: {
@@ -122,6 +125,7 @@ describe("engine routes", () => {
       engineEnvironmentValidation: {
         successCacheTtlMs: 200,
         errorCacheTtlMs: 20,
+        now: () => nowMs,
       },
       engines: createEngineCatalog([
         createTestPlugin({
@@ -140,7 +144,7 @@ describe("engine routes", () => {
     expect(secondResponse.status).toBe(200);
     expect(validationCalls).toBe(1);
 
-    await Bun.sleep(40);
+    nowMs += 21;
 
     const thirdResponse = await app.request("http://localhost/engines");
     expect(thirdResponse.status).toBe(200);

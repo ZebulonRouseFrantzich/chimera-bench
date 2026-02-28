@@ -5,6 +5,7 @@ import type {
   EngineEnvironmentSummary,
   EnginePlugin,
 } from "../engines/engine-plugin.ts";
+import { sanitizeControlCharacters } from "../http/sanitize.ts";
 
 const DEFAULT_ENGINE_ENVIRONMENT_VALIDATION_TIMEOUT_MS = 5_000;
 const DEFAULT_ENGINE_ENVIRONMENT_CACHE_TTL_MS = 5_000;
@@ -111,7 +112,7 @@ function createEnvironmentValidationCache(
         .catch((error) => {
           const reason =
             error instanceof Error
-              ? sanitizeLogValue(error.message)
+              ? sanitizeControlCharacters(error.message)
               : "Engine environment validation failed with an unknown error.";
 
           console.error(
@@ -149,7 +150,7 @@ async function safeValidateEnvironment(
   } catch (error) {
     const reason =
       error instanceof Error
-        ? sanitizeLogValue(error.message)
+        ? sanitizeControlCharacters(error.message)
         : "Engine environment validation failed with an unknown error.";
 
     console.error(
@@ -165,10 +166,6 @@ async function safeValidateEnvironment(
 
 function buildPublicEnvironmentFailureMessage(pluginId: string): string {
   return `Environment validation failed for engine '${pluginId}'. Check server logs for details.`;
-}
-
-function sanitizeLogValue(value: string): string {
-  return value.replace(/[\u0000-\u001f\u007f]/g, " ");
 }
 
 async function withTimeout<T>(

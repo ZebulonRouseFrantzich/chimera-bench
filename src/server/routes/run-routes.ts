@@ -10,6 +10,7 @@ import type {
   EngineRunConfigValidationResult,
 } from "../engines/engine-plugin.ts";
 import { parseJsonBody, parseRunIdParam } from "../http/request-validation.ts";
+import { sanitizeControlCharacters } from "../http/sanitize.ts";
 import type { InMemoryRunStore } from "../runs/in-memory-run-store.ts";
 import { createSseResponse } from "../sse/sse-response.ts";
 import type { RuntimeControl } from "../runtime-control.ts";
@@ -47,7 +48,7 @@ export function registerRunRoutes(
 
     const plugin = options.engines.getById(request.engineId);
     if (!plugin) {
-      const safeEngineId = sanitizeErrorValue(request.engineId);
+      const safeEngineId = sanitizeControlCharacters(request.engineId);
       return jsonError(context, 400, {
         code: "ENGINE_NOT_SUPPORTED",
         message: `Engine '${safeEngineId}' is not available in this build.`,
@@ -219,10 +220,6 @@ export function registerRunRoutes(
   });
 }
 
-function sanitizeErrorValue(value: string): string {
-  return value.replace(/[\u0000-\u001f\u007f]/g, " ");
-}
-
 function buildValidationFailurePayload(
   failure: EngineRunConfigValidationFailure,
 ): {
@@ -240,14 +237,14 @@ function buildValidationFailurePayload(
     failure.issues
       ?.map((issue) => ({
         code: sanitizeErrorCode(issue.code),
-        message: sanitizeErrorValue(issue.message),
+        message: sanitizeControlCharacters(issue.message),
         path: sanitizeIssuePath(issue.path),
       }))
       .filter((issue) => issue.code.length > 0 && issue.message.length > 0) ?? [];
 
   return {
     code: sanitizeErrorCode(failure.code),
-    message: sanitizeErrorValue(failure.message),
+    message: sanitizeControlCharacters(failure.message),
     ...(issues.length > 0
       ? {
           details: {
@@ -264,6 +261,6 @@ function sanitizeErrorCode(code: string): string {
 }
 
 function sanitizeIssuePath(path: string | undefined): string {
-  const sanitized = sanitizeErrorValue(path ?? "(root)");
+  const sanitized = sanitizeControlCharacters(path ?? "(root)");
   return sanitized.length > 0 ? sanitized : "(root)";
 }
