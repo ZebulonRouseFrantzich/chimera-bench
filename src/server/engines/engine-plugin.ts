@@ -4,7 +4,11 @@ export const ENGINE_PLUGIN_API_VERSION = 1;
 
 const RESTRICTED_ENVIRONMENT_OVERRIDE_KEYS = new Set([
   "LD_PRELOAD",
+  "LD_AUDIT",
   "NODE_OPTIONS",
+  "DYLD_INSERT_LIBRARIES",
+  "DYLD_LIBRARY_PATH",
+  "DYLD_FORCE_FLAT_NAMESPACE",
 ]);
 
 export interface EngineCapabilities {
