@@ -94,13 +94,26 @@ describe("run routes", () => {
         enabled: false,
         username: "chimera",
       },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          executeCase: async () => {
+            await Bun.sleep(50);
+            return {
+              outputText: "ok",
+            };
+          },
+        }),
+      ]),
     });
 
-    const runId = await createRun(app);
     let cancelCalls = 0;
-    runtime.setActiveRunCanceller(async () => {
+    const originalCancelActiveRun = runtime.cancelActiveRun.bind(runtime);
+    runtime.cancelActiveRun = async (reason: string) => {
       cancelCalls += 1;
-    });
+      await originalCancelActiveRun(reason);
+    };
+
+    const runId = await createRun(app);
 
     const response = await app.request(`http://localhost/runs/${runId}/cancel`, {
       method: "POST",
@@ -108,6 +121,38 @@ describe("run routes", () => {
 
     expect(response.status).toBe(200);
     expect(cancelCalls).toBe(1);
+  });
+
+  test("retains engine cleanup handle when final stop fails", async () => {
+    let stopAttempts = 0;
+
+    const { app, runtime } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          stop: async () => {
+            stopAttempts += 1;
+            if (stopAttempts === 1) {
+              throw new Error("stop failed");
+            }
+          },
+        }),
+      ]),
+    });
+
+    const runId = await createRun(app);
+    const status = await waitForTerminalRunStatus(app, runId);
+    expect(status).toBe("completed");
+
+    await waitForCondition(() => {
+      return stopAttempts >= 1;
+    });
+
+    await runtime.cleanupEngineSubprocesses("shutdown");
+    expect(stopAttempts).toBe(2);
   });
 
   test("rejects invalid run creation payloads", async () => {
@@ -1023,6 +1068,18 @@ async function waitForTerminalRunStatus(
   }
 
   throw new Error(`Run '${runId}' did not reach a terminal status in time.`);
+}
+
+async function waitForCondition(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+
+    await Bun.sleep(10);
+  }
+
+  throw new Error("Condition did not become true in time.");
 }
 
 function createTestPlugin(

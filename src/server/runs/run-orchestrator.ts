@@ -103,7 +103,8 @@ export class RunOrchestrator {
     let cancellationRequested = false;
     let cancellationReason = "cancelled";
     let engineContext: EngineRuntimeContext | null = null;
-    let engineStopInvoked = false;
+    let engineStopInFlight: Promise<void> | null = null;
+    let engineStopCompleted = false;
     let unregisterEngineProcess: (() => void) | null = null;
     let nextCaseIndex = 0;
 
@@ -112,23 +113,41 @@ export class RunOrchestrator {
     };
 
     const stopEngine = async (reason: string): Promise<void> => {
-      if (!engineContext || engineStopInvoked) {
+      if (!engineContext || engineStopCompleted) {
         return;
       }
 
-      engineStopInvoked = true;
-      await withTimeout(
-        plugin.stop(engineContext),
-        ENGINE_STOP_TIMEOUT_MS,
-        () => new Error(`Engine stop timed out after ${ENGINE_STOP_TIMEOUT_MS}ms.`),
-      );
-      this.logDiagnostic(input.runId, {
-        level: "info",
-        message: "Engine subprocess stop requested.",
-        data: {
-          reason,
-        },
-      });
+      const activeEngineContext = engineContext;
+
+      if (engineStopInFlight) {
+        await engineStopInFlight;
+        return;
+      }
+
+      const stopAttempt = (async (): Promise<void> => {
+        await withTimeout(
+          Promise.resolve().then(() => plugin.stop(activeEngineContext)),
+          ENGINE_STOP_TIMEOUT_MS,
+          () => new Error(`Engine stop timed out after ${ENGINE_STOP_TIMEOUT_MS}ms.`),
+        );
+        engineStopCompleted = true;
+        this.logDiagnostic(input.runId, {
+          level: "info",
+          message: "Engine subprocess stop requested.",
+          data: {
+            reason,
+          },
+        });
+      })();
+
+      engineStopInFlight = stopAttempt;
+      try {
+        await stopAttempt;
+      } finally {
+        if (engineStopInFlight === stopAttempt) {
+          engineStopInFlight = null;
+        }
+      }
     };
 
     const unregisterActiveRunCanceller = this.options.runtime.setActiveRunCanceller(
@@ -350,19 +369,23 @@ export class RunOrchestrator {
       this.failRunWithRemainingCases(input, nextCaseIndex, toRunFailure(error));
     } finally {
       unregisterActiveRunCanceller();
-      if (unregisterEngineProcess) {
-        unregisterEngineProcess();
-      }
+
+      let shouldUnregisterEngineProcess = true;
 
       if (engineContext) {
         try {
           await stopEngine("run-finished");
         } catch (error) {
+          shouldUnregisterEngineProcess = false;
           const stopReason = sanitizeControlCharacters(toError(error).message);
           console.error(
             `[chimera-bench] runId=${input.runId} finalEngineStopError=${stopReason}`,
           );
         }
+      }
+
+      if (unregisterEngineProcess && shouldUnregisterEngineProcess) {
+        unregisterEngineProcess();
       }
     }
   }
