@@ -45,7 +45,8 @@ describe("engine routes", () => {
     const payload = await response.json();
     expect(payload.success).toBe(true);
     expect(payload.data.engines[0].environment.status).toBe("error");
-    expect(payload.data.engines[0].environment.message).toContain("llama-server");
+    expect(payload.data.engines[0].environment.message).toContain("llama-cpp");
+    expect(payload.data.engines[0].environment.message).toContain("Check server logs");
   });
 
   test("caches environment validation summaries for a short ttl", async () => {
@@ -70,6 +71,107 @@ describe("engine routes", () => {
 
     const firstResponse = await app.request("http://localhost/engines");
     const secondResponse = await app.request("http://localhost/engines");
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    expect(validationCalls).toBe(1);
+  });
+
+  test("re-validates environment once cache ttl expires", async () => {
+    let validationCalls = 0;
+
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engineEnvironmentValidation: {
+        successCacheTtlMs: 25,
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          validateEnvironment: async () => {
+            validationCalls += 1;
+            return {
+              status: "ok",
+            };
+          },
+        }),
+      ]),
+    });
+
+    const firstResponse = await app.request("http://localhost/engines");
+    expect(firstResponse.status).toBe(200);
+    expect(validationCalls).toBe(1);
+
+    await Bun.sleep(40);
+
+    const secondResponse = await app.request("http://localhost/engines");
+    expect(secondResponse.status).toBe(200);
+    expect(validationCalls).toBe(2);
+  });
+
+  test("uses shorter cache ttl for environment validation errors", async () => {
+    let validationCalls = 0;
+
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engineEnvironmentValidation: {
+        successCacheTtlMs: 200,
+        errorCacheTtlMs: 20,
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          validateEnvironment: async () => {
+            validationCalls += 1;
+            throw new Error("transient failure");
+          },
+        }),
+      ]),
+    });
+
+    const firstResponse = await app.request("http://localhost/engines");
+    const secondResponse = await app.request("http://localhost/engines");
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    expect(validationCalls).toBe(1);
+
+    await Bun.sleep(40);
+
+    const thirdResponse = await app.request("http://localhost/engines");
+    expect(thirdResponse.status).toBe(200);
+    expect(validationCalls).toBe(2);
+  });
+
+  test("deduplicates concurrent environment validations", async () => {
+    let validationCalls = 0;
+
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          validateEnvironment: async () => {
+            validationCalls += 1;
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            return {
+              status: "ok",
+            };
+          },
+        }),
+      ]),
+    });
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      app.request("http://localhost/engines"),
+      app.request("http://localhost/engines"),
+    ]);
 
     expect(firstResponse.status).toBe(200);
     expect(secondResponse.status).toBe(200);

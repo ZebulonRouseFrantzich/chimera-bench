@@ -8,6 +8,7 @@ import { starterLlamaCppPlugin } from "./engines/starter-engine.ts";
 import { corsAllowlistMiddleware } from "./middleware/cors-allowlist.ts";
 import { basicAuthMiddleware } from "./middleware/basic-auth.ts";
 import { registerEngineRoutes } from "./routes/engine-routes.ts";
+import type { EngineEnvironmentValidationSettings } from "./routes/engine-routes.ts";
 import { registerGlobalRoutes } from "./routes/global-routes.ts";
 import { registerRunRoutes } from "./routes/run-routes.ts";
 import { InMemoryRunStore } from "./runs/in-memory-run-store.ts";
@@ -22,6 +23,7 @@ interface AppOptions {
   corsAllowlist: string[];
   runtime: RuntimeControl;
   engines?: EngineCatalog;
+  engineEnvironmentValidation?: EngineEnvironmentValidationSettings;
 }
 
 export function createApp(options: AppOptions): Hono {
@@ -54,6 +56,11 @@ export function createApp(options: AppOptions): Hono {
   });
   registerEngineRoutes(app, {
     engines,
+    ...(options.engineEnvironmentValidation
+      ? {
+          environmentValidation: options.engineEnvironmentValidation,
+        }
+      : {}),
   });
   registerRunRoutes(app, {
     runtime: options.runtime,
