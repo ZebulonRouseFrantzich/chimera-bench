@@ -6,12 +6,22 @@ import {
 } from "../api/schemas.ts";
 import type { EngineCatalog } from "../engines/engine-catalog.ts";
 import type {
+  EngineRunConfig,
   EngineRunConfigValidationFailure,
   EngineRunConfigValidationResult,
 } from "../engines/engine-plugin.ts";
 import { parseJsonBody, parseRunIdParam } from "../http/request-validation.ts";
-import { sanitizeControlCharacters } from "../http/sanitize.ts";
+import {
+  sanitizeControlCharacters,
+  sanitizeErrorCode,
+} from "../http/sanitize.ts";
 import type { InMemoryRunStore } from "../runs/in-memory-run-store.ts";
+import {
+  DEFAULT_CASE_TIMEOUT_MS,
+  DEFAULT_RUN_TIMEOUT_MS,
+} from "../runs/defaults.ts";
+import { RunOrchestrator } from "../runs/run-orchestrator.ts";
+import { getBuiltInWorkload } from "../runs/starter-workload.ts";
 import { createSseResponse } from "../sse/sse-response.ts";
 import type { RuntimeControl } from "../runtime-control.ts";
 
@@ -27,6 +37,12 @@ export function registerRunRoutes(
   app: Hono,
   options: RegisterRunRoutesOptions,
 ): void {
+  const runOrchestrator = new RunOrchestrator({
+    runtime: options.runtime,
+    runStore: options.runStore,
+    engines: options.engines,
+  });
+
   app.post("/runs", async (context) => {
     if (!options.runtime.isAcceptingNewRuns()) {
       return jsonError(context, 409, {
@@ -80,18 +96,64 @@ export function registerRunRoutes(
     request.engine.requestParams = validationResult.normalized.requestParams;
     request.model.identifier = validationResult.normalized.modelIdentifier;
 
-    const runId = options.runStore.tryCreateQueuedRun({
+    const workload = getBuiltInWorkload(request.workloadId);
+    if (!workload) {
+      return jsonError(context, 400, {
+        code: "VALIDATION_WORKLOAD_INVALID",
+        message: `Workload '${sanitizeControlCharacters(request.workloadId)}' is not available in this build.`,
+      });
+    }
+
+    const caseTimeoutMs = request.timeouts.caseMs ?? DEFAULT_CASE_TIMEOUT_MS;
+    const runTimeoutMs = request.timeouts.runMs ?? DEFAULT_RUN_TIMEOUT_MS;
+
+    const createRunResult = options.runStore.tryCreateQueuedRunDetailed({
       engineId: request.engineId,
       modelIdentifier: request.model.identifier,
       workloadId: request.workloadId,
+      totalCases: workload.cases.length,
+      caseTimeoutMs,
+      runTimeoutMs,
     });
 
-    if (!runId) {
+    if (!createRunResult.ok) {
+      if (createRunResult.reason === "concurrency") {
+        return jsonError(context, 409, {
+          code: "RUN_CONCURRENCY_LIMIT",
+          message: "Only one active run is allowed at a time.",
+        });
+      }
+
       return jsonError(context, 409, {
         code: "SERVICE_CAPACITY_REACHED",
         message: `Cannot create run because ${options.runStore.getMaxTrackedRuns()} tracked runs are already retained.`,
       });
     }
+
+    const runId = createRunResult.runId;
+    const runConfig: EngineRunConfig = {
+      engineId: request.engineId,
+      target: request.target,
+      model: request.model,
+      workloadId: request.workloadId,
+      validationMode: request.validationMode,
+      engine: {
+        serverArgs: [...request.engine.serverArgs],
+        requestParams: {
+          ...request.engine.requestParams,
+        },
+      },
+      timeouts: {
+        caseMs: caseTimeoutMs,
+        runMs: runTimeoutMs,
+      },
+    };
+
+    runOrchestrator.start({
+      runId,
+      runConfig,
+      workload,
+    });
 
     return jsonSuccess(
       context,
@@ -169,7 +231,7 @@ export function registerRunRoutes(
       });
     }
 
-    if (runStatus === "running") {
+    if (runStatus === "queued" || runStatus === "running") {
       try {
         await options.runtime.cancelActiveRun("user-cancel-request");
       } catch (error) {
@@ -188,7 +250,11 @@ export function registerRunRoutes(
     }
 
     const cancelledStatus =
-      options.runStore.cancelRun(runId, new Date().toISOString()) ?? runStatus;
+      options.runStore.cancelRun(
+        runId,
+        new Date().toISOString(),
+        "user-cancel-request",
+      ) ?? runStatus;
 
     return jsonSuccess(context, {
       runId,
@@ -217,6 +283,20 @@ export function registerRunRoutes(
       payloadBase: {
         runId,
       },
+      replayEvents: options.runStore.listRunEvents(runId),
+      subscribe: (emit) => {
+        return options.runStore.subscribeRunEvents(runId, (eventRecord) => {
+          emit(eventRecord.event, eventRecord.payload);
+        });
+      },
+      shouldCloseAfterEvent: (event) => {
+        return (
+          event === "run.completed" ||
+          event === "run.failed" ||
+          event === "run.cancelled"
+        );
+      },
+      closeReason: "run-terminal",
     });
   });
 }
@@ -237,14 +317,14 @@ function buildValidationFailurePayload(
   const issues =
     failure.issues
       ?.map((issue) => ({
-        code: sanitizeErrorCode(issue.code),
+        code: sanitizeErrorCode(issue.code, "VALIDATION_ENGINE_OPTIONS_INVALID"),
         message: sanitizeControlCharacters(issue.message),
         path: sanitizeIssuePath(issue.path),
       }))
       .filter((issue) => issue.code.length > 0 && issue.message.length > 0) ?? [];
 
   return {
-    code: sanitizeErrorCode(failure.code),
+    code: sanitizeErrorCode(failure.code, "VALIDATION_ENGINE_OPTIONS_INVALID"),
     message: sanitizeControlCharacters(failure.message),
     ...(issues.length > 0
       ? {
@@ -254,11 +334,6 @@ function buildValidationFailurePayload(
         }
       : {}),
   };
-}
-
-function sanitizeErrorCode(code: string): string {
-  const normalized = code.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
-  return normalized.length > 0 ? normalized : "VALIDATION_ENGINE_OPTIONS_INVALID";
 }
 
 function sanitizeIssuePath(path: string | undefined): string {

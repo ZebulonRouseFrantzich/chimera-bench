@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createEngineCatalog } from "../src/server/engines/engine-catalog.ts";
 import {
   ENGINE_PLUGIN_API_VERSION,
+  EngineStartFailedError,
   type EnginePlugin,
 } from "../src/server/engines/engine-plugin.ts";
 import {
@@ -87,7 +88,7 @@ describe("run routes", () => {
     expect(resultPayload.data.status).toBe("cancelled");
   });
 
-  test("does not invoke runtime canceller when cancelling queued runs", async () => {
+  test("invokes runtime canceller when cancelling an active run", async () => {
     const { app, runtime } = buildApp({
       auth: {
         enabled: false,
@@ -106,7 +107,7 @@ describe("run routes", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(cancelCalls).toBe(0);
+    expect(cancelCalls).toBe(1);
   });
 
   test("rejects invalid run creation payloads", async () => {
@@ -565,6 +566,73 @@ describe("run routes", () => {
     expect(payload.error.details.issues[0].path).toContain("nested[0]");
   });
 
+  test("rejects timeout values outside allowed bounds", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: "/tmp/model.gguf",
+        },
+        timeouts: {
+          runMs: 86_400_001,
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_BODY_INVALID");
+    expect(payload.error.details.issues[0].path).toBe("timeouts.runMs");
+  });
+
+  test("rejects timeout payloads where case timeout exceeds run timeout", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: "/tmp/model.gguf",
+        },
+        timeouts: {
+          caseMs: 2_000,
+          runMs: 1_000,
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_BODY_INVALID");
+    expect(payload.error.details.issues[0].path).toBe("timeouts.caseMs");
+  });
+
   test("rejects invalid run IDs before lookup", async () => {
     const { app } = buildApp({
       auth: {
@@ -633,18 +701,25 @@ describe("run routes", () => {
     expect(payload.error.code).toBe("RUN_SERVER_SHUTTING_DOWN");
   });
 
-  test("enforces tracked run capacity limit", async () => {
+  test("enforces single active run concurrency limit", async () => {
     const { app } = buildApp({
       auth: {
         enabled: false,
         username: "chimera",
       },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          executeCase: async () => {
+            await Bun.sleep(50);
+            return {
+              outputText: "ok",
+            };
+          },
+        }),
+      ]),
     });
 
-    for (let index = 0; index < 1000; index += 1) {
-      const runId = await createRun(app);
-      expect(runId.startsWith("run_")).toBe(true);
-    }
+    const firstRunId = await createRun(app);
 
     const overflowResponse = await app.request("http://localhost/runs", {
       method: "POST",
@@ -664,9 +739,291 @@ describe("run routes", () => {
 
     expect(overflowResponse.status).toBe(409);
     const overflowPayload = await overflowResponse.json();
-    expect(overflowPayload.error.code).toBe("SERVICE_CAPACITY_REACHED");
+    expect(overflowPayload.error.code).toBe("RUN_CONCURRENCY_LIMIT");
+
+    const cancelResponse = await app.request(`http://localhost/runs/${firstRunId}/cancel`, {
+      method: "POST",
+    });
+    expect(cancelResponse.status).toBe(200);
+  });
+
+  test("runs the starter workload and persists completed results", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          executeCase: async (_context, caseConfig) => ({
+            outputText: `completed:${caseConfig.caseId}`,
+          }),
+          collectMetrics: async () => ({
+            sample: true,
+          }),
+        }),
+      ]),
+    });
+
+    const runId = await createRun(app);
+    const status = await waitForTerminalRunStatus(app, runId);
+    expect(status).toBe("completed");
+
+    const resultResponse = await app.request(`http://localhost/runs/${runId}/result`);
+    expect(resultResponse.status).toBe(200);
+
+    const resultPayload = await resultResponse.json();
+    expect(resultPayload.data.status).toBe("completed");
+    expect(resultPayload.data.result.summary.totalCases).toBe(3);
+    expect(resultPayload.data.result.summary.completedCases).toBe(3);
+    expect(resultPayload.data.result.summary.failedCases).toBe(0);
+    expect(resultPayload.data.result.cases).toHaveLength(3);
+  });
+
+  test("fails runs that exceed run timeout budget", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          executeCase: async () => {
+            await Bun.sleep(25);
+            return {
+              outputText: "slow",
+            };
+          },
+        }),
+      ]),
+    });
+
+    const createResponse = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: "/tmp/model.gguf",
+        },
+        timeouts: {
+          runMs: 20,
+          caseMs: 20,
+        },
+      }),
+    });
+    expect(createResponse.status).toBe(202);
+
+    const createPayload = await createResponse.json();
+    const runId = createPayload.data?.runId;
+    expect(typeof runId).toBe("string");
+    if (typeof runId !== "string") {
+      throw new Error("Expected run creation response to include runId.");
+    }
+
+    const status = await waitForTerminalRunStatus(app, runId);
+    expect(status).toBe("failed");
+
+    const resultResponse = await app.request(`http://localhost/runs/${runId}/result`);
+    expect(resultResponse.status).toBe(200);
+    const resultPayload = await resultResponse.json();
+    expect(resultPayload.data.result.error.code).toBe("RUN_TIMEOUT_EXCEEDED");
+  });
+
+  test("aborts in-flight case execution when case timeout is exceeded", async () => {
+    let observedAbort = false;
+
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          executeCase: async (context) => {
+            return await new Promise(() => {
+              context.abortSignal.addEventListener(
+                "abort",
+                () => {
+                  observedAbort = true;
+                },
+                {
+                  once: true,
+                },
+              );
+            });
+          },
+        }),
+      ]),
+    });
+
+    const createResponse = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: "/tmp/model.gguf",
+        },
+        timeouts: {
+          runMs: 5_000,
+          caseMs: 5,
+        },
+      }),
+    });
+    expect(createResponse.status).toBe(202);
+
+    const createPayload = await createResponse.json();
+    const runId = createPayload.data?.runId;
+    expect(typeof runId).toBe("string");
+    if (typeof runId !== "string") {
+      throw new Error("Expected run creation response to include runId.");
+    }
+
+    const status = await waitForTerminalRunStatus(app, runId);
+    expect(status).toBe("completed");
+    expect(observedAbort).toBe(true);
+
+    const resultResponse = await app.request(`http://localhost/runs/${runId}/result`);
+    expect(resultResponse.status).toBe(200);
+    const resultPayload = await resultResponse.json();
+    expect(resultPayload.data.result.summary.failedCases).toBe(3);
+    expect(resultPayload.data.result.cases[0].error.code).toBe("RUN_CASE_TIMEOUT");
+  });
+
+  test("fails run when startup exceeds run timeout", async () => {
+    let observedAbort = false;
+
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          start: async (context) => {
+            return await new Promise(() => {
+              context.abortSignal.addEventListener(
+                "abort",
+                () => {
+                  observedAbort = true;
+                },
+                {
+                  once: true,
+                },
+              );
+            });
+          },
+        }),
+      ]),
+    });
+
+    const createResponse = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: "/tmp/model.gguf",
+        },
+        timeouts: {
+          runMs: 10,
+          caseMs: 5,
+        },
+      }),
+    });
+    expect(createResponse.status).toBe(202);
+
+    const createPayload = await createResponse.json();
+    const runId = createPayload.data?.runId;
+    expect(typeof runId).toBe("string");
+    if (typeof runId !== "string") {
+      throw new Error("Expected run creation response to include runId.");
+    }
+
+    const status = await waitForTerminalRunStatus(app, runId);
+    expect(status).toBe("failed");
+    expect(observedAbort).toBe(true);
+
+    const resultResponse = await app.request(`http://localhost/runs/${runId}/result`);
+    expect(resultResponse.status).toBe(200);
+    const resultPayload = await resultResponse.json();
+    expect(resultPayload.data.result.error.code).toBe("RUN_TIMEOUT_EXCEEDED");
+  });
+
+  test("preserves ENGINE_START_FAILED for startup failures", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          start: async () => {
+            throw new EngineStartFailedError(
+              "ENGINE_START_FAILED: llama-server missing",
+              {
+                reason: "llama-server missing",
+              },
+            );
+          },
+        }),
+      ]),
+    });
+
+    const runId = await createRun(app);
+    const status = await waitForTerminalRunStatus(app, runId);
+    expect(status).toBe("failed");
+
+    const resultResponse = await app.request(`http://localhost/runs/${runId}/result`);
+    expect(resultResponse.status).toBe(200);
+    const resultPayload = await resultResponse.json();
+    expect(resultPayload.data.result.error.code).toBe("ENGINE_START_FAILED");
+    expect(resultPayload.data.result.cases[0].error.code).toBe("ENGINE_START_FAILED");
   });
 });
+
+async function waitForTerminalRunStatus(
+  app: ReturnType<typeof buildApp>["app"],
+  runId: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await app.request(`http://localhost/runs/${runId}`);
+    if (response.status !== 200) {
+      await Bun.sleep(10);
+      continue;
+    }
+
+    const payload = await response.json();
+    const status = payload.data?.status;
+    if (
+      status === "completed" ||
+      status === "failed" ||
+      status === "cancelled"
+    ) {
+      return status;
+    }
+
+    await Bun.sleep(10);
+  }
+
+  throw new Error(`Run '${runId}' did not reach a terminal status in time.`);
+}
 
 function createTestPlugin(
   overrides: Partial<EnginePlugin> = {},

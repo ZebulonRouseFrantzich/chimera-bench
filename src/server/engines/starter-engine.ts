@@ -804,26 +804,45 @@ function buildStartupFailureError(input: {
   args: string[];
   failure: LlamaServerStartupFailure;
   apiKey: string;
-}): Error {
+}): EngineStartFailedError {
   const redactedArgs = redactLaunchArgs(input.args);
   const commandSummary = [input.command, ...redactedArgs].join(" ");
-  const details: string[] = [];
+  const details: Record<string, unknown> = {
+    code: "ENGINE_START_FAILED",
+    reason: redactSecret(input.failure.reason, input.apiKey),
+    launchCommand: commandSummary,
+  };
 
-  details.push(
-    `Unable to start llama-server for run '${input.runId}'. ${redactSecret(input.failure.reason, input.apiKey)}`,
+  const messageParts: string[] = [];
+
+  messageParts.push(
+    `Unable to start llama-server for run '${input.runId}'. ${details.reason as string}`,
   );
 
   if (input.failure.stderrExcerpt.length > 0) {
-    details.push(`stderr excerpt: ${input.failure.stderrExcerpt}`);
+    details.stderrExcerpt = input.failure.stderrExcerpt;
+    messageParts.push(`stderr excerpt: ${input.failure.stderrExcerpt}`);
   }
 
   if (input.failure.stdoutExcerpt.length > 0) {
-    details.push(`stdout excerpt: ${input.failure.stdoutExcerpt}`);
+    details.stdoutExcerpt = input.failure.stdoutExcerpt;
+    messageParts.push(`stdout excerpt: ${input.failure.stdoutExcerpt}`);
   }
 
-  details.push(`launch command: ${commandSummary}`);
+  if (input.failure.exitCode !== null) {
+    details.exitCode = input.failure.exitCode;
+  }
 
-  return new Error(details.join(" "));
+  if (input.failure.signal !== null) {
+    details.signal = input.failure.signal;
+  }
+
+  messageParts.push(`launch command: ${commandSummary}`);
+
+  return new EngineStartFailedErrorClass(
+    `ENGINE_START_FAILED: ${messageParts.join(" ")}`,
+    details,
+  );
 }
 
 async function stopRunState(

@@ -122,6 +122,24 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     expect(spawnCalls).toBe(0);
   });
 
+  test("surfaces ENGINE_START_FAILED when llama-server executable is missing", async () => {
+    const plugin = createStarterLlamaCppPlugin({
+      allocateLoopbackPort: async () => 43129,
+      createApiKey: () => TEST_API_KEY,
+      startupRetryAttempts: 1,
+      spawnProcess: () => {
+        throw new Error('Executable not found in $PATH: "llama-server"');
+      },
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(createRunConfig());
+    const context = createContext("run_missing_binary", launchConfig);
+
+    await expect(plugin.start(context)).rejects.toMatchObject({
+      code: "ENGINE_START_FAILED",
+    });
+  });
+
   test("retries startup with a new port when early bind failure occurs", async () => {
     const spawnArgs: string[][] = [];
     const signalCalls: Array<{ pid: number; signal: NodeJS.Signals }> = [];

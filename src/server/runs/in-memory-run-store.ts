@@ -5,13 +5,59 @@ import {
   RunStatusSchema,
   RunSummaryDataSchema,
 } from "../api/schemas.ts";
+import {
+  DEFAULT_CASE_TIMEOUT_MS,
+  DEFAULT_RUN_TIMEOUT_MS,
+  RUN_RESULT_SCHEMA_VERSION,
+} from "./defaults.ts";
 
 export const DEFAULT_MAX_TRACKED_RUNS = 1000;
 export const DEFAULT_TERMINAL_RUN_RETENTION_MS = 6 * 60 * 60 * 1000;
 
+const MAX_EVENTS_PER_RUN = 256;
+
 type RunStatus = z.infer<typeof RunStatusSchema>;
 type RunSummaryData = z.infer<typeof RunSummaryDataSchema>;
 type StoredRunResult = z.infer<typeof RunResultDataSchema>["result"];
+
+export type RunEventName =
+  | "run.created"
+  | "run.started"
+  | "run.case.started"
+  | "run.case.completed"
+  | "run.case.failed"
+  | "run.completed"
+  | "run.failed"
+  | "run.cancelled";
+
+export interface RunEventRecord {
+  event: RunEventName;
+  payload: Record<string, unknown>;
+}
+
+export interface RunProgressSnapshot {
+  totalCases: number;
+  completedCases: number;
+  failedCases: number;
+}
+
+export interface RunFailureDetails {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+interface StoredCaseOutcome {
+  caseId: string;
+  promptId: string;
+  index: number;
+  status: "completed" | "failed";
+  latencyMs: number;
+  outputText?: string;
+  rawResponse?: unknown;
+  requestParams: Record<string, unknown>;
+  error?: RunFailureDetails;
+}
 
 interface RunRecord {
   runId: string;
@@ -22,13 +68,36 @@ interface RunRecord {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  totalCases: number;
+  completedCases: number;
+  failedCases: number;
+  caseTimeoutMs: number;
+  runTimeoutMs: number;
+  caseOutcomes: StoredCaseOutcome[];
+  failure: RunFailureDetails | null;
+  metrics: Record<string, unknown> | null;
 }
 
 interface CreateQueuedRunInput {
   engineId: string;
   modelIdentifier: string;
   workloadId: string;
+  totalCases?: number;
+  caseTimeoutMs?: number;
+  runTimeoutMs?: number;
 }
+
+type RunEventListener = (event: RunEventRecord) => void;
+
+export type CreateQueuedRunResult =
+  | {
+      ok: true;
+      runId: string;
+    }
+  | {
+      ok: false;
+      reason: "capacity" | "concurrency";
+    };
 
 interface InMemoryRunStoreOptions {
   maxTrackedRuns?: number;
@@ -38,6 +107,8 @@ interface InMemoryRunStoreOptions {
 export class InMemoryRunStore {
   private readonly runs = new Map<string, RunRecord>();
   private readonly runResults = new Map<string, StoredRunResult>();
+  private readonly runEvents = new Map<string, RunEventRecord[]>();
+  private readonly runEventListeners = new Map<string, Set<RunEventListener>>();
   private readonly maxTrackedRuns: number;
   private readonly terminalRunRetentionMs: number;
 
@@ -51,6 +122,16 @@ export class InMemoryRunStore {
     return this.maxTrackedRuns;
   }
 
+  hasActiveRun(): boolean {
+    for (const run of this.runs.values()) {
+      if (run.status === "queued" || run.status === "running") {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   ensureCapacity(now = Date.now()): boolean {
     this.pruneExpiredTerminalRuns(now);
 
@@ -60,22 +141,42 @@ export class InMemoryRunStore {
         return false;
       }
 
-      this.runs.delete(runIdToEvict);
-      this.runResults.delete(runIdToEvict);
+      this.deleteRun(runIdToEvict);
     }
 
     return true;
   }
 
   tryCreateQueuedRun(input: CreateQueuedRunInput, now = Date.now()): string | null {
+    const result = this.tryCreateQueuedRunDetailed(input, now);
+    return result.ok ? result.runId : null;
+  }
+
+  tryCreateQueuedRunDetailed(
+    input: CreateQueuedRunInput,
+    now = Date.now(),
+  ): CreateQueuedRunResult {
+    // This method is synchronous; no async gaps exist between the active-run
+    // check and insertion in the current single-process server architecture.
+    if (this.hasActiveRun()) {
+      return {
+        ok: false,
+        reason: "concurrency",
+      };
+    }
+
     if (!this.ensureCapacity(now)) {
-      return null;
+      return {
+        ok: false,
+        reason: "capacity",
+      };
     }
 
     const runId = `run_${randomUUID()}`;
-    const createdAt = new Date().toISOString();
+    const createdAt = new Date(now).toISOString();
+    const totalCases = normalizeNonNegativeInteger(input.totalCases, 0);
 
-    this.runs.set(runId, {
+    const record: RunRecord = {
       runId,
       engineId: input.engineId,
       modelIdentifier: input.modelIdentifier,
@@ -84,9 +185,27 @@ export class InMemoryRunStore {
       createdAt,
       startedAt: null,
       finishedAt: null,
+      totalCases,
+      completedCases: 0,
+      failedCases: 0,
+      caseTimeoutMs: normalizePositiveInteger(input.caseTimeoutMs, DEFAULT_CASE_TIMEOUT_MS),
+      runTimeoutMs: normalizePositiveInteger(input.runTimeoutMs, DEFAULT_RUN_TIMEOUT_MS),
+      caseOutcomes: [],
+      failure: null,
+      metrics: null,
+    };
+
+    this.runs.set(runId, record);
+    this.emitRunEvent(runId, "run.created", {
+      status: record.status,
+      workloadId: record.workloadId,
+      ...this.buildProgress(record),
     });
 
-    return runId;
+    return {
+      ok: true,
+      runId,
+    };
   }
 
   hasRun(runId: string): boolean {
@@ -115,11 +234,207 @@ export class InMemoryRunStore {
     return this.buildRunSummary(run);
   }
 
+  getRunProgress(runId: string): RunProgressSnapshot | undefined {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return undefined;
+    }
+
+    return this.buildProgress(run);
+  }
+
   getRunResult(runId: string): StoredRunResult | undefined {
     return this.runResults.get(runId);
   }
 
-  cancelRun(runId: string, atIsoTimestamp: string): RunStatus | undefined {
+  markRunRunning(runId: string, atIsoTimestamp: string): RunStatus | undefined {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return undefined;
+    }
+
+    if (run.status !== "queued") {
+      return run.status;
+    }
+
+    this.transitionRunStatus(run, "running", atIsoTimestamp);
+    this.emitRunEvent(runId, "run.started", {
+      status: run.status,
+      ...this.buildProgress(run),
+    });
+
+    return run.status;
+  }
+
+  recordCaseStarted(
+    runId: string,
+    input: {
+      caseId: string;
+      promptId: string;
+      index: number;
+    },
+  ): RunProgressSnapshot | undefined {
+    const run = this.runs.get(runId);
+    if (!run || run.status !== "running") {
+      return undefined;
+    }
+
+    const progress = this.buildProgress(run);
+    this.emitRunEvent(runId, "run.case.started", {
+      caseId: input.caseId,
+      promptId: input.promptId,
+      index: input.index,
+      ...progress,
+    });
+
+    return progress;
+  }
+
+  recordCaseCompleted(
+    runId: string,
+    input: {
+      caseId: string;
+      promptId: string;
+      index: number;
+      latencyMs: number;
+      outputText: string;
+      requestParams: Record<string, unknown>;
+      rawResponse?: unknown;
+    },
+  ): RunProgressSnapshot | undefined {
+    const run = this.runs.get(runId);
+    if (!run || run.status !== "running") {
+      return undefined;
+    }
+
+    run.caseOutcomes.push({
+      caseId: input.caseId,
+      promptId: input.promptId,
+      index: input.index,
+      status: "completed",
+      latencyMs: normalizeNonNegativeInteger(input.latencyMs, 0),
+      outputText: input.outputText,
+      ...(input.rawResponse === undefined
+        ? {}
+        : {
+            rawResponse: input.rawResponse,
+          }),
+      requestParams: {
+        ...input.requestParams,
+      },
+    });
+    run.completedCases += 1;
+    this.reconcileTotalCases(run);
+
+    const progress = this.buildProgress(run);
+    this.emitRunEvent(runId, "run.case.completed", {
+      caseId: input.caseId,
+      promptId: input.promptId,
+      index: input.index,
+      ...progress,
+    });
+
+    return progress;
+  }
+
+  recordCaseFailed(
+    runId: string,
+    input: {
+      caseId: string;
+      promptId: string;
+      index: number;
+      latencyMs: number;
+      requestParams: Record<string, unknown>;
+      error: RunFailureDetails;
+    },
+  ): RunProgressSnapshot | undefined {
+    const run = this.runs.get(runId);
+    if (!run || run.status !== "running") {
+      return undefined;
+    }
+
+    const sanitizedError = cloneRunFailure(input.error);
+
+    run.caseOutcomes.push({
+      caseId: input.caseId,
+      promptId: input.promptId,
+      index: input.index,
+      status: "failed",
+      latencyMs: normalizeNonNegativeInteger(input.latencyMs, 0),
+      requestParams: {
+        ...input.requestParams,
+      },
+      error: sanitizedError,
+    });
+    run.failedCases += 1;
+    this.reconcileTotalCases(run);
+
+    const progress = this.buildProgress(run);
+    this.emitRunEvent(runId, "run.case.failed", {
+      caseId: input.caseId,
+      promptId: input.promptId,
+      index: input.index,
+      error: sanitizedError,
+      ...progress,
+    });
+
+    return progress;
+  }
+
+  completeRun(
+    runId: string,
+    atIsoTimestamp: string,
+    metrics: Record<string, unknown> = {},
+  ): RunStatus | undefined {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return undefined;
+    }
+
+    if (this.isRunStatusTerminal(run.status)) {
+      return run.status;
+    }
+
+    run.metrics = {
+      ...metrics,
+    };
+    this.transitionRunStatus(run, "completed", atIsoTimestamp);
+    this.runResults.set(run.runId, this.buildRunResult(run));
+    this.emitRunEvent(runId, "run.completed", {
+      status: run.status,
+      ...this.buildProgress(run),
+    });
+
+    return run.status;
+  }
+
+  failRun(runId: string, atIsoTimestamp: string, failure: RunFailureDetails): RunStatus | undefined {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return undefined;
+    }
+
+    if (this.isRunStatusTerminal(run.status)) {
+      return run.status;
+    }
+
+    run.failure = cloneRunFailure(failure);
+    this.transitionRunStatus(run, "failed", atIsoTimestamp);
+    this.runResults.set(run.runId, this.buildRunResult(run));
+    this.emitRunEvent(runId, "run.failed", {
+      status: run.status,
+      error: run.failure,
+      ...this.buildProgress(run),
+    });
+
+    return run.status;
+  }
+
+  cancelRun(
+    runId: string,
+    atIsoTimestamp: string,
+    reason?: string,
+  ): RunStatus | undefined {
     const run = this.runs.get(runId);
     if (!run) {
       return undefined;
@@ -127,13 +442,85 @@ export class InMemoryRunStore {
 
     if (this.isRunStatusCancellable(run.status)) {
       this.transitionRunStatus(run, "cancelled", atIsoTimestamp);
-
-      if (!this.runResults.has(run.runId)) {
-        this.runResults.set(run.runId, this.buildStubResult(run, "cancelled"));
-      }
+      this.runResults.set(run.runId, this.buildRunResult(run));
+      this.emitRunEvent(runId, "run.cancelled", {
+        status: run.status,
+        ...(reason
+          ? {
+              reason,
+            }
+          : {}),
+        ...this.buildProgress(run),
+      });
     }
 
     return run.status;
+  }
+
+  listRunEvents(runId: string): RunEventRecord[] {
+    return [...(this.runEvents.get(runId) ?? [])];
+  }
+
+  subscribeRunEvents(runId: string, listener: RunEventListener): () => void {
+    if (!this.runs.has(runId)) {
+      return () => {
+        return;
+      };
+    }
+
+    const listeners = this.runEventListeners.get(runId) ?? new Set<RunEventListener>();
+    listeners.add(listener);
+    this.runEventListeners.set(runId, listeners);
+
+    return () => {
+      const activeListeners = this.runEventListeners.get(runId);
+      if (!activeListeners) {
+        return;
+      }
+
+      activeListeners.delete(listener);
+      if (activeListeners.size === 0) {
+        this.runEventListeners.delete(runId);
+      }
+    };
+  }
+
+  private emitRunEvent(
+    runId: string,
+    event: RunEventName,
+    payload: Record<string, unknown>,
+  ): void {
+    if (!this.runs.has(runId)) {
+      return;
+    }
+
+    const record: RunEventRecord = {
+      event,
+      payload: {
+        runId,
+        ...payload,
+      },
+    };
+
+    const events = this.runEvents.get(runId) ?? [];
+    events.push(record);
+    if (events.length > MAX_EVENTS_PER_RUN) {
+      events.splice(0, events.length - MAX_EVENTS_PER_RUN);
+    }
+    this.runEvents.set(runId, events);
+
+    const listeners = this.runEventListeners.get(runId);
+    if (!listeners || listeners.size === 0) {
+      return;
+    }
+
+    for (const listener of listeners) {
+      try {
+        listener(record);
+      } catch {
+        // Listener failures should not interrupt run state transitions.
+      }
+    }
   }
 
   private buildRunSummary(run: RunRecord): RunSummaryData {
@@ -148,26 +535,79 @@ export class InMemoryRunStore {
       createdAt: run.createdAt,
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
-      summary: {
-        totalCases: 0,
-        completedCases: 0,
-        failedCases: 0,
-      },
+      summary: this.buildProgress(run),
     };
   }
 
-  private buildStubResult(run: RunRecord, status: RunStatus): StoredRunResult {
+  private buildRunResult(run: RunRecord): StoredRunResult {
+    const startedAtMs = Date.parse(run.startedAt ?? run.createdAt);
+    const finishedAtMs = Date.parse(run.finishedAt ?? run.createdAt);
+
+    const durationMs =
+      Number.isFinite(startedAtMs) && Number.isFinite(finishedAtMs)
+        ? Math.max(0, finishedAtMs - startedAtMs)
+        : 0;
+
     return {
-      schemaVersion: "0.1.0-preview",
+      schemaVersion: RUN_RESULT_SCHEMA_VERSION,
       runId: run.runId,
-      status,
+      status: run.status,
       workloadId: run.workloadId,
-      cases: [],
+      engineId: run.engineId,
+      model: {
+        identifier: run.modelIdentifier,
+      },
+      createdAt: run.createdAt,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      durationMs,
+      timeouts: {
+        caseMs: run.caseTimeoutMs,
+        runMs: run.runTimeoutMs,
+      },
+      summary: this.buildProgress(run),
+      cases: run.caseOutcomes.map((caseOutcome) => ({
+        ...caseOutcome,
+        requestParams: {
+          ...caseOutcome.requestParams,
+        },
+        ...(caseOutcome.error
+          ? {
+              error: cloneRunFailure(caseOutcome.error),
+            }
+          : {}),
+      })),
+      ...(run.failure
+        ? {
+            error: cloneRunFailure(run.failure),
+          }
+        : {}),
+      ...(run.metrics
+        ? {
+            metrics: {
+              ...run.metrics,
+            },
+          }
+        : {}),
     };
+  }
+
+  private buildProgress(run: RunRecord): RunProgressSnapshot {
+    return {
+      totalCases: run.totalCases,
+      completedCases: run.completedCases,
+      failedCases: run.failedCases,
+    };
+  }
+
+  private reconcileTotalCases(run: RunRecord): void {
+    const observedCases = run.completedCases + run.failedCases;
+    if (observedCases > run.totalCases) {
+      run.totalCases = observedCases;
+    }
   }
 
   private pruneExpiredTerminalRuns(now: number): void {
-    // Safe to delete while iterating a Map; iteration semantics handle this.
     for (const [runId, run] of this.runs) {
       if (!this.isRunStatusTerminal(run.status) || !run.finishedAt) {
         continue;
@@ -182,13 +622,11 @@ export class InMemoryRunStore {
         continue;
       }
 
-      this.runs.delete(runId);
-      this.runResults.delete(runId);
+      this.deleteRun(runId);
     }
   }
 
   private findOldestTerminalRunId(): string | null {
-    // Intentional approximation: Map iteration order tracks insertion order.
     for (const [runId, run] of this.runs) {
       if (this.isRunStatusTerminal(run.status)) {
         return runId;
@@ -196,6 +634,13 @@ export class InMemoryRunStore {
     }
 
     return null;
+  }
+
+  private deleteRun(runId: string): void {
+    this.runs.delete(runId);
+    this.runResults.delete(runId);
+    this.runEvents.delete(runId);
+    this.runEventListeners.delete(runId);
   }
 
   private isRunStatusTerminal(status: RunStatus): boolean {
@@ -221,8 +666,50 @@ export class InMemoryRunStore {
 
     run.status = status;
 
+    if (status === "running" && !run.startedAt) {
+      run.startedAt = atIsoTimestamp;
+    }
+
     if (this.isRunStatusTerminal(status)) {
       run.finishedAt = atIsoTimestamp;
     }
   }
+}
+
+function cloneRunFailure(failure: RunFailureDetails): RunFailureDetails {
+  return {
+    code: failure.code,
+    message: failure.message,
+    ...(failure.details
+      ? {
+          details: cloneRecord(failure.details),
+        }
+      : {}),
+  };
+}
+
+function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return structuredClone(value);
+  } catch {
+    return {
+      ...value,
+    };
+  }
+}
+
+function normalizeNonNegativeInteger(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.trunc(value));
+}
+
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return value > 0 ? Math.trunc(value) : fallback;
 }

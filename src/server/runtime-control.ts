@@ -40,6 +40,8 @@ export class RuntimeControl {
       return;
     }
 
+    // Clear first so concurrent cancellation requests are idempotent and do not
+    // invoke the same canceller multiple times.
     this.activeRunCanceller = null;
     await activeCanceller(reason);
   }
