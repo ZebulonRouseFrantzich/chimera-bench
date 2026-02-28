@@ -182,11 +182,14 @@ function validateServerArgs(
   validationMode: EngineValidationMode,
   issues: EngineValidationIssue[],
 ): void {
-  for (const argument of serverArgs) {
+  for (const [index, argument] of serverArgs.entries()) {
+    const path = `engine.serverArgs[${index}]`;
+
     if (!argument.startsWith("-")) {
       issues.push({
         code: "SERVER_ARG_POSITIONAL_NOT_ALLOWED",
         message: `Argument '${argument}' is positional; expected a --flag style argument.`,
+        path,
       });
       continue;
     }
@@ -197,6 +200,7 @@ function validateServerArgs(
       issues.push({
         code: "SERVER_ARG_RESERVED",
         message: `Argument '${flag}' is reserved and owned by the orchestrator.`,
+        path,
       });
       continue;
     }
@@ -205,6 +209,7 @@ function validateServerArgs(
       issues.push({
         code: "SERVER_ARG_DENYLISTED",
         message: `Argument '${flag}' is denied by the current safety policy.`,
+        path,
       });
       continue;
     }
@@ -215,6 +220,7 @@ function validateServerArgs(
         message:
           `Argument '${flag}' is not in the strict llama.cpp baseline. ` +
           "Use validationMode=permissive to experiment with additional flags.",
+        path,
       });
     }
   }

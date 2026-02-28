@@ -5,7 +5,10 @@ import {
   normalizeCreateRunRequest,
 } from "../api/schemas.ts";
 import type { EngineCatalog } from "../engines/engine-catalog.ts";
-import type { EngineRunConfigValidationFailure } from "../engines/engine-plugin.ts";
+import type {
+  EngineRunConfigValidationFailure,
+  EngineRunConfigValidationResult,
+} from "../engines/engine-plugin.ts";
 import { parseJsonBody, parseRunIdParam } from "../http/request-validation.ts";
 import type { InMemoryRunStore } from "../runs/in-memory-run-store.ts";
 import { createSseResponse } from "../sse/sse-response.ts";
@@ -51,7 +54,7 @@ export function registerRunRoutes(
       });
     }
 
-    let validationResult;
+    let validationResult: EngineRunConfigValidationResult;
     try {
       validationResult = await plugin.validateRunConfig(request);
     } catch (error) {
@@ -236,9 +239,9 @@ function buildValidationFailurePayload(
   const issues =
     failure.issues
       ?.map((issue) => ({
-        code: issue.code,
+        code: sanitizeErrorCode(issue.code),
         message: sanitizeErrorValue(issue.message),
-        path: issue.path ?? "(root)",
+        path: sanitizeIssuePath(issue.path),
       }))
       .filter((issue) => issue.code.length > 0 && issue.message.length > 0) ?? [];
 
@@ -258,4 +261,9 @@ function buildValidationFailurePayload(
 function sanitizeErrorCode(code: string): string {
   const normalized = code.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
   return normalized.length > 0 ? normalized : "VALIDATION_ENGINE_OPTIONS_INVALID";
+}
+
+function sanitizeIssuePath(path: string | undefined): string {
+  const sanitized = sanitizeErrorValue(path ?? "(root)");
+  return sanitized.length > 0 ? sanitized : "(root)";
 }
