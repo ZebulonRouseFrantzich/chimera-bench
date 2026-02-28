@@ -29,27 +29,33 @@ export async function startMdnsAdvertisement(
 
   const service = bonjour.publish(publishConfig);
 
-  const startupState = await waitForMdnsStartup(service, MDNS_STARTUP_TIMEOUT_MS);
+  let startupState: "confirmed" | "timeout";
+  try {
+    startupState = await waitForMdnsStartup(service, MDNS_STARTUP_TIMEOUT_MS);
+  } catch (error) {
+    await stopPublishedService(service, bonjour);
+    throw error;
+  }
+
   if (startupState === "timeout") {
     console.warn(
       `[chimera-bench] warning: mDNS advertisement did not confirm startup within ${MDNS_STARTUP_TIMEOUT_MS}ms.`,
     );
   }
 
-  return {
-    stop: () =>
-      new Promise<void>((resolve) => {
-        if (typeof service.stop !== "function") {
-          bonjour.destroy();
-          resolve();
-          return;
-        }
+  const onServiceError = (error: unknown): void => {
+    const message =
+      error instanceof Error ? error.message : "mDNS advertisement emitted an unknown error.";
+    console.warn(`[chimera-bench] warning: ${message}`);
+  };
 
-        service.stop(() => {
-          bonjour.destroy();
-          resolve();
-        });
-      }),
+  service.on("error", onServiceError);
+
+  return {
+    stop: async () => {
+      service.removeListener("error", onServiceError);
+      await stopPublishedService(service, bonjour);
+    },
   };
 }
 
@@ -58,21 +64,51 @@ async function waitForMdnsStartup(
   timeoutMs: number,
 ): Promise<"confirmed" | "timeout"> {
   return new Promise<"confirmed" | "timeout">((resolve, reject) => {
-    const timeout = setTimeout(() => resolve("timeout"), timeoutMs);
-
-    service.once("up", () => {
+    const settleResolve = (value: "confirmed" | "timeout"): void => {
       clearTimeout(timeout);
-      resolve("confirmed");
-    });
+      service.removeListener("up", handleUp);
+      service.removeListener("error", handleError);
+      resolve(value);
+    };
 
-    service.once("error", (error: unknown) => {
+    const settleReject = (error: Error): void => {
       clearTimeout(timeout);
+      service.removeListener("up", handleUp);
+      service.removeListener("error", handleError);
+      reject(error);
+    };
+
+    const timeout = setTimeout(() => settleResolve("timeout"), timeoutMs);
+
+    const handleUp = (): void => {
+      settleResolve("confirmed");
+    };
+
+    const handleError = (error: unknown): void => {
       if (error instanceof Error) {
-        reject(error);
+        settleReject(error);
         return;
       }
 
-      reject(new Error("mDNS advertisement failed to start."));
+      settleReject(new Error("mDNS advertisement failed to start."));
+    };
+
+    service.on("up", handleUp);
+    service.on("error", handleError);
+  });
+}
+
+function stopPublishedService(service: Service, bonjour: Bonjour): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (typeof service.stop !== "function") {
+      bonjour.destroy();
+      resolve();
+      return;
+    }
+
+    service.stop(() => {
+      bonjour.destroy();
+      resolve();
     });
   });
 }

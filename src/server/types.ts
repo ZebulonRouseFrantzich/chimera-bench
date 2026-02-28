@@ -10,6 +10,7 @@ export interface BasicAuthSettings {
   enabled: boolean;
   username: string;
   password?: string;
+  trustProxy?: boolean;
 }
 
 export interface ServeConfig {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { z } from "zod";
 import { basicAuthMiddleware } from "./middleware/basic-auth.ts";
 import { corsAllowlistMiddleware } from "./middleware/cors-allowlist.ts";
 import {
@@ -20,7 +21,6 @@ import {
 } from "./api/schemas.ts";
 import type { RuntimeControl } from "./runtime-control.ts";
 import type { BasicAuthSettings } from "./types.ts";
-import { z } from "zod";
 
 interface AppOptions {
   version: string;
@@ -386,6 +386,12 @@ async function readJsonPayloadWithLimit(
 
     totalBytes += value.byteLength;
     if (totalBytes > maxBytes) {
+      try {
+        await reader.cancel("payload too large");
+      } catch {
+        // Ignore reader cancellation errors while returning 413.
+      }
+
       return jsonError(context, 413, {
         code: "VALIDATION_BODY_TOO_LARGE",
         message: `Request body exceeds ${maxBytes} bytes.`,

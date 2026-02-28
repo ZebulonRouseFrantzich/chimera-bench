@@ -517,6 +517,66 @@ describe("server app", () => {
     expect(blocked.headers.get("Retry-After")).toBeDefined();
   });
 
+  test("ignores forwarded headers unless trust proxy mode is enabled", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: true,
+        username: "chimera",
+        password: "devpass",
+      },
+    });
+
+    for (let index = 0; index < 10; index += 1) {
+      const response = await app.request("http://localhost/global/health", {
+        headers: {
+          "X-Forwarded-For": `10.0.0.${index + 1}`,
+        },
+      });
+      expect(response.status).toBe(401);
+    }
+
+    const blocked = await app.request("http://localhost/global/health", {
+      headers: {
+        "X-Forwarded-For": "10.0.0.200",
+      },
+    });
+    expect(blocked.status).toBe(429);
+  });
+
+  test("uses forwarded headers for rate limiting in trust proxy mode", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: true,
+        username: "chimera",
+        password: "devpass",
+        trustProxy: true,
+      },
+    });
+
+    for (let index = 0; index < 10; index += 1) {
+      const response = await app.request("http://localhost/global/health", {
+        headers: {
+          "X-Forwarded-For": "10.10.10.10",
+        },
+      });
+      expect(response.status).toBe(401);
+    }
+
+    const blocked = await app.request("http://localhost/global/health", {
+      headers: {
+        "X-Forwarded-For": "10.10.10.10",
+      },
+    });
+    expect(blocked.status).toBe(429);
+
+    const differentAddress = await app.request("http://localhost/global/health", {
+      headers: {
+        "X-Forwarded-For": "10.10.10.11",
+      },
+    });
+    expect(differentAddress.status).toBe(401);
+  });
+
   test("handles auth preflight requests", async () => {
     const { app } = buildApp({
       auth: {

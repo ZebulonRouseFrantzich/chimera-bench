@@ -73,13 +73,39 @@ async function stopServer(input: {
   reason: string;
 }): Promise<void> {
   input.runtime.stopAcceptingNewRuns();
-  await input.runtime.cancelActiveRun(input.reason);
-  await input.runtime.cleanupEngineSubprocesses(input.reason);
-  input.runtime.closeSseStreams(input.reason);
+
+  const shutdownSteps: Array<Promise<unknown>> = [
+    Promise.resolve().then(() => input.runtime.cancelActiveRun(input.reason)),
+    Promise.resolve().then(() => input.runtime.cleanupEngineSubprocesses(input.reason)),
+    Promise.resolve().then(() => input.runtime.closeSseStreams(input.reason)),
+  ];
 
   if (input.mdnsHandle) {
-    await input.mdnsHandle.stop();
+    const mdnsHandle = input.mdnsHandle;
+    shutdownSteps.push(Promise.resolve().then(() => mdnsHandle.stop()));
   }
 
-  input.server.stop();
+  let results: PromiseSettledResult<unknown>[] = [];
+
+  try {
+    results = await Promise.allSettled(shutdownSteps);
+  } finally {
+    input.server.stop();
+  }
+
+  const firstRejection = results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+
+  if (firstRejection) {
+    throw toError(firstRejection.reason);
+  }
+}
+
+function toError(value: unknown): Error {
+  if (value instanceof Error) {
+    return value;
+  }
+
+  return new Error("Server shutdown encountered an unexpected error.");
 }
