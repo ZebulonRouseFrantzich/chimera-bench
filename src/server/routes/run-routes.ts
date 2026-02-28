@@ -4,7 +4,11 @@ import {
   CreateRunRequestSchema,
   normalizeCreateRunRequest,
 } from "../api/schemas.ts";
-import { STARTER_ENGINE_ID } from "../engines/starter-engine.ts";
+import type { EngineCatalog } from "../engines/engine-catalog.ts";
+import type {
+  EngineRunConfigValidationFailure,
+  EngineRunConfigValidationResult,
+} from "../engines/engine-plugin.ts";
 import { parseJsonBody, parseRunIdParam } from "../http/request-validation.ts";
 import type { InMemoryRunStore } from "../runs/in-memory-run-store.ts";
 import { createSseResponse } from "../sse/sse-response.ts";
@@ -15,6 +19,7 @@ const RUN_CREATE_BODY_LIMIT_BYTES = 64 * 1024;
 interface RegisterRunRoutesOptions {
   runtime: RuntimeControl;
   runStore: InMemoryRunStore;
+  engines: EngineCatalog;
 }
 
 export function registerRunRoutes(
@@ -40,13 +45,38 @@ export function registerRunRoutes(
 
     const request = normalizeCreateRunRequest(parsedBody);
 
-    if (request.engineId !== STARTER_ENGINE_ID) {
+    const plugin = options.engines.getById(request.engineId);
+    if (!plugin) {
       const safeEngineId = sanitizeErrorValue(request.engineId);
       return jsonError(context, 400, {
         code: "ENGINE_NOT_SUPPORTED",
         message: `Engine '${safeEngineId}' is not available in this build.`,
       });
     }
+
+    let validationResult: EngineRunConfigValidationResult;
+    try {
+      validationResult = await plugin.validateRunConfig(request);
+    } catch (error) {
+      return jsonError(context, 500, {
+        code: "ENGINE_VALIDATION_FAILED",
+        message: "Engine validation failed due to an unexpected internal error.",
+        ...(error instanceof Error
+          ? {
+              details: {
+                reason: error.message,
+              },
+            }
+          : {}),
+      });
+    }
+
+    if (!validationResult.ok) {
+      return jsonError(context, 400, buildValidationFailurePayload(validationResult));
+    }
+
+    request.engine.serverArgs = validationResult.normalized.serverArgs;
+    request.engine.requestParams = validationResult.normalized.requestParams;
 
     const runId = options.runStore.tryCreateQueuedRun({
       engineId: request.engineId,
@@ -191,4 +221,49 @@ export function registerRunRoutes(
 
 function sanitizeErrorValue(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, " ");
+}
+
+function buildValidationFailurePayload(
+  failure: EngineRunConfigValidationFailure,
+): {
+  code: string;
+  message: string;
+  details?: {
+    issues: Array<{
+      code: string;
+      message: string;
+      path: string;
+    }>;
+  };
+} {
+  const issues =
+    failure.issues
+      ?.map((issue) => ({
+        code: sanitizeErrorCode(issue.code),
+        message: sanitizeErrorValue(issue.message),
+        path: sanitizeIssuePath(issue.path),
+      }))
+      .filter((issue) => issue.code.length > 0 && issue.message.length > 0) ?? [];
+
+  return {
+    code: sanitizeErrorCode(failure.code),
+    message: sanitizeErrorValue(failure.message),
+    ...(issues.length > 0
+      ? {
+          details: {
+            issues,
+          },
+        }
+      : {}),
+  };
+}
+
+function sanitizeErrorCode(code: string): string {
+  const normalized = code.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  return normalized.length > 0 ? normalized : "VALIDATION_ENGINE_OPTIONS_INVALID";
+}
+
+function sanitizeIssuePath(path: string | undefined): string {
+  const sanitized = sanitizeErrorValue(path ?? "(root)");
+  return sanitized.length > 0 ? sanitized : "(root)";
 }

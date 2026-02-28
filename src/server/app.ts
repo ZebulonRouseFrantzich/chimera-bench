@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { getOrCreateRequestId, jsonError, setRequestId } from "./api/envelope.ts";
 import { createOpenApiDocument } from "./api/openapi.ts";
+import { createEngineCatalog } from "./engines/engine-catalog.ts";
+import type { EngineCatalog } from "./engines/engine-catalog.ts";
+import { starterLlamaCppPlugin } from "./engines/starter-engine.ts";
 import { corsAllowlistMiddleware } from "./middleware/cors-allowlist.ts";
 import { basicAuthMiddleware } from "./middleware/basic-auth.ts";
 import { registerEngineRoutes } from "./routes/engine-routes.ts";
@@ -11,11 +14,14 @@ import { InMemoryRunStore } from "./runs/in-memory-run-store.ts";
 import type { RuntimeControl } from "./runtime-control.ts";
 import type { BasicAuthSettings } from "./types.ts";
 
+const DEFAULT_ENGINE_CATALOG = createEngineCatalog([starterLlamaCppPlugin]);
+
 interface AppOptions {
   version: string;
   auth: BasicAuthSettings;
   corsAllowlist: string[];
   runtime: RuntimeControl;
+  engines?: EngineCatalog;
 }
 
 export function createApp(options: AppOptions): Hono {
@@ -23,6 +29,7 @@ export function createApp(options: AppOptions): Hono {
   const openApiDocument = createOpenApiDocument({
     version: options.version,
   });
+  const engines = options.engines ?? DEFAULT_ENGINE_CATALOG;
   const runStore = new InMemoryRunStore();
 
   app.use("*", async (context, next) => {
@@ -45,10 +52,13 @@ export function createApp(options: AppOptions): Hono {
     openApiDocument,
     runtime: options.runtime,
   });
-  registerEngineRoutes(app);
+  registerEngineRoutes(app, {
+    engines,
+  });
   registerRunRoutes(app, {
     runtime: options.runtime,
     runStore,
+    engines,
   });
 
   app.onError((error, context) => {
