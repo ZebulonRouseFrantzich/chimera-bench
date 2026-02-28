@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { createEngineCatalog } from "../src/server/engines/engine-catalog.ts";
+import {
+  ENGINE_PLUGIN_API_VERSION,
+  type EnginePlugin,
+} from "../src/server/engines/engine-plugin.ts";
 import { buildApp, createRun } from "./helpers/app-fixture.ts";
 
 describe("run routes", () => {
@@ -151,6 +156,91 @@ describe("run routes", () => {
     expect(response.status).toBe(400);
     const payload = await response.json();
     expect(payload.error.code).toBe("ENGINE_NOT_SUPPORTED");
+  });
+
+  test("maps plugin validation errors to 400 responses", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          validateRunConfig: async () => ({
+            ok: false,
+            code: "VALIDATION_ENGINE_OPTIONS_INVALID",
+            message: "Unsafe server arguments were supplied.",
+            issues: [
+              {
+                code: "SERVER_ARG_RESERVED",
+                message: "--port is reserved.",
+                path: "engine.serverArgs[0]",
+              },
+            ],
+          }),
+        }),
+      ]),
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: "/tmp/model.gguf",
+        },
+        engine: {
+          serverArgs: ["--port=1234"],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_ENGINE_OPTIONS_INVALID");
+    expect(payload.error.details.issues[0].code).toBe("SERVER_ARG_RESERVED");
+  });
+
+  test("maps thrown plugin validation failures to 500 responses", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          validateRunConfig: async () => {
+            throw new Error("Validation backend crashed");
+          },
+        }),
+      ]),
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: "/tmp/model.gguf",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(500);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("ENGINE_VALIDATION_FAILED");
   });
 
   test("sanitizes reflected engine identifiers in error messages", async () => {
@@ -375,3 +465,47 @@ describe("run routes", () => {
     expect(overflowPayload.error.code).toBe("SERVICE_CAPACITY_REACHED");
   });
 });
+
+function createTestPlugin(
+  overrides: Partial<EnginePlugin> = {},
+): EnginePlugin {
+  return {
+    apiVersion: ENGINE_PLUGIN_API_VERSION,
+    id: "llama-cpp",
+    displayName: "llama.cpp",
+    version: "test",
+    capabilities: {
+      chatCompletions: true,
+      localTarget: true,
+      streaming: true,
+    },
+    validateEnvironment: async () => ({
+      status: "ok",
+    }),
+    validateRunConfig: async (runConfig) => ({
+      ok: true,
+      normalized: {
+        serverArgs: [...runConfig.engine.serverArgs],
+        requestParams: { ...runConfig.engine.requestParams },
+      },
+    }),
+    buildLaunchConfig: async (runConfig) => ({
+      command: "llama-server",
+      args: [...runConfig.engine.serverArgs],
+    }),
+    start: async () => {
+      return;
+    },
+    waitUntilReady: async () => {
+      return;
+    },
+    executeCase: async () => ({
+      outputText: "",
+    }),
+    collectMetrics: async () => ({}),
+    stop: async () => {
+      return;
+    },
+    ...overrides,
+  };
+}

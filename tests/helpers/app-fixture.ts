@@ -1,10 +1,12 @@
 import { createApp } from "../../src/server/app.ts";
+import type { EngineCatalog } from "../../src/server/engines/engine-catalog.ts";
 import { RuntimeControl } from "../../src/server/runtime-control.ts";
 import type { BasicAuthSettings } from "../../src/server/types.ts";
 
 interface BuildAppInput {
   auth: BasicAuthSettings;
   corsAllowlist?: string[];
+  engines?: EngineCatalog;
 }
 
 export function buildApp(input: BuildAppInput): {
@@ -20,6 +22,11 @@ export function buildApp(input: BuildAppInput): {
       auth: input.auth,
       corsAllowlist: input.corsAllowlist ?? [],
       runtime,
+      ...(input.engines
+        ? {
+            engines: input.engines,
+          }
+        : {}),
     }),
   };
 }
