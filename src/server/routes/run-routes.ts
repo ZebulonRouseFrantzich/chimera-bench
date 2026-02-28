@@ -78,6 +78,7 @@ export function registerRunRoutes(
 
     request.engine.serverArgs = validationResult.normalized.serverArgs;
     request.engine.requestParams = validationResult.normalized.requestParams;
+    request.model.identifier = validationResult.normalized.modelIdentifier;
 
     const runId = options.runStore.tryCreateQueuedRun({
       engineId: request.engineId,

@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createEngineCatalog } from "../src/server/engines/engine-catalog.ts";
 import {
   ENGINE_PLUGIN_API_VERSION,
   type EnginePlugin,
 } from "../src/server/engines/engine-plugin.ts";
-import { buildApp, createRun } from "./helpers/app-fixture.ts";
+import {
+  buildApp,
+  createRun,
+} from "./helpers/app-fixture.ts";
 
 describe("run routes", () => {
   test("creates and retrieves a run summary", async () => {
@@ -156,6 +162,121 @@ describe("run routes", () => {
     expect(response.status).toBe(400);
     const payload = await response.json();
     expect(payload.error.code).toBe("ENGINE_NOT_SUPPORTED");
+  });
+
+  test("rejects missing model paths with model validation errors", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: "/tmp/missing-model.gguf",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_MODEL_IDENTIFIER_INVALID");
+    expect(payload.error.details.issues[0].code).toBe("MODEL_IDENTIFIER_NOT_FOUND");
+    expect(payload.error.details.issues[0].message).not.toContain("/tmp/missing-model.gguf");
+  });
+
+  test("reports invalid model root configuration distinctly", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-runs-misconfig-"));
+    const missingRoot = join(tempDirectory, "missing-root");
+
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      modelRoots: [missingRoot],
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: "/tmp/model.gguf",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_MODEL_ROOTS_INVALID");
+    expect(payload.error.details.issues[0].code).toBe("MODEL_ROOT_NOT_FOUND");
+    expect(payload.error.details.issues[0].message).not.toContain(missingRoot);
+
+    rmSync(tempDirectory, {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  test("enforces CHIMERA_MODEL_ROOTS confinement", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-runs-root-"));
+    const rootDirectory = join(tempDirectory, "roots");
+    const outsideModel = join(tempDirectory, "outside.gguf");
+    mkdirSync(rootDirectory);
+    writeFileSync(outsideModel, "fixture");
+
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      modelRoots: [rootDirectory],
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: outsideModel,
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_MODEL_IDENTIFIER_INVALID");
+    expect(payload.error.details.issues[0].code).toBe(
+      "MODEL_IDENTIFIER_OUTSIDE_ALLOWED_ROOTS",
+    );
+
+    rmSync(tempDirectory, {
+      recursive: true,
+      force: true,
+    });
   });
 
   test("maps plugin validation errors to 400 responses", async () => {
@@ -566,6 +687,7 @@ function createTestPlugin(
     validateRunConfig: async (runConfig) => ({
       ok: true,
       normalized: {
+        modelIdentifier: runConfig.model.identifier,
         serverArgs: [...runConfig.engine.serverArgs],
         requestParams: { ...runConfig.engine.requestParams },
       },

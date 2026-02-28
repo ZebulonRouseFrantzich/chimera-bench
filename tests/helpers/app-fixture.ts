@@ -1,3 +1,4 @@
+import { existsSync, writeFileSync } from "node:fs";
 import { createApp } from "../../src/server/app.ts";
 import type { EngineCatalog } from "../../src/server/engines/engine-catalog.ts";
 import type { EngineEnvironmentValidationSettings } from "../../src/server/routes/engine-routes.ts";
@@ -7,14 +8,18 @@ import type { BasicAuthSettings } from "../../src/server/types.ts";
 interface BuildAppInput {
   auth: BasicAuthSettings;
   corsAllowlist?: string[];
+  modelRoots?: string[];
   engines?: EngineCatalog;
   engineEnvironmentValidation?: EngineEnvironmentValidationSettings;
 }
+
+export const TEST_MODEL_IDENTIFIER = "/tmp/model.gguf";
 
 export function buildApp(input: BuildAppInput): {
   runtime: RuntimeControl;
   app: ReturnType<typeof createApp>;
 } {
+  ensureTestModelFixture();
   const runtime = new RuntimeControl();
 
   return {
@@ -24,6 +29,11 @@ export function buildApp(input: BuildAppInput): {
       auth: input.auth,
       corsAllowlist: input.corsAllowlist ?? [],
       runtime,
+      ...(input.modelRoots
+        ? {
+            modelRoots: input.modelRoots,
+          }
+        : {}),
       ...(input.engineEnvironmentValidation
         ? {
             engineEnvironmentValidation: input.engineEnvironmentValidation,
@@ -39,6 +49,8 @@ export function buildApp(input: BuildAppInput): {
 }
 
 export async function createRun(app: ReturnType<typeof createApp>): Promise<string> {
+  ensureTestModelFixture();
+
   const createResponse = await app.request("http://localhost/runs", {
     method: "POST",
     headers: {
@@ -50,7 +62,7 @@ export async function createRun(app: ReturnType<typeof createApp>): Promise<stri
         type: "local",
       },
       model: {
-        identifier: "/tmp/model.gguf",
+        identifier: TEST_MODEL_IDENTIFIER,
       },
     }),
   });
@@ -78,4 +90,12 @@ export function createBasicAuthorization(
   password = "devpass",
 ): string {
   return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+}
+
+function ensureTestModelFixture(): void {
+  if (existsSync(TEST_MODEL_IDENTIFIER)) {
+    return;
+  }
+
+  writeFileSync(TEST_MODEL_IDENTIFIER, "fixture");
 }

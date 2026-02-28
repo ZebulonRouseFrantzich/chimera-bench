@@ -1,15 +1,20 @@
 import { spawn } from "node:child_process";
 import type {
+  ChildProcess,
   ChildProcessWithoutNullStreams,
   SpawnOptionsWithoutStdio,
 } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
+import { access, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:net";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import type {
   EngineCaseConfig,
   EngineCaseResult,
   EngineEnvironmentSummary,
+  EngineStartFailedError,
   EngineLaunchConfig,
   EngineRunConfigValidationResult,
   EngineValidationIssue,
@@ -20,6 +25,7 @@ import type {
 } from "./engine-plugin.ts";
 import {
   ENGINE_PLUGIN_API_VERSION,
+  EngineStartFailedError as EngineStartFailedErrorClass,
   hasRestrictedEnvironmentOverrides,
 } from "./engine-plugin.ts";
 
@@ -36,6 +42,12 @@ const DEFAULT_STOP_GRACE_PERIOD_MS = 2_000;
 const DEFAULT_KILL_WAIT_TIMEOUT_MS = 1_000;
 const DEFAULT_BUFFERED_LOG_CHARS = 64 * 1024;
 const DEFAULT_DIAGNOSTIC_EXCERPT_CHARS = 4 * 1024;
+const DEFAULT_READINESS_POLL_INTERVAL_MS = 200;
+const DEFAULT_READINESS_TIMEOUT_MS = 30_000;
+const DEFAULT_READINESS_REQUEST_TIMEOUT_MS = 1_000;
+const DEFAULT_SERVER_HELP_TIMEOUT_MS = 5_000;
+const DEFAULT_MAX_HELP_OUTPUT_CHARS = 128 * 1024;
+const READINESS_ERROR_EXCERPT_CHARS = 256;
 
 const RESERVED_SERVER_FLAGS = new Set([
   "-m",
@@ -51,46 +63,9 @@ const RESERVED_SERVER_FLAGS = new Set([
 const DENYLISTED_SERVER_FLAGS = new Set([
   "--path-prompt-cache",
   "--prompt-cache",
+  "--prompt-cache-all",
   "--logdir",
-]);
-
-const STRICT_SERVER_FLAG_BASELINE = new Set([
-  "--alias",
-  "--batch-size",
-  "--cache-type-k",
-  "--cache-type-v",
-  "--chat-template",
-  "--ctx-size",
-  "--defrag-thold",
-  "--flash-attn",
-  "--gpu-layers",
-  "--grp-attn-n",
-  "--grp-attn-w",
-  "--jinja",
-  "--log-disable",
-  "--main-gpu",
-  "--metrics",
-  "--mlock",
-  "--n-gpu-layers",
-  "--n-predict",
-  "--n-probs",
-  "--no-mmap",
-  "--no-context-shift",
-  "--override-kv",
-  "--poll",
-  "--repeat-last-n",
-  "--repeat-penalty",
-  "--rope-freq-base",
-  "--rope-freq-scale",
-  "--seed",
-  "--split-mode",
-  "--temp",
-  "--threads",
-  "--threads-batch",
-  "--top-k",
-  "--top-p",
-  "--typical",
-  "--ubatch-size",
+  "--public",
 ]);
 
 const RESERVED_REQUEST_PARAM_KEYS = new Set(["messages", "model", "stream"]);
@@ -129,6 +104,8 @@ interface LlamaServerRunState {
   terminationPromise: Promise<ProcessTermination>;
   stdoutBuffer: RollingTextBuffer;
   stderrBuffer: RollingTextBuffer;
+  healthUrl: string;
+  healthRequestHeaders: Record<string, string>;
   apiKey: string;
   removeAbortListener: () => void;
 }
@@ -143,7 +120,10 @@ interface LlamaServerStartupFailure {
 
 interface SpawnAttemptSuccess {
   ok: true;
-  state: Omit<LlamaServerRunState, "apiKey" | "removeAbortListener">;
+  state: Pick<
+    LlamaServerRunState,
+    "process" | "terminationPromise" | "stdoutBuffer" | "stderrBuffer"
+  >;
 }
 
 interface SpawnAttemptFailure {
@@ -177,14 +157,59 @@ export interface StarterLlamaCppPluginDependencies {
   ) => ChildProcessWithoutNullStreams;
   allocateLoopbackPort: () => Promise<number>;
   createApiKey: () => string;
+  modelRoots: readonly string[];
   signalProcessGroup: (pid: number, signal: NodeJS.Signals) => void;
+  discoverSupportedServerFlags: () => Promise<ReadonlySet<string>>;
+  fetch: (url: string, init?: RequestInit) => Promise<Response>;
+  wait: (ms: number) => Promise<void>;
+  now: () => number;
   startupProbeWindowMs: number;
   startupRetryAttempts: number;
   stopGracePeriodMs: number;
   killWaitTimeoutMs: number;
+  readinessPollIntervalMs: number;
+  readinessTimeoutMs: number;
+  readinessRequestTimeoutMs: number;
   bufferedLogChars: number;
   diagnosticExcerptChars: number;
 }
+
+interface ReadinessProbeSuccess {
+  kind: "ready";
+}
+
+interface ReadinessProbeRetry {
+  kind: "retry";
+}
+
+interface ReadinessProbeFailure {
+  kind: "failed";
+  reason: string;
+}
+
+type ReadinessProbeResult =
+  | ReadinessProbeSuccess
+  | ReadinessProbeRetry
+  | ReadinessProbeFailure;
+
+interface ServerArgsValidationResult {
+  issues: EngineValidationIssue[];
+  strictFlagDiscoveryFailed: boolean;
+}
+
+interface ModelIdentifierValidationSuccess {
+  ok: true;
+  normalizedIdentifier: string;
+}
+
+interface ModelIdentifierValidationFailure {
+  ok: false;
+  issues: EngineValidationIssue[];
+}
+
+type ModelIdentifierValidationResult =
+  | ModelIdentifierValidationSuccess
+  | ModelIdentifierValidationFailure;
 
 export const starterLlamaCppPlugin = createStarterLlamaCppPlugin();
 
@@ -214,20 +239,65 @@ export function createStarterLlamaCppPlugin(
       runConfig: EngineRunConfig,
     ): Promise<EngineRunConfigValidationResult> {
       const issues: EngineValidationIssue[] = [];
+      let normalizedModelIdentifier = runConfig.model.identifier;
 
-      validateServerArgs(runConfig.engine.serverArgs, runConfig.validationMode, issues);
+      const modelIdentifierValidation = await validateModelIdentifier(
+        runConfig.model.identifier,
+        dependencies.modelRoots,
+      );
+      if (modelIdentifierValidation.ok) {
+        normalizedModelIdentifier = modelIdentifierValidation.normalizedIdentifier;
+      } else {
+        issues.push(...modelIdentifierValidation.issues);
+      }
+
+      const serverArgsValidation = await validateServerArgs(
+        runConfig.engine.serverArgs,
+        runConfig.validationMode,
+        dependencies,
+      );
+      issues.push(...serverArgsValidation.issues);
+
       validateRequestParams(
         runConfig.engine.requestParams,
         runConfig.validationMode,
         issues,
       );
 
-      if (issues.length > 0) {
+      if (serverArgsValidation.strictFlagDiscoveryFailed) {
         return {
           ok: false,
           code: "VALIDATION_ENGINE_OPTIONS_INVALID",
           message:
-            "Engine options are invalid for llama.cpp. Remove reserved or unsupported values and retry.",
+            "Strict server-argument validation requires parsing `llama-server --help`, but flag discovery failed. Fix the llama-server installation or retry with validationMode=permissive.",
+          issues,
+        };
+      }
+
+      if (issues.length > 0) {
+        const hasModelIdentifierIssue = issues.some((issue) =>
+          issue.code.startsWith("MODEL_IDENTIFIER_"),
+        );
+        const hasModelRootIssue = issues.some((issue) => issue.code.startsWith("MODEL_ROOT_"));
+
+        let code = "VALIDATION_ENGINE_OPTIONS_INVALID";
+        let message =
+          "Engine options are invalid for llama.cpp. Remove reserved or unsupported values and retry.";
+
+        if (hasModelIdentifierIssue) {
+          code = "VALIDATION_MODEL_IDENTIFIER_INVALID";
+          message =
+            "model.identifier must reference a readable local .gguf file within configured model roots.";
+        } else if (hasModelRootIssue) {
+          code = "VALIDATION_MODEL_ROOTS_INVALID";
+          message =
+            "Server model root configuration is invalid. Check CHIMERA_MODEL_ROOTS and retry.";
+        }
+
+        return {
+          ok: false,
+          code,
+          message,
           issues,
         };
       }
@@ -235,16 +305,29 @@ export function createStarterLlamaCppPlugin(
       return {
         ok: true,
         normalized: {
+          modelIdentifier: normalizedModelIdentifier,
           serverArgs: [...runConfig.engine.serverArgs],
           requestParams: { ...runConfig.engine.requestParams },
         },
       };
     },
     async buildLaunchConfig(runConfig: EngineRunConfig): Promise<EngineLaunchConfig> {
-      const issues: EngineValidationIssue[] = [];
-      validateServerArgs(runConfig.engine.serverArgs, runConfig.validationMode, issues);
+      const modelIdentifierValidation = await validateModelIdentifier(
+        runConfig.model.identifier,
+        dependencies.modelRoots,
+      );
+      if (!modelIdentifierValidation.ok) {
+        throw new Error(
+          "llama.cpp launch config rejected model.identifier; expected a readable local .gguf file.",
+        );
+      }
 
-      if (issues.length > 0) {
+      const serverArgsValidation = await validateServerArgs(
+        runConfig.engine.serverArgs,
+        "permissive",
+        dependencies,
+      );
+      if (serverArgsValidation.issues.length > 0) {
         throw new Error("llama.cpp launch config rejected invalid server args.");
       }
 
@@ -256,7 +339,7 @@ export function createStarterLlamaCppPlugin(
         command: LLAMA_SERVER_COMMAND,
         args: [
           "--model",
-          runConfig.model.identifier,
+          modelIdentifierValidation.normalizedIdentifier,
           "--host",
           LOOPBACK_HOST,
           "--port",
@@ -316,6 +399,8 @@ export function createStarterLlamaCppPlugin(
 
           const runState: LlamaServerRunState = {
             ...attemptResult.state,
+            healthUrl: buildHealthUrl(launchArgs),
+            healthRequestHeaders: buildHealthRequestHeaders(apiKey),
             apiKey,
             removeAbortListener,
           };
@@ -488,11 +573,45 @@ export function createStarterLlamaCppPlugin(
       });
     },
     async waitUntilReady(context: EngineRuntimeContext): Promise<void> {
-      if (!runStates.has(context.runId)) {
+      const runState = runStates.get(context.runId);
+      if (!runState) {
         throw new Error(
           `llama-server runtime is not active for run '${context.runId}'. Call start() first.`,
         );
       }
+
+      try {
+        await waitForReadinessProbe(runState, context.abortSignal, dependencies);
+      } catch (error) {
+        const readinessError = toError(error);
+        const startupFailure = buildEngineStartFailedError({
+          runId: context.runId,
+          reason: readinessError.message,
+          runState,
+          dependencies,
+        });
+        const activeRunState = runStates.get(context.runId);
+        if (activeRunState === runState) {
+          runStates.delete(context.runId);
+        }
+
+        await stopRunState(runState, {
+          runId: context.runId,
+          reason: "readiness-failed",
+          emitDiagnostic: context.emitDiagnostic,
+          dependencies,
+        });
+
+        throw startupFailure;
+      }
+
+      context.emitDiagnostic?.({
+        level: "info",
+        message: "llama-server readiness probe succeeded.",
+        data: {
+          runId: context.runId,
+        },
+      });
     },
     async executeCase(
       _context: EngineRuntimeContext,
@@ -529,23 +648,50 @@ export function createStarterLlamaCppPlugin(
 function createDependencies(
   overrides: Partial<StarterLlamaCppPluginDependencies>,
 ): StarterLlamaCppPluginDependencies {
+  const discoverSupportedServerFlagsImpl =
+    overrides.discoverSupportedServerFlags ?? discoverSupportedServerFlags;
+  let cachedSupportedServerFlagsPromise: Promise<ReadonlySet<string>> | null = null;
+
+  const discoverSupportedServerFlagsWithCache = async (): Promise<ReadonlySet<string>> => {
+    if (!cachedSupportedServerFlagsPromise) {
+      cachedSupportedServerFlagsPromise = discoverSupportedServerFlagsImpl().catch(
+        (error: unknown) => {
+          cachedSupportedServerFlagsPromise = null;
+          throw error;
+        },
+      );
+    }
+
+    return cachedSupportedServerFlagsPromise;
+  };
+
   return {
     spawnProcess: overrides.spawnProcess ?? spawn,
     allocateLoopbackPort: overrides.allocateLoopbackPort ?? allocateLoopbackPort,
     createApiKey:
       overrides.createApiKey ??
       (() => randomBytes(API_KEY_ENTROPY_BYTES).toString("base64url")),
+    modelRoots: overrides.modelRoots ? [...overrides.modelRoots] : [],
     signalProcessGroup:
       overrides.signalProcessGroup ??
       ((pid, signal) => {
         process.kill(-pid, signal);
       }),
+    discoverSupportedServerFlags: discoverSupportedServerFlagsWithCache,
+    fetch: overrides.fetch ?? fetch,
+    wait: overrides.wait ?? delay,
+    now: overrides.now ?? Date.now,
     startupProbeWindowMs:
       overrides.startupProbeWindowMs ?? DEFAULT_STARTUP_PROBE_WINDOW_MS,
     startupRetryAttempts:
       overrides.startupRetryAttempts ?? DEFAULT_STARTUP_RETRY_ATTEMPTS,
     stopGracePeriodMs: overrides.stopGracePeriodMs ?? DEFAULT_STOP_GRACE_PERIOD_MS,
     killWaitTimeoutMs: overrides.killWaitTimeoutMs ?? DEFAULT_KILL_WAIT_TIMEOUT_MS,
+    readinessPollIntervalMs:
+      overrides.readinessPollIntervalMs ?? DEFAULT_READINESS_POLL_INTERVAL_MS,
+    readinessTimeoutMs: overrides.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS,
+    readinessRequestTimeoutMs:
+      overrides.readinessRequestTimeoutMs ?? DEFAULT_READINESS_REQUEST_TIMEOUT_MS,
     bufferedLogChars: overrides.bufferedLogChars ?? DEFAULT_BUFFERED_LOG_CHARS,
     diagnosticExcerptChars:
       overrides.diagnosticExcerptChars ?? DEFAULT_DIAGNOSTIC_EXCERPT_CHARS,
@@ -743,6 +889,7 @@ async function stopRunState(
     });
   } finally {
     runState.apiKey = "";
+    runState.healthRequestHeaders = {};
   }
 }
 
@@ -1066,14 +1213,25 @@ class RollingTextBuffer {
   }
 }
 
-function validateServerArgs(
+async function validateServerArgs(
   serverArgs: string[],
   validationMode: EngineValidationMode,
-  issues: EngineValidationIssue[],
-): void {
-  for (const [index, argument] of serverArgs.entries()) {
-    const path = `engine.serverArgs[${index}]`;
+  dependencies: StarterLlamaCppPluginDependencies,
+): Promise<ServerArgsValidationResult> {
+  const issues: EngineValidationIssue[] = [];
+  const strictCandidateFlags: Array<{
+    flag: string;
+    rawFlag: string;
+    path: string;
+  }> = [];
 
+  for (let index = 0; index < serverArgs.length; index += 1) {
+    const argument = serverArgs[index];
+    if (!argument) {
+      continue;
+    }
+
+    const path = `engine.serverArgs[${index}]`;
     if (!argument.startsWith("-")) {
       issues.push({
         code: "SERVER_ARG_POSITIONAL_NOT_ALLOWED",
@@ -1083,36 +1241,84 @@ function validateServerArgs(
       continue;
     }
 
-    const flag = extractFlagToken(argument);
+    const rawFlag = extractFlagToken(argument);
+    const normalizedFlag = rawFlag.toLowerCase();
 
-    if (RESERVED_SERVER_FLAGS.has(flag)) {
+    if (RESERVED_SERVER_FLAGS.has(normalizedFlag)) {
       issues.push({
         code: "SERVER_ARG_RESERVED",
-        message: `Argument '${flag}' is reserved and owned by the orchestrator.`,
+        message: `Argument '${rawFlag}' is reserved and owned by the orchestrator.`,
         path,
       });
-      continue;
-    }
-
-    if (DENYLISTED_SERVER_FLAGS.has(flag)) {
+    } else if (DENYLISTED_SERVER_FLAGS.has(normalizedFlag)) {
       issues.push({
         code: "SERVER_ARG_DENYLISTED",
-        message: `Argument '${flag}' is denied by the current safety policy.`,
+        message: `Argument '${rawFlag}' is denied by the current safety policy.`,
         path,
       });
+    } else if (validationMode === "strict") {
+      strictCandidateFlags.push({
+        flag: normalizedFlag,
+        rawFlag,
+        path,
+      });
+    }
+
+    const nextArgument = serverArgs[index + 1];
+    if (
+      !argument.includes("=") &&
+      typeof nextArgument === "string" &&
+      nextArgument.length > 0 &&
+      isServerArgValueToken(nextArgument)
+    ) {
+      index += 1;
+    }
+  }
+
+  if (validationMode !== "strict" || strictCandidateFlags.length === 0) {
+    return {
+      issues,
+      strictFlagDiscoveryFailed: false,
+    };
+  }
+
+  let supportedFlags: ReadonlySet<string>;
+  try {
+    supportedFlags = await dependencies.discoverSupportedServerFlags();
+  } catch (error) {
+    const reason = normalizeIssueMessage(toError(error).message);
+    issues.push({
+      code: "SERVER_ARG_FLAG_DISCOVERY_FAILED",
+      message:
+        "Unable to parse supported flags from `llama-server --help` in strict mode. " +
+        `Retry with validationMode=permissive or fix llama-server installation. (${reason})`,
+      path: "engine.serverArgs",
+    });
+
+    return {
+      issues,
+      strictFlagDiscoveryFailed: true,
+    };
+  }
+
+  for (const candidate of strictCandidateFlags) {
+    if (supportedFlags.has(candidate.flag)) {
       continue;
     }
 
-    if (validationMode === "strict" && !STRICT_SERVER_FLAG_BASELINE.has(flag)) {
-      issues.push({
-        code: "SERVER_ARG_UNKNOWN",
-        message:
-          `Argument '${flag}' is not in the strict llama.cpp baseline. ` +
-          "Use validationMode=permissive to experiment with additional flags.",
-        path,
-      });
-    }
+    issues.push({
+      code: "SERVER_ARG_UNKNOWN",
+      message:
+        `Argument '${candidate.rawFlag}' is not reported by this llama-server build. ` +
+        "Use validationMode=permissive to experiment with unknown flags.",
+      path: candidate.path,
+    });
   }
+
+  return {
+    issues,
+    strictFlagDiscoveryFailed: false,
+  };
 }
 
 function validateRequestParams(
@@ -1121,11 +1327,13 @@ function validateRequestParams(
   issues: EngineValidationIssue[],
 ): void {
   for (const [key, value] of Object.entries(requestParams)) {
+    const path = `engine.requestParams.${key}`;
+
     if (RESERVED_REQUEST_PARAM_KEYS.has(key)) {
       issues.push({
         code: "REQUEST_PARAM_RESERVED",
         message: `requestParams.${key} is reserved and owned by the orchestrator.`,
-        path: `engine.requestParams.${key}`,
+        path,
       });
       continue;
     }
@@ -1136,18 +1344,719 @@ function validateRequestParams(
         message:
           `requestParams.${key} is not in the strict llama.cpp baseline. ` +
           "Use validationMode=permissive to experiment with additional keys.",
-        path: `engine.requestParams.${key}`,
+        path,
       });
       continue;
     }
 
-    if (!isRequestParamValueValid(value)) {
+    switch (key) {
+      case "temperature":
+        validateNumberRange(value, path, issues, {
+          code: "REQUEST_PARAM_INVALID_RANGE",
+          min: 0,
+          max: 2,
+          label: "temperature",
+        });
+        break;
+      case "top_p":
+        validateNumberRange(value, path, issues, {
+          code: "REQUEST_PARAM_INVALID_RANGE",
+          min: 0,
+          max: 1,
+          label: "top_p",
+        });
+        break;
+      case "frequency_penalty":
+      case "presence_penalty":
+        validateNumberRange(value, path, issues, {
+          code: "REQUEST_PARAM_INVALID_RANGE",
+          min: -2,
+          max: 2,
+          label: key,
+        });
+        break;
+      case "max_tokens":
+      case "n":
+      case "seed":
+      case "top_logprobs":
+        validateInteger(value, path, issues, {
+          code: "REQUEST_PARAM_INVALID_TYPE",
+          label: key,
+          ...(key === "seed"
+            ? {}
+            : {
+                min: 1,
+              }),
+          ...(key === "top_logprobs"
+            ? {
+                max: 20,
+              }
+            : {}),
+        });
+        break;
+      case "logprobs":
+        if (typeof value !== "boolean") {
+          issues.push({
+            code: "REQUEST_PARAM_INVALID_TYPE",
+            message: "requestParams.logprobs must be a boolean.",
+            path,
+          });
+        }
+        break;
+      case "stop":
+        if (typeof value === "string") {
+          break;
+        }
+
+        if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
+          break;
+        }
+
+        issues.push({
+          code: "REQUEST_PARAM_INVALID_TYPE",
+          message: "requestParams.stop must be a string or an array of strings.",
+          path,
+        });
+        break;
+      case "user":
+        if (typeof value !== "string") {
+          issues.push({
+            code: "REQUEST_PARAM_INVALID_TYPE",
+            message: "requestParams.user must be a string.",
+            path,
+          });
+        }
+        break;
+      case "response_format":
+        if (!isPlainObject(value)) {
+          issues.push({
+            code: "REQUEST_PARAM_INVALID_TYPE",
+            message: "requestParams.response_format must be an object.",
+            path,
+          });
+        }
+        break;
+      case "logit_bias":
+        if (!isPlainObject(value)) {
+          issues.push({
+            code: "REQUEST_PARAM_INVALID_TYPE",
+            message: "requestParams.logit_bias must be an object of numeric bias values.",
+            path,
+          });
+          break;
+        }
+
+        for (const [nestedKey, nestedValue] of Object.entries(value)) {
+          if (!Number.isFinite(Number.parseInt(nestedKey, 10))) {
+            issues.push({
+              code: "REQUEST_PARAM_INVALID_TYPE",
+              message: "requestParams.logit_bias keys must be token id strings.",
+              path: `${path}.${nestedKey}`,
+            });
+            continue;
+          }
+
+          if (typeof nestedValue !== "number" || !Number.isFinite(nestedValue)) {
+            issues.push({
+              code: "REQUEST_PARAM_INVALID_TYPE",
+              message: "requestParams.logit_bias values must be finite numbers.",
+              path: `${path}.${nestedKey}`,
+            });
+          }
+        }
+        break;
+      default:
+        if (!isRequestParamValueValid(value)) {
+          issues.push({
+            code: "REQUEST_PARAM_INVALID_TYPE",
+            message: `requestParams.${key} has an unsupported value type.`,
+            path,
+          });
+        }
+    }
+  }
+}
+
+async function validateModelIdentifier(
+  modelIdentifier: string,
+  modelRoots: readonly string[],
+): Promise<ModelIdentifierValidationResult> {
+  const issues: EngineValidationIssue[] = [];
+  const path = "model.identifier";
+  const normalized = modelIdentifier.trim();
+
+  if (normalized.length === 0) {
+    issues.push({
+      code: "MODEL_IDENTIFIER_EMPTY",
+      message: "model.identifier must not be empty.",
+      path,
+    });
+
+    return {
+      ok: false,
+      issues,
+    };
+  }
+
+  if (normalized.includes("://")) {
+    issues.push({
+      code: "MODEL_IDENTIFIER_NOT_LOCAL_PATH",
+      message: "model.identifier must be a local filesystem path.",
+      path,
+    });
+  }
+
+  if (!normalized.toLowerCase().endsWith(".gguf")) {
+    issues.push({
+      code: "MODEL_IDENTIFIER_EXTENSION_INVALID",
+      message: "model.identifier must point to a .gguf file.",
+      path,
+    });
+  }
+
+  const absolutePath = resolve(normalized);
+  let canonicalModelPath: string;
+
+  try {
+    canonicalModelPath = await realpath(absolutePath);
+  } catch {
+    issues.push({
+      code: "MODEL_IDENTIFIER_NOT_FOUND",
+      message: "model.identifier does not exist.",
+      path,
+    });
+
+    return {
+      ok: false,
+      issues,
+    };
+  }
+
+  let modelStats: Awaited<ReturnType<typeof stat>>;
+  try {
+    modelStats = await stat(canonicalModelPath);
+  } catch {
+    issues.push({
+      code: "MODEL_IDENTIFIER_NOT_FOUND",
+      message: "model.identifier is not accessible.",
+      path,
+    });
+
+    return {
+      ok: false,
+      issues,
+    };
+  }
+
+  if (!modelStats.isFile()) {
+    issues.push({
+      code: "MODEL_IDENTIFIER_NOT_FILE",
+      message: "model.identifier must reference a file, not a directory.",
+      path,
+    });
+  }
+
+  try {
+    await access(canonicalModelPath, fsConstants.R_OK);
+  } catch {
+    issues.push({
+      code: "MODEL_IDENTIFIER_NOT_READABLE",
+      message: "model.identifier must reference a readable file.",
+      path,
+    });
+  }
+
+  if (modelRoots.length > 0) {
+    const normalizedModelRoots = await resolveModelRoots([...modelRoots], path, issues);
+
+    if (
+      normalizedModelRoots.length > 0 &&
+      !normalizedModelRoots.some((rootPath) => isPathInsideRoot(canonicalModelPath, rootPath))
+    ) {
       issues.push({
-        code: "REQUEST_PARAM_INVALID_TYPE",
-        message: `requestParams.${key} has an unsupported value type.`,
-        path: `engine.requestParams.${key}`,
+        code: "MODEL_IDENTIFIER_OUTSIDE_ALLOWED_ROOTS",
+        message:
+          "model.identifier is outside CHIMERA_MODEL_ROOTS after resolving symlinks.",
+        path,
       });
     }
+  }
+
+  if (issues.length > 0) {
+    return {
+      ok: false,
+      issues,
+    };
+  }
+
+  return {
+    ok: true,
+    normalizedIdentifier: canonicalModelPath,
+  };
+}
+
+function buildHealthUrl(launchArgs: string[]): string {
+  const host = extractRequiredFlagValue(launchArgs, "--host");
+  const port = parseFlagIntValue(launchArgs, "--port");
+  if (port === null) {
+    throw new Error("llama.cpp launch config is missing a valid --port value.");
+  }
+
+  return `http://${host}:${port}/health`;
+}
+
+function buildHealthRequestHeaders(apiKey: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${apiKey}`,
+  };
+}
+
+async function waitForReadinessProbe(
+  runState: LlamaServerRunState,
+  abortSignal: AbortSignal,
+  dependencies: StarterLlamaCppPluginDependencies,
+): Promise<void> {
+  const deadlineMs = dependencies.now() + dependencies.readinessTimeoutMs;
+  const terminationGuard = runState.terminationPromise.then<ReadinessProbeFailure>((termination) => ({
+    kind: "failed",
+    reason: buildReadinessTerminationReason(termination),
+  }));
+
+  while (true) {
+    if (abortSignal.aborted) {
+      throw new Error("Run was aborted while waiting for llama-server readiness.");
+    }
+
+    const probeResult = await Promise.race([
+      probeReadiness(runState, dependencies),
+      terminationGuard,
+    ]);
+    if (probeResult.kind === "ready") {
+      return;
+    }
+
+    if (probeResult.kind === "failed") {
+      throw new Error(probeResult.reason);
+    }
+
+    if (dependencies.now() >= deadlineMs) {
+      throw new Error(
+        `Timed out waiting ${dependencies.readinessTimeoutMs}ms for llama-server readiness at ${runState.healthUrl}.`,
+      );
+    }
+
+    await dependencies.wait(dependencies.readinessPollIntervalMs);
+  }
+}
+
+function buildReadinessTerminationReason(termination: ProcessTermination): string {
+  if (termination.kind === "error") {
+    return `llama-server process terminated before readiness: ${termination.error.message}`;
+  }
+
+  if (termination.code !== null) {
+    return `llama-server process terminated before readiness with exit code ${termination.code}.`;
+  }
+
+  if (termination.signal !== null) {
+    return `llama-server process terminated before readiness with signal ${termination.signal}.`;
+  }
+
+  return "llama-server process terminated before readiness.";
+}
+
+async function probeReadiness(
+  runState: LlamaServerRunState,
+  dependencies: StarterLlamaCppPluginDependencies,
+): Promise<ReadinessProbeResult> {
+  const timeoutController = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    timeoutController.abort();
+  }, dependencies.readinessRequestTimeoutMs);
+
+  try {
+    const response = await dependencies.fetch(runState.healthUrl, {
+      method: "GET",
+      headers: runState.healthRequestHeaders,
+      signal: timeoutController.signal,
+    });
+
+    if (response.ok) {
+      return {
+        kind: "ready",
+      };
+    }
+
+    if (response.status === 503) {
+      return {
+        kind: "retry",
+      };
+    }
+
+    const bodyExcerpt = await readResponseExcerpt(response, READINESS_ERROR_EXCERPT_CHARS);
+    return {
+      kind: "failed",
+      reason:
+        `llama-server readiness check returned HTTP ${response.status}.` +
+        (bodyExcerpt.length > 0 ? ` Response excerpt: ${bodyExcerpt}` : ""),
+    };
+  } catch (error) {
+    const probeError = toError(error);
+    if (isTransientReadinessError(probeError)) {
+      return {
+        kind: "retry",
+      };
+    }
+
+    return {
+      kind: "failed",
+      reason: `llama-server readiness probe failed: ${probeError.message}`,
+    };
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+function buildEngineStartFailedError(input: {
+  runId: string;
+  reason: string;
+  runState: LlamaServerRunState;
+  dependencies: StarterLlamaCppPluginDependencies;
+}): EngineStartFailedError {
+  const secret = input.runState.apiKey;
+  const stderrExcerpt = redactSecret(
+    input.runState.stderrBuffer.excerpt(input.dependencies.diagnosticExcerptChars),
+    secret,
+  );
+  const stdoutExcerpt = redactSecret(
+    input.runState.stdoutBuffer.excerpt(input.dependencies.diagnosticExcerptChars),
+    secret,
+  );
+
+  const details: Record<string, unknown> = {
+    code: "ENGINE_START_FAILED",
+    reason: redactSecret(input.reason, secret),
+    ...(stderrExcerpt.length > 0
+      ? {
+          stderrExcerpt,
+        }
+      : {}),
+    ...(stdoutExcerpt.length > 0
+      ? {
+          stdoutExcerpt,
+        }
+      : {}),
+  };
+
+  return new EngineStartFailedErrorClass(
+    `ENGINE_START_FAILED: ${details.reason as string}`,
+    details,
+  );
+}
+
+async function discoverSupportedServerFlags(): Promise<ReadonlySet<string>> {
+  const output = await captureCommandOutput(
+    LLAMA_SERVER_COMMAND,
+    ["--help"],
+    DEFAULT_SERVER_HELP_TIMEOUT_MS,
+    DEFAULT_MAX_HELP_OUTPUT_CHARS,
+  );
+
+  const supportedFlags = parseSupportedServerFlags(`${output.stdout}\n${output.stderr}`);
+  if (supportedFlags.size > 0) {
+    return supportedFlags;
+  }
+
+  throw new Error(
+    "Unable to parse supported flags from `llama-server --help` output.",
+  );
+}
+
+async function captureCommandOutput(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+  maxCharsPerStream: number,
+): Promise<{
+  stdout: string;
+  stderr: string;
+}> {
+  return await new Promise((resolvePromise, rejectPromise) => {
+    let child: ChildProcess;
+    try {
+      child = spawn(command, args, {
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      rejectPromise(toError(error));
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+
+    const cleanup = () => {
+      clearTimeout(timeoutHandle);
+      child.off("error", onError);
+      child.off("close", onClose);
+    };
+
+    const onError = (error: Error) => {
+      cleanup();
+      rejectPromise(error);
+    };
+
+    const onClose = () => {
+      cleanup();
+
+      if (timedOut) {
+        rejectPromise(
+          new Error(
+            `Timed out after ${timeoutMs}ms while running '${command} ${args.join(" ")}'.`,
+          ),
+        );
+        return;
+      }
+
+      // Some llama-server builds exit non-zero for --help while still emitting
+      // complete flag documentation; callers validate parsed flag content.
+
+      resolvePromise({
+        stdout,
+        stderr,
+      });
+    };
+
+    child.once("error", onError);
+    child.once("close", onClose);
+
+    if (child.stdout) {
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string | Buffer) => {
+        stdout = appendBounded(stdout, chunk.toString(), maxCharsPerStream);
+      });
+    }
+
+    if (child.stderr) {
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string | Buffer) => {
+        stderr = appendBounded(stderr, chunk.toString(), maxCharsPerStream);
+      });
+    }
+  });
+}
+
+function parseSupportedServerFlags(helpOutput: string): ReadonlySet<string> {
+  const supportedFlags = new Set<string>();
+  const flagPattern = /(?:^|\s)(--[a-z0-9][a-z0-9-]*|-[a-z0-9])(?=\s|=|,|\]|$)/gi;
+
+  for (const match of helpOutput.matchAll(flagPattern)) {
+    const flag = match[1]?.trim().toLowerCase();
+    if (!flag) {
+      continue;
+    }
+
+    supportedFlags.add(flag);
+  }
+
+  return supportedFlags;
+}
+
+function appendBounded(existing: string, nextChunk: string, maxChars: number): string {
+  const combined = `${existing}${nextChunk}`;
+  if (combined.length <= maxChars) {
+    return combined;
+  }
+
+  return combined.slice(-maxChars);
+}
+
+function isTransientReadinessError(error: Error): boolean {
+  const errorWithCode = error as NodeJS.ErrnoException;
+  if (error.name === "AbortError") {
+    return true;
+  }
+
+  const code = errorWithCode.code;
+  if (
+    code === "ECONNREFUSED" ||
+    code === "ETIMEDOUT" ||
+    code === "EAI_AGAIN" ||
+    code === "ENOTFOUND" ||
+    code === "EHOSTUNREACH"
+  ) {
+    return true;
+  }
+
+  const normalizedMessage = error.message.toLowerCase();
+  return (
+    normalizedMessage.includes("connection refused") ||
+    normalizedMessage.includes("fetch failed") ||
+    normalizedMessage.includes("timed out") ||
+    normalizedMessage.includes("aborted") ||
+    normalizedMessage.includes("socket hang up")
+  );
+}
+
+async function readResponseExcerpt(response: Response, maxChars: number): Promise<string> {
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let excerpt = "";
+
+  try {
+    while (excerpt.length < maxChars) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        break;
+      }
+
+      excerpt += decoder.decode(chunk.value, {
+        stream: true,
+      });
+    }
+
+    excerpt += decoder.decode();
+    return normalizeIssueMessage(excerpt).slice(0, maxChars);
+  } catch {
+    return "";
+  } finally {
+    void reader.cancel().catch(() => {
+      return;
+    });
+  }
+}
+
+async function resolveModelRoots(
+  modelRoots: string[],
+  issuePath: string,
+  issues: EngineValidationIssue[],
+): Promise<string[]> {
+  const normalizedRoots = new Set<string>();
+
+  for (const [index, root] of modelRoots.entries()) {
+    const absoluteRoot = resolve(root);
+    let canonicalRoot: string;
+
+    try {
+      canonicalRoot = await realpath(absoluteRoot);
+    } catch {
+      issues.push({
+        code: "MODEL_ROOT_NOT_FOUND",
+        message: `CHIMERA_MODEL_ROOTS entry at index ${index} does not exist.`,
+        path: issuePath,
+      });
+      continue;
+    }
+
+    let rootStats: Awaited<ReturnType<typeof stat>>;
+    try {
+      rootStats = await stat(canonicalRoot);
+    } catch {
+      issues.push({
+        code: "MODEL_ROOT_NOT_FOUND",
+        message: `CHIMERA_MODEL_ROOTS entry at index ${index} is not accessible.`,
+        path: issuePath,
+      });
+      continue;
+    }
+
+    if (!rootStats.isDirectory()) {
+      issues.push({
+        code: "MODEL_ROOT_NOT_DIRECTORY",
+        message: `CHIMERA_MODEL_ROOTS entry at index ${index} is not a directory.`,
+        path: issuePath,
+      });
+      continue;
+    }
+
+    normalizedRoots.add(canonicalRoot);
+  }
+
+  return Array.from(normalizedRoots);
+}
+
+function isPathInsideRoot(filePath: string, rootPath: string): boolean {
+  const relativePath = relative(rootPath, filePath);
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+}
+
+function validateNumberRange(
+  value: unknown,
+  path: string,
+  issues: EngineValidationIssue[],
+  options: {
+    code: string;
+    min: number;
+    max: number;
+    label: string;
+  },
+): void {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    issues.push({
+      code: "REQUEST_PARAM_INVALID_TYPE",
+      message: `requestParams.${options.label} must be a finite number.`,
+      path,
+    });
+    return;
+  }
+
+  if (value < options.min || value > options.max) {
+    issues.push({
+      code: options.code,
+      message:
+        `requestParams.${options.label} must be between ${options.min} and ${options.max}.`,
+      path,
+    });
+  }
+}
+
+function validateInteger(
+  value: unknown,
+  path: string,
+  issues: EngineValidationIssue[],
+  options: {
+    code: string;
+    label: string;
+    min?: number;
+    max?: number;
+  },
+): void {
+  if (!Number.isInteger(value)) {
+    issues.push({
+      code: options.code,
+      message: `requestParams.${options.label} must be an integer.`,
+      path,
+    });
+    return;
+  }
+
+  const intValue = value as number;
+
+  if (typeof options.min === "number" && intValue < options.min) {
+    issues.push({
+      code: "REQUEST_PARAM_INVALID_RANGE",
+      message: `requestParams.${options.label} must be >= ${options.min}.`,
+      path,
+    });
+  }
+
+  if (typeof options.max === "number" && intValue > options.max) {
+    issues.push({
+      code: "REQUEST_PARAM_INVALID_RANGE",
+      message: `requestParams.${options.label} must be <= ${options.max}.`,
+      path,
+    });
   }
 }
 
@@ -1158,6 +2067,14 @@ function extractFlagToken(argument: string): string {
   }
 
   return argument.slice(0, equalsIndex);
+}
+
+function isServerArgValueToken(token: string): boolean {
+  if (!token.startsWith("-")) {
+    return true;
+  }
+
+  return /^-(?:\d|\.\d)/.test(token);
 }
 
 function isRequestParamValueValid(value: unknown): boolean {
@@ -1178,6 +2095,20 @@ function isRequestParamValueValid(value: unknown): boolean {
   }
 
   return false;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeIssueMessage(message: string): string {
+  return message.replace(/\s+/g, " ").trim();
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, ms);
+  });
 }
 
 function toError(value: unknown): Error {
