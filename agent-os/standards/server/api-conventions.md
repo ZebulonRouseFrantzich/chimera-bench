@@ -56,6 +56,15 @@ Use Bun + Hono with zod validation for all public server routes.
 - `GET /global/event` may be added for cross-project/global event streams when needed.
 - Use typed event payloads so clients can consume streams safely.
 
+## Engine discovery resilience
+
+- `GET /engines` should remain available even when a single engine validation fails.
+- Engine environment validation should use a bounded timeout to avoid hanging requests.
+- Cache environment validation summaries with a short TTL to reduce repeated expensive checks.
+- Deduplicate in-flight environment validations per engine so concurrent requests do not perform duplicate work.
+- Prefer shorter cache TTLs for error summaries than success summaries to reduce stale transient failures.
+- Return safe client-facing environment failure summaries; keep detailed diagnostics in server logs.
+
 ## Response envelope
 
 Success responses:

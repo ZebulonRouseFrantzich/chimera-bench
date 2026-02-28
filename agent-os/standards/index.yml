@@ -1,3 +1,9 @@
+global:
+  sanitization-and-safe-errors:
+    description: Shared sanitization and safe API error exposure conventions.
+  time-based-testing:
+    description: Deterministic testing conventions for TTL and timeout logic.
+
 plugins:
   engine-interface:
     description: Engine plugin contract, lifecycle, and pass-through argument rules.
