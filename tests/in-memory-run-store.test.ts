@@ -8,18 +8,19 @@ const RUN_INPUT = {
 };
 
 describe("InMemoryRunStore", () => {
-  test("returns null when capacity is full with non-terminal runs", () => {
+  test("enforces single active run concurrency", () => {
     const store = new InMemoryRunStore({
       maxTrackedRuns: 2,
     });
 
-    const runA = store.tryCreateQueuedRun(RUN_INPUT);
-    const runB = store.tryCreateQueuedRun(RUN_INPUT);
-    const runC = store.tryCreateQueuedRun(RUN_INPUT);
+    const runA = store.tryCreateQueuedRunDetailed(RUN_INPUT);
+    const runB = store.tryCreateQueuedRunDetailed(RUN_INPUT);
 
-    expect(runA).not.toBeNull();
-    expect(runB).not.toBeNull();
-    expect(runC).toBeNull();
+    expect(runA.ok).toBe(true);
+    expect(runB.ok).toBe(false);
+    if (!runB.ok) {
+      expect(runB.reason).toBe("concurrency");
+    }
   });
 
   test("evicts the oldest terminal run when creating at capacity", () => {
@@ -28,16 +29,23 @@ describe("InMemoryRunStore", () => {
     });
 
     const runA = store.tryCreateQueuedRun(RUN_INPUT);
-    const runB = store.tryCreateQueuedRun(RUN_INPUT);
 
     expect(typeof runA).toBe("string");
-    expect(typeof runB).toBe("string");
-    if (!runA || !runB) {
+    if (!runA) {
       throw new Error("Expected initial runs to be created.");
     }
 
     const cancelledStatus = store.cancelRun(runA, new Date().toISOString());
     expect(cancelledStatus).toBe("cancelled");
+
+    const runB = store.tryCreateQueuedRun(RUN_INPUT);
+    expect(typeof runB).toBe("string");
+    if (!runB) {
+      throw new Error("Expected second run to be created.");
+    }
+
+    const cancelledStatusB = store.cancelRun(runB, new Date().toISOString());
+    expect(cancelledStatusB).toBe("cancelled");
 
     const runC = store.tryCreateQueuedRun(RUN_INPUT);
     expect(typeof runC).toBe("string");
@@ -79,5 +87,55 @@ describe("InMemoryRunStore", () => {
 
     expect(typeof nextRunId).toBe("string");
     expect(store.hasRun(runId)).toBe(false);
+  });
+
+  test("uses injected clock values for createdAt timestamps", () => {
+    const store = new InMemoryRunStore();
+    const now = 1_700_000_000_000;
+    const runId = store.tryCreateQueuedRun(RUN_INPUT, now);
+
+    expect(typeof runId).toBe("string");
+    if (!runId) {
+      throw new Error("Expected run to be created.");
+    }
+
+    const summary = store.getRunSummary(runId);
+    expect(summary?.createdAt).toBe(new Date(now).toISOString());
+  });
+
+  test("deep-clones failure details for persisted results", () => {
+    const store = new InMemoryRunStore();
+    const runId = store.tryCreateQueuedRun(RUN_INPUT);
+
+    expect(typeof runId).toBe("string");
+    if (!runId) {
+      throw new Error("Expected run to be created.");
+    }
+
+    const details = {
+      nested: {
+        code: "initial",
+      },
+    };
+
+    store.failRun(runId, new Date().toISOString(), {
+      code: "RUN_CASE_FAILED",
+      message: "Case failed",
+      details,
+    });
+
+    details.nested.code = "mutated";
+
+    const result = store.getRunResult(runId);
+    const failureDetails = result?.error as
+      | {
+          details?: {
+            nested?: {
+              code?: string;
+            };
+          };
+        }
+      | undefined;
+    expect(failureDetails?.details?.nested?.code).toBe("initial");
   });
 });

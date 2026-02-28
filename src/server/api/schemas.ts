@@ -4,6 +4,10 @@ import {
   errorEnvelopeSchema,
   successEnvelopeSchema,
 } from "./envelope.ts";
+import {
+  DEFAULT_CASE_TIMEOUT_MS,
+  DEFAULT_RUN_TIMEOUT_MS,
+} from "../runs/defaults.ts";
 
 extendZodWithOpenApi(z);
 
@@ -19,6 +23,8 @@ const MAX_REQUEST_PARAM_KEY_LENGTH = 128;
 const MAX_REQUEST_PARAM_DEPTH = 8;
 const MAX_REQUEST_PARAM_NODES = 512;
 const MAX_REQUEST_PARAM_STRING_LENGTH = 8192;
+const MAX_CASE_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_RUN_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const RUN_ID_PATTERN =
   /^run_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -73,10 +79,24 @@ export const RunEngineOptionsSchema = z.object({
   requestParams: RequestParamsSchema.optional(),
 });
 
-export const RunTimeoutsSchema = z.object({
-  caseMs: z.number().int().positive().optional(),
-  runMs: z.number().int().positive().optional(),
-});
+export const RunTimeoutsSchema = z
+  .object({
+    caseMs: z.number().int().positive().max(MAX_CASE_TIMEOUT_MS).optional(),
+    runMs: z.number().int().positive().max(MAX_RUN_TIMEOUT_MS).optional(),
+  })
+  .superRefine((value, context) => {
+    if (
+      typeof value.caseMs === "number" &&
+      typeof value.runMs === "number" &&
+      value.caseMs > value.runMs
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["caseMs"],
+        message: "timeouts.caseMs must be <= timeouts.runMs when both are provided.",
+      });
+    }
+  });
 
 export const CreateRunRequestSchema = z.object({
   engineId: z.string().min(1).max(MAX_ENGINE_ID_LENGTH),
@@ -173,7 +193,7 @@ export interface NormalizedCreateRunRequest {
     requestParams: Record<string, unknown>;
   };
   validationMode: z.infer<typeof ValidationModeSchema>;
-  timeouts?: z.infer<typeof RunTimeoutsSchema>;
+  timeouts: z.infer<typeof RunTimeoutsSchema>;
 }
 
 export function normalizeCreateRunRequest(
@@ -189,7 +209,10 @@ export function normalizeCreateRunRequest(
       requestParams: request.engine?.requestParams ?? {},
     },
     validationMode: request.validationMode ?? "strict",
-    ...(request.timeouts ? { timeouts: request.timeouts } : {}),
+    timeouts: {
+      caseMs: request.timeouts?.caseMs ?? DEFAULT_CASE_TIMEOUT_MS,
+      runMs: request.timeouts?.runMs ?? DEFAULT_RUN_TIMEOUT_MS,
+    },
   };
 }
 

@@ -37,19 +37,48 @@ describe("RuntimeControl", () => {
     expect(cancelCalls).toBe(1);
   });
 
-  test("clears active run canceller even when cancellation fails", async () => {
+  test("deduplicates concurrent cancellation requests", async () => {
+    const runtime = new RuntimeControl();
+    let cancelCalls = 0;
+    let releaseCancellation!: () => void;
+    const cancellationGate = new Promise<void>((resolve) => {
+      releaseCancellation = resolve;
+    });
+
+    runtime.setActiveRunCanceller(async () => {
+      cancelCalls += 1;
+      await cancellationGate;
+    });
+
+    const firstCancellation = runtime.cancelActiveRun("shutdown");
+    const secondCancellation = runtime.cancelActiveRun("shutdown");
+    await Bun.sleep(0);
+    expect(cancelCalls).toBe(1);
+
+    releaseCancellation();
+    await Promise.all([firstCancellation, secondCancellation]);
+
+    await runtime.cancelActiveRun("shutdown");
+
+    expect(cancelCalls).toBe(1);
+  });
+
+  test("retains active run canceller when cancellation fails so callers can retry", async () => {
     const runtime = new RuntimeControl();
     let cancelCalls = 0;
 
     runtime.setActiveRunCanceller(async () => {
       cancelCalls += 1;
-      throw new Error("cancel failed");
+      if (cancelCalls === 1) {
+        throw new Error("cancel failed");
+      }
     });
 
     await expect(runtime.cancelActiveRun("shutdown")).rejects.toThrow("cancel failed");
     await runtime.cancelActiveRun("shutdown");
+    await runtime.cancelActiveRun("shutdown");
 
-    expect(cancelCalls).toBe(1);
+    expect(cancelCalls).toBe(2);
   });
 
   test("stops registered engine subprocesses during cleanup", async () => {

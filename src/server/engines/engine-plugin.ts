@@ -115,7 +115,13 @@ export interface EngineRuntimeContext {
 export interface EngineCaseConfig {
   caseId: string;
   index: number;
+  promptId: string;
   prompt: string;
+  messages: Array<{
+    role: "system" | "user" | "assistant";
+    content: string;
+  }>;
+  requestParams: Record<string, unknown>;
 }
 
 export interface EngineCaseResult {
@@ -137,10 +143,14 @@ export interface EnginePlugin {
   buildLaunchConfig(runConfig: EngineRunConfig): Promise<EngineLaunchConfig>;
   start(context: EngineRuntimeContext): Promise<void>;
   waitUntilReady(context: EngineRuntimeContext): Promise<void>;
+  // Implementations should honor context.abortSignal and stop in-flight work
+  // promptly so orchestration timeouts and cancellations reclaim resources.
   executeCase(
     context: EngineRuntimeContext,
     caseConfig: EngineCaseConfig,
   ): Promise<EngineCaseResult>;
   collectMetrics(context: EngineRuntimeContext): Promise<Record<string, unknown>>;
+  // Implementations should resolve promptly and force-stop lingering
+  // subprocesses after a short grace period.
   stop(context: EngineRuntimeContext): Promise<void>;
 }

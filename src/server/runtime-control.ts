@@ -13,6 +13,7 @@ interface SseStreamHandle {
 export class RuntimeControl {
   private acceptingNewRuns = true;
   private activeRunCanceller: ActiveRunCanceller | null = null;
+  private activeRunCancellation: Promise<void> | null = null;
   private readonly engineProcesses = new Set<EngineProcessHandle>();
   private readonly sseStreams = new Set<SseStreamHandle>();
 
@@ -35,13 +36,29 @@ export class RuntimeControl {
   }
 
   async cancelActiveRun(reason: string): Promise<void> {
+    if (this.activeRunCancellation) {
+      await this.activeRunCancellation;
+      return;
+    }
+
     const activeCanceller = this.activeRunCanceller;
     if (!activeCanceller) {
       return;
     }
 
-    this.activeRunCanceller = null;
-    await activeCanceller(reason);
+    const cancellationPromise = Promise.resolve().then(() => activeCanceller(reason));
+    this.activeRunCancellation = cancellationPromise;
+
+    try {
+      await cancellationPromise;
+      if (this.activeRunCanceller === activeCanceller) {
+        this.activeRunCanceller = null;
+      }
+    } finally {
+      if (this.activeRunCancellation === cancellationPromise) {
+        this.activeRunCancellation = null;
+      }
+    }
   }
 
   registerEngineProcess(handle: EngineProcessHandle): () => void {

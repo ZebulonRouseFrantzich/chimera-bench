@@ -11,6 +11,15 @@ export interface SseResponseOptions {
   heartbeatEvent: string;
   disconnectedEvent: string;
   payloadBase: Record<string, unknown>;
+  replayEvents?: Array<{
+    event: string;
+    payload: Record<string, unknown>;
+  }>;
+  subscribe?: (
+    emit: (event: string, payload: Record<string, unknown>) => void,
+  ) => (() => void) | void;
+  shouldCloseAfterEvent?: (event: string, payload: Record<string, unknown>) => boolean;
+  closeReason?: string;
 }
 
 export function createSseResponse(context: Context, input: SseResponseOptions): Response {
@@ -18,6 +27,7 @@ export function createSseResponse(context: Context, input: SseResponseOptions): 
   const abortSignal = context.req.raw.signal;
   let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
   let unregisterSseStream: (() => void) | null = null;
+  let unsubscribeCustomEvents: (() => void) | null = null;
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   let abortListenerRegistered = false;
   let closed = false;
@@ -58,6 +68,18 @@ export function createSseResponse(context: Context, input: SseResponseOptions): 
     enqueueEvent(event, payload);
   };
 
+  const emitEvent = (event: string, payload: Record<string, unknown>): void => {
+    pushEvent(event, payload);
+
+    if (closed || !input.shouldCloseAfterEvent) {
+      return;
+    }
+
+    if (input.shouldCloseAfterEvent(event, payload)) {
+      closeStream(input.closeReason ?? "stream-complete");
+    }
+  };
+
   const closeStream = (reason: string): void => {
     if (closed) {
       return;
@@ -90,6 +112,11 @@ export function createSseResponse(context: Context, input: SseResponseOptions): 
       unregisterSseStream = null;
     }
 
+    if (unsubscribeCustomEvents) {
+      unsubscribeCustomEvents();
+      unsubscribeCustomEvents = null;
+    }
+
     if (abortListenerRegistered) {
       abortSignal.removeEventListener("abort", handleAbort);
       abortListenerRegistered = false;
@@ -115,13 +142,41 @@ export function createSseResponse(context: Context, input: SseResponseOptions): 
         return;
       }
 
-      pushEvent(input.connectedEvent, withTimestamp());
+      emitEvent(input.connectedEvent, withTimestamp());
+      if (closed) {
+        return;
+      }
+
+      if (input.replayEvents) {
+        for (const replayEvent of input.replayEvents) {
+          if (closed) {
+            break;
+          }
+
+          emitEvent(replayEvent.event, withTimestamp(replayEvent.payload));
+        }
+      }
+
+      if (closed) {
+        return;
+      }
+
+      if (input.subscribe) {
+        const unsubscribe = input.subscribe((event, payload) => {
+          emitEvent(event, withTimestamp(payload));
+        });
+
+        if (typeof unsubscribe === "function") {
+          unsubscribeCustomEvents = unsubscribe;
+        }
+      }
+
       if (closed) {
         return;
       }
 
       heartbeatInterval = setInterval(() => {
-        pushEvent(input.heartbeatEvent, withTimestamp());
+        emitEvent(input.heartbeatEvent, withTimestamp());
       }, HEARTBEAT_INTERVAL_MS);
       if (closed && heartbeatInterval) {
         clearInterval(heartbeatInterval);
