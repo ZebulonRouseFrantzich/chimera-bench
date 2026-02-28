@@ -268,7 +268,7 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     expect(signalCalls).toEqual(["SIGTERM"]);
   });
 
-  test("waitUntilReady surfaces ENGINE_START_FAILED on non-2xx health", async () => {
+  test("waitUntilReady surfaces ENGINE_START_FAILED on non-retryable health", async () => {
     const processHandle = new FakeChildProcess(62002);
     const signalCalls: NodeJS.Signals[] = [];
 
@@ -282,7 +282,7 @@ describe("starter llama.cpp plugin process lifecycle", () => {
       spawnProcess: () => processHandle.asChildProcess(),
       fetch: async () => {
         return new Response("health endpoint not ready", {
-          status: 503,
+          status: 418,
         });
       },
       signalProcessGroup: (_pid, signal) => {
@@ -301,6 +301,46 @@ describe("starter llama.cpp plugin process lifecycle", () => {
       code: "ENGINE_START_FAILED",
     });
     expect(signalCalls).toEqual(["SIGTERM"]);
+  });
+
+  test("waitUntilReady fails fast when process exits before readiness", async () => {
+    const processHandle = new FakeChildProcess(62003);
+    const signalCalls: NodeJS.Signals[] = [];
+    let waitCalls = 0;
+
+    const plugin = createStarterLlamaCppPlugin({
+      allocateLoopbackPort: async () => 43132,
+      createApiKey: () => TEST_API_KEY,
+      startupProbeWindowMs: 5,
+      readinessPollIntervalMs: 10,
+      readinessTimeoutMs: 5_000,
+      readinessRequestTimeoutMs: 250,
+      spawnProcess: () => processHandle.asChildProcess(),
+      fetch: async () => {
+        const transientError = new Error("connect ECONNREFUSED 127.0.0.1");
+        (transientError as NodeJS.ErrnoException).code = "ECONNREFUSED";
+        throw transientError;
+      },
+      wait: async () => {
+        waitCalls += 1;
+      },
+      signalProcessGroup: (_pid, signal) => {
+        signalCalls.push(signal);
+      },
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(createRunConfig());
+    const context = createContext("run_ready_terminated", launchConfig);
+
+    await plugin.start(context);
+    processHandle.emitExit(1, null);
+
+    await expect(plugin.waitUntilReady(context)).rejects.toMatchObject({
+      code: "ENGINE_START_FAILED",
+    });
+
+    expect(waitCalls).toBe(0);
+    expect(signalCalls.includes("SIGKILL")).toBe(false);
   });
 
   test("validates strict server flags via llama-server --help discovery", async () => {
@@ -366,6 +406,15 @@ describe("starter llama.cpp plugin process lifecycle", () => {
       discoverSupportedServerFlags: async () => new Set(["--threads"]),
     });
 
+    const strictTopPResult = await plugin.validateRunConfig(
+      createRunConfig({
+        requestParams: {
+          top_p: 0,
+        },
+      }),
+    );
+    expect(strictTopPResult.ok).toBe(true);
+
     const strictResult = await plugin.validateRunConfig(
       createRunConfig({
         requestParams: {
@@ -387,6 +436,22 @@ describe("starter llama.cpp plugin process lifecycle", () => {
       }),
     );
     expect(permissiveResult.ok).toBe(true);
+  });
+
+  test("reports model root configuration errors with dedicated code", async () => {
+    const plugin = createStarterLlamaCppPlugin({
+      discoverSupportedServerFlags: async () => new Set(["--threads"]),
+      modelRoots: ["/tmp/chimera-missing-root"],
+    });
+
+    const validationResult = await plugin.validateRunConfig(createRunConfig());
+
+    expect(validationResult.ok).toBe(false);
+    if (!validationResult.ok) {
+      expect(validationResult.code).toBe("VALIDATION_MODEL_ROOTS_INVALID");
+      expect(validationResult.issues?.[0]?.code).toBe("MODEL_ROOT_NOT_FOUND");
+      expect(validationResult.issues?.[0]?.message).not.toContain("/tmp/chimera-missing-root");
+    }
   });
 
   test("rejects model paths outside CHIMERA_MODEL_ROOTS after symlink resolution", async () => {

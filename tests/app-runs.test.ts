@@ -192,6 +192,47 @@ describe("run routes", () => {
     const payload = await response.json();
     expect(payload.error.code).toBe("VALIDATION_MODEL_IDENTIFIER_INVALID");
     expect(payload.error.details.issues[0].code).toBe("MODEL_IDENTIFIER_NOT_FOUND");
+    expect(payload.error.details.issues[0].message).not.toContain("/tmp/missing-model.gguf");
+  });
+
+  test("reports invalid model root configuration distinctly", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-runs-misconfig-"));
+    const missingRoot = join(tempDirectory, "missing-root");
+
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      modelRoots: [missingRoot],
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: "/tmp/model.gguf",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_MODEL_ROOTS_INVALID");
+    expect(payload.error.details.issues[0].code).toBe("MODEL_ROOT_NOT_FOUND");
+    expect(payload.error.details.issues[0].message).not.toContain(missingRoot);
+
+    rmSync(tempDirectory, {
+      recursive: true,
+      force: true,
+    });
   });
 
   test("enforces CHIMERA_MODEL_ROOTS confinement", async () => {

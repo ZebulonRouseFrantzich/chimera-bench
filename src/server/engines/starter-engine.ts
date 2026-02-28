@@ -275,15 +275,29 @@ export function createStarterLlamaCppPlugin(
       }
 
       if (issues.length > 0) {
-        const hasModelIssue = issues.some((issue) => issue.code.startsWith("MODEL_"));
+        const hasModelIdentifierIssue = issues.some((issue) =>
+          issue.code.startsWith("MODEL_IDENTIFIER_"),
+        );
+        const hasModelRootIssue = issues.some((issue) => issue.code.startsWith("MODEL_ROOT_"));
+
+        let code = "VALIDATION_ENGINE_OPTIONS_INVALID";
+        let message =
+          "Engine options are invalid for llama.cpp. Remove reserved or unsupported values and retry.";
+
+        if (hasModelIdentifierIssue) {
+          code = "VALIDATION_MODEL_IDENTIFIER_INVALID";
+          message =
+            "model.identifier must reference a readable local .gguf file within configured model roots.";
+        } else if (hasModelRootIssue) {
+          code = "VALIDATION_MODEL_ROOTS_INVALID";
+          message =
+            "Server model root configuration is invalid. Check CHIMERA_MODEL_ROOTS and retry.";
+        }
+
         return {
           ok: false,
-          code: hasModelIssue
-            ? "VALIDATION_MODEL_IDENTIFIER_INVALID"
-            : "VALIDATION_ENGINE_OPTIONS_INVALID",
-          message: hasModelIssue
-            ? "model.identifier must reference a readable local .gguf file within configured model roots."
-            : "Engine options are invalid for llama.cpp. Remove reserved or unsupported values and retry.",
+          code,
+          message,
           issues,
         };
       }
@@ -1347,7 +1361,7 @@ function validateRequestParams(
       case "top_p":
         validateNumberRange(value, path, issues, {
           code: "REQUEST_PARAM_INVALID_RANGE",
-          min: Number.MIN_VALUE,
+          min: 0,
           max: 1,
           label: "top_p",
         });
@@ -1508,7 +1522,7 @@ async function validateModelIdentifier(
   } catch {
     issues.push({
       code: "MODEL_IDENTIFIER_NOT_FOUND",
-      message: `model.identifier '${absolutePath}' does not exist.`,
+      message: "model.identifier does not exist.",
       path,
     });
 
@@ -1524,7 +1538,7 @@ async function validateModelIdentifier(
   } catch {
     issues.push({
       code: "MODEL_IDENTIFIER_NOT_FOUND",
-      message: `model.identifier '${canonicalModelPath}' is not accessible.`,
+      message: "model.identifier is not accessible.",
       path,
     });
 
@@ -1603,13 +1617,20 @@ async function waitForReadinessProbe(
   dependencies: StarterLlamaCppPluginDependencies,
 ): Promise<void> {
   const deadlineMs = dependencies.now() + dependencies.readinessTimeoutMs;
+  const terminationGuard = runState.terminationPromise.then<ReadinessProbeFailure>((termination) => ({
+    kind: "failed",
+    reason: buildReadinessTerminationReason(termination),
+  }));
 
   while (true) {
     if (abortSignal.aborted) {
       throw new Error("Run was aborted while waiting for llama-server readiness.");
     }
 
-    const probeResult = await probeReadiness(runState, dependencies);
+    const probeResult = await Promise.race([
+      probeReadiness(runState, dependencies),
+      terminationGuard,
+    ]);
     if (probeResult.kind === "ready") {
       return;
     }
@@ -1626,6 +1647,22 @@ async function waitForReadinessProbe(
 
     await dependencies.wait(dependencies.readinessPollIntervalMs);
   }
+}
+
+function buildReadinessTerminationReason(termination: ProcessTermination): string {
+  if (termination.kind === "error") {
+    return `llama-server process terminated before readiness: ${termination.error.message}`;
+  }
+
+  if (termination.code !== null) {
+    return `llama-server process terminated before readiness with exit code ${termination.code}.`;
+  }
+
+  if (termination.signal !== null) {
+    return `llama-server process terminated before readiness with signal ${termination.signal}.`;
+  }
+
+  return "llama-server process terminated before readiness.";
 }
 
 async function probeReadiness(
@@ -1907,7 +1944,7 @@ async function resolveModelRoots(
 ): Promise<string[]> {
   const normalizedRoots = new Set<string>();
 
-  for (const root of modelRoots) {
+  for (const [index, root] of modelRoots.entries()) {
     const absoluteRoot = resolve(root);
     let canonicalRoot: string;
 
@@ -1916,7 +1953,7 @@ async function resolveModelRoots(
     } catch {
       issues.push({
         code: "MODEL_ROOT_NOT_FOUND",
-        message: `CHIMERA_MODEL_ROOTS entry '${root}' does not exist.`,
+        message: `CHIMERA_MODEL_ROOTS entry at index ${index} does not exist.`,
         path: issuePath,
       });
       continue;
@@ -1928,7 +1965,7 @@ async function resolveModelRoots(
     } catch {
       issues.push({
         code: "MODEL_ROOT_NOT_FOUND",
-        message: `CHIMERA_MODEL_ROOTS entry '${root}' is not accessible.`,
+        message: `CHIMERA_MODEL_ROOTS entry at index ${index} is not accessible.`,
         path: issuePath,
       });
       continue;
@@ -1937,7 +1974,7 @@ async function resolveModelRoots(
     if (!rootStats.isDirectory()) {
       issues.push({
         code: "MODEL_ROOT_NOT_DIRECTORY",
-        message: `CHIMERA_MODEL_ROOTS entry '${root}' is not a directory.`,
+        message: `CHIMERA_MODEL_ROOTS entry at index ${index} is not a directory.`,
         path: issuePath,
       });
       continue;
