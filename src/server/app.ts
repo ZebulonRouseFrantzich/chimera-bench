@@ -4,7 +4,7 @@ import { getOrCreateRequestId, jsonError, setRequestId } from "./api/envelope.ts
 import { createOpenApiDocument } from "./api/openapi.ts";
 import { createEngineCatalog } from "./engines/engine-catalog.ts";
 import type { EngineCatalog } from "./engines/engine-catalog.ts";
-import { starterLlamaCppPlugin } from "./engines/starter-engine.ts";
+import { createStarterLlamaCppPlugin } from "./engines/starter-engine.ts";
 import { corsAllowlistMiddleware } from "./middleware/cors-allowlist.ts";
 import { basicAuthMiddleware } from "./middleware/basic-auth.ts";
 import { registerEngineRoutes } from "./routes/engine-routes.ts";
@@ -15,13 +15,12 @@ import { InMemoryRunStore } from "./runs/in-memory-run-store.ts";
 import type { RuntimeControl } from "./runtime-control.ts";
 import type { BasicAuthSettings } from "./types.ts";
 
-const DEFAULT_ENGINE_CATALOG = createEngineCatalog([starterLlamaCppPlugin]);
-
 interface AppOptions {
   version: string;
   auth: BasicAuthSettings;
   corsAllowlist: string[];
   runtime: RuntimeControl;
+  modelRoots?: string[];
   engines?: EngineCatalog;
   engineEnvironmentValidation?: EngineEnvironmentValidationSettings;
 }
@@ -31,7 +30,7 @@ export function createApp(options: AppOptions): Hono {
   const openApiDocument = createOpenApiDocument({
     version: options.version,
   });
-  const engines = options.engines ?? DEFAULT_ENGINE_CATALOG;
+  const engines = options.engines ?? createDefaultEngineCatalog(options.modelRoots ?? []);
   const runStore = new InMemoryRunStore();
 
   app.use("*", async (context, next) => {
@@ -88,4 +87,12 @@ export function createApp(options: AppOptions): Hono {
   });
 
   return app;
+}
+
+function createDefaultEngineCatalog(modelRoots: string[]): EngineCatalog {
+  return createEngineCatalog([
+    createStarterLlamaCppPlugin({
+      modelRoots,
+    }),
+  ]);
 }

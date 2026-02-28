@@ -2,6 +2,18 @@ export type EngineValidationMode = "strict" | "permissive";
 
 export const ENGINE_PLUGIN_API_VERSION = 1;
 
+export class EngineStartFailedError extends Error {
+  readonly code = "ENGINE_START_FAILED";
+
+  constructor(
+    message: string,
+    readonly details?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "EngineStartFailedError";
+  }
+}
+
 const RESTRICTED_ENVIRONMENT_OVERRIDE_KEYS = new Set([
   "LD_PRELOAD",
   "LD_AUDIT",
@@ -51,6 +63,7 @@ export interface EngineValidationIssue {
 export interface EngineRunConfigValidationSuccess {
   ok: true;
   normalized: {
+    modelIdentifier: string;
     serverArgs: string[];
     requestParams: Record<string, unknown>;
   };

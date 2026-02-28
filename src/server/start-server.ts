@@ -15,6 +15,7 @@ export async function startServer(config: ServeConfig): Promise<ServerHandle> {
     version: config.version,
     auth: config.auth,
     corsAllowlist: config.corsAllowlist,
+    modelRoots: config.modelRoots,
     runtime,
   });
 

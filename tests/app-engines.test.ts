@@ -200,6 +200,7 @@ function createTestPlugin(overrides: Partial<EnginePlugin>): EnginePlugin {
     validateRunConfig: async (runConfig) => ({
       ok: true,
       normalized: {
+        modelIdentifier: runConfig.model.identifier,
         serverArgs: [...runConfig.engine.serverArgs],
         requestParams: { ...runConfig.engine.requestParams },
       },
