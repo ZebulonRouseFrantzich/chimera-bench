@@ -1,4 +1,6 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createApp } from "../../src/server/app.ts";
 import type { EngineCatalog } from "../../src/server/engines/engine-catalog.ts";
 import type { EngineEnvironmentValidationSettings } from "../../src/server/routes/engine-routes.ts";
@@ -11,9 +13,21 @@ interface BuildAppInput {
   modelRoots?: string[];
   engines?: EngineCatalog;
   engineEnvironmentValidation?: EngineEnvironmentValidationSettings;
+  runArtifactsRootDir?: string;
 }
 
 export const TEST_MODEL_IDENTIFIER = "/tmp/model.gguf";
+const TEST_RUN_ARTIFACTS_ROOT_DIR = join(
+  tmpdir(),
+  `chimera-bench-test-runs-${process.pid}`,
+);
+
+process.once("exit", () => {
+  rmSync(TEST_RUN_ARTIFACTS_ROOT_DIR, {
+    recursive: true,
+    force: true,
+  });
+});
 
 export function buildApp(input: BuildAppInput): {
   runtime: RuntimeControl;
@@ -29,6 +43,7 @@ export function buildApp(input: BuildAppInput): {
       auth: input.auth,
       corsAllowlist: input.corsAllowlist ?? [],
       runtime,
+      runArtifactsRootDir: input.runArtifactsRootDir ?? TEST_RUN_ARTIFACTS_ROOT_DIR,
       ...(input.modelRoots
         ? {
             modelRoots: input.modelRoots,

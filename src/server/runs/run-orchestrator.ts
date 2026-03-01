@@ -18,11 +18,17 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "./defaults.ts";
+import {
+  type RunArtifactStore,
+  RunArtifactWriteError,
+} from "./run-artifact-store.ts";
 import type { StarterWorkload } from "./starter-workload.ts";
+import { estimateTokenCount } from "./token-estimation.ts";
 
 interface RunOrchestratorOptions {
   runtime: RuntimeControl;
   runStore: InMemoryRunStore;
+  runArtifacts: RunArtifactStore;
   engines: EngineCatalog;
   now?: () => number;
 }
@@ -245,6 +251,7 @@ export class RunOrchestrator {
           index: nextCaseIndex,
         });
 
+        const contextTokens = estimateTokenCount(workloadCase.prompt);
         const caseStartMs = this.now();
         const remainingRunMs = getRemainingRunTimeMs();
         const effectiveCaseTimeoutMs = Math.max(1, Math.min(caseTimeoutMs, remainingRunMs));
@@ -277,6 +284,7 @@ export class RunOrchestrator {
             caseId: workloadCase.caseId,
             promptId: workloadCase.promptId,
             index: nextCaseIndex,
+            contextTokens,
             latencyMs: this.now() - caseStartMs,
             outputText: caseResult.outputText,
             requestParams: input.runConfig.engine.requestParams,
@@ -300,6 +308,7 @@ export class RunOrchestrator {
             caseId: workloadCase.caseId,
             promptId: workloadCase.promptId,
             index: nextCaseIndex,
+            contextTokens,
             latencyMs: this.now() - caseStartMs,
             requestParams: input.runConfig.engine.requestParams,
             error: failure,
@@ -347,6 +356,7 @@ export class RunOrchestrator {
       }
 
       this.options.runStore.completeRun(input.runId, this.nowIso(), metrics);
+      await this.persistRunArtifact(input.runId);
     } catch (error) {
       if (
         error instanceof RunCancelledError ||
@@ -358,15 +368,18 @@ export class RunOrchestrator {
           this.nowIso(),
           sanitizeControlCharacters(cancellationReason),
         );
+        await this.persistRunArtifact(input.runId);
         return;
       }
 
       if (error instanceof FatalRunExecutionError) {
         this.failRunWithRemainingCases(input, nextCaseIndex, error.failure);
+        await this.persistRunArtifact(input.runId);
         return;
       }
 
       this.failRunWithRemainingCases(input, nextCaseIndex, toRunFailure(error));
+      await this.persistRunArtifact(input.runId);
     } finally {
       unregisterActiveRunCanceller();
 
@@ -409,6 +422,7 @@ export class RunOrchestrator {
         caseId: workloadCase.caseId,
         promptId: workloadCase.promptId,
         index,
+        contextTokens: estimateTokenCount(workloadCase.prompt),
         latencyMs: 0,
         requestParams: input.runConfig.engine.requestParams,
         error: failure,
@@ -420,6 +434,23 @@ export class RunOrchestrator {
 
   private nowIso(): string {
     return new Date(this.now()).toISOString();
+  }
+
+  private async persistRunArtifact(runId: string): Promise<void> {
+    const result = this.options.runStore.getRunResult(runId);
+    if (!result) {
+      return;
+    }
+
+    try {
+      await this.options.runArtifacts.writeResult(runId, result);
+    } catch (error) {
+      const reason =
+        error instanceof RunArtifactWriteError ? error.logReason : toError(error).message;
+      console.error(
+        `[chimera-bench] runId=${runId} runResultPersistError=${sanitizeControlCharacters(reason)}`,
+      );
+    }
   }
 
   private logDiagnostic(runId: string, diagnostic: EngineDiagnostic): void {

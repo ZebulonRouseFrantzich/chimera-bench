@@ -10,6 +10,10 @@ import {
   DEFAULT_RUN_TIMEOUT_MS,
   RUN_RESULT_SCHEMA_VERSION,
 } from "./defaults.ts";
+import {
+  estimateTokenCount,
+  estimateTokensPerSecond,
+} from "./token-estimation.ts";
 
 export const DEFAULT_MAX_TRACKED_RUNS = 1000;
 export const DEFAULT_TERMINAL_RUN_RETENTION_MS = 6 * 60 * 60 * 1000;
@@ -47,23 +51,37 @@ export interface RunFailureDetails {
   details?: Record<string, unknown>;
 }
 
+type RunTargetType = "local" | "ssh";
+
 interface StoredCaseOutcome {
+  runId: string;
   caseId: string;
   promptId: string;
   index: number;
   status: "completed" | "failed";
+  contextTokens: number;
+  engineArgs: string[];
+  requestParams: Record<string, unknown>;
   latencyMs: number;
+  ttftMs: number | null;
+  outputTokens: number;
+  tokensPerSecond: number;
+  promptEvalTokensPerSecond: number | null;
+  acceptanceRatio: number | null;
+  error: RunFailureDetails | null;
   outputText?: string;
   rawResponse?: unknown;
-  requestParams: Record<string, unknown>;
-  error?: RunFailureDetails;
 }
 
 interface RunRecord {
   runId: string;
   engineId: string;
+  engineVersion: string;
+  orchestratorVersion: string;
+  target: RunTargetType;
   modelIdentifier: string;
   workloadId: string;
+  engineArgs: string[];
   status: RunStatus;
   createdAt: string;
   startedAt: string | null;
@@ -80,8 +98,12 @@ interface RunRecord {
 
 interface CreateQueuedRunInput {
   engineId: string;
+  engineVersion?: string;
+  orchestratorVersion?: string;
+  target?: RunTargetType;
   modelIdentifier: string;
   workloadId: string;
+  engineArgs?: string[];
   totalCases?: number;
   caseTimeoutMs?: number;
   runTimeoutMs?: number;
@@ -179,8 +201,12 @@ export class InMemoryRunStore {
     const record: RunRecord = {
       runId,
       engineId: input.engineId,
+      engineVersion: input.engineVersion ?? "unknown",
+      orchestratorVersion: input.orchestratorVersion ?? "0.0.0",
+      target: input.target ?? "local",
       modelIdentifier: input.modelIdentifier,
       workloadId: input.workloadId,
+      engineArgs: [...(input.engineArgs ?? [])],
       status: "queued",
       createdAt,
       startedAt: null,
@@ -296,6 +322,7 @@ export class InMemoryRunStore {
       caseId: string;
       promptId: string;
       index: number;
+      contextTokens: number;
       latencyMs: number;
       outputText: string;
       requestParams: Record<string, unknown>;
@@ -307,21 +334,33 @@ export class InMemoryRunStore {
       return undefined;
     }
 
+    const latencyMs = normalizeNonNegativeInteger(input.latencyMs, 0);
+    const outputTokens = estimateTokenCount(input.outputText);
+
     run.caseOutcomes.push({
+      runId,
       caseId: input.caseId,
       promptId: input.promptId,
       index: input.index,
       status: "completed",
-      latencyMs: normalizeNonNegativeInteger(input.latencyMs, 0),
+      contextTokens: normalizeNonNegativeInteger(input.contextTokens, 0),
+      engineArgs: [...run.engineArgs],
+      requestParams: {
+        ...input.requestParams,
+      },
+      latencyMs,
+      ttftMs: null,
+      outputTokens,
+      tokensPerSecond: estimateTokensPerSecond(outputTokens, latencyMs),
+      promptEvalTokensPerSecond: null,
+      acceptanceRatio: null,
+      error: null,
       outputText: input.outputText,
       ...(input.rawResponse === undefined
         ? {}
         : {
             rawResponse: input.rawResponse,
           }),
-      requestParams: {
-        ...input.requestParams,
-      },
     });
     run.completedCases += 1;
     this.reconcileTotalCases(run);
@@ -343,6 +382,7 @@ export class InMemoryRunStore {
       caseId: string;
       promptId: string;
       index: number;
+      contextTokens: number;
       latencyMs: number;
       requestParams: Record<string, unknown>;
       error: RunFailureDetails;
@@ -356,14 +396,22 @@ export class InMemoryRunStore {
     const sanitizedError = cloneRunFailure(input.error);
 
     run.caseOutcomes.push({
+      runId,
       caseId: input.caseId,
       promptId: input.promptId,
       index: input.index,
       status: "failed",
-      latencyMs: normalizeNonNegativeInteger(input.latencyMs, 0),
+      contextTokens: normalizeNonNegativeInteger(input.contextTokens, 0),
+      engineArgs: [...run.engineArgs],
       requestParams: {
         ...input.requestParams,
       },
+      latencyMs: normalizeNonNegativeInteger(input.latencyMs, 0),
+      ttftMs: null,
+      outputTokens: 0,
+      tokensPerSecond: 0,
+      promptEvalTokensPerSecond: null,
+      acceptanceRatio: null,
       error: sanitizedError,
     });
     run.failedCases += 1;
@@ -551,13 +599,16 @@ export class InMemoryRunStore {
     return {
       schemaVersion: RUN_RESULT_SCHEMA_VERSION,
       runId: run.runId,
-      status: run.status,
+      createdAt: run.createdAt,
+      orchestratorVersion: run.orchestratorVersion,
       workloadId: run.workloadId,
       engineId: run.engineId,
+      engineVersion: run.engineVersion,
+      target: run.target,
       model: {
         identifier: run.modelIdentifier,
       },
-      createdAt: run.createdAt,
+      status: run.status,
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
       durationMs,
@@ -567,24 +618,38 @@ export class InMemoryRunStore {
       },
       summary: this.buildProgress(run),
       cases: run.caseOutcomes.map((caseOutcome) => ({
-        ...caseOutcome,
+        runId: caseOutcome.runId,
+        caseId: caseOutcome.caseId,
+        promptId: caseOutcome.promptId,
+        index: caseOutcome.index,
+        contextTokens: caseOutcome.contextTokens,
+        engineArgs: [...caseOutcome.engineArgs],
         requestParams: {
           ...caseOutcome.requestParams,
         },
-        ...(caseOutcome.error
-          ? {
-              error: cloneRunFailure(caseOutcome.error),
-            }
-          : {}),
+        status: caseOutcome.status,
+        latencyMs: caseOutcome.latencyMs,
+        ttftMs: caseOutcome.ttftMs,
+        outputTokens: caseOutcome.outputTokens,
+        tokensPerSecond: caseOutcome.tokensPerSecond,
+        promptEvalTokensPerSecond: caseOutcome.promptEvalTokensPerSecond,
+        acceptanceRatio: caseOutcome.acceptanceRatio,
+        error: caseOutcome.error ? cloneRunFailure(caseOutcome.error) : null,
+        ...(caseOutcome.outputText === undefined
+          ? {}
+          : {
+              outputText: caseOutcome.outputText,
+            }),
+        ...(caseOutcome.rawResponse === undefined
+          ? {}
+          : {
+              rawResponse: caseOutcome.rawResponse,
+            }),
       })),
-      ...(run.failure
-        ? {
-            error: cloneRunFailure(run.failure),
-          }
-        : {}),
+      error: run.failure ? cloneRunFailure(run.failure) : null,
       ...(run.metrics
         ? {
-            metrics: {
+            metricsExtra: {
               ...run.metrics,
             },
           }
