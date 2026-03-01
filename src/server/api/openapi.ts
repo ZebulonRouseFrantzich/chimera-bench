@@ -4,9 +4,14 @@ import {
 } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
 import {
+  DeleteTargetProfileEnvelopeSchema,
   CancelRunEnvelopeSchema,
   CreateRunEnvelopeSchema,
   CreateRunRequestSchema,
+  TargetProfileIdParamsSchema,
+  TargetProfileEnvelopeSchema,
+  TargetProfilesEnvelopeSchema,
+  UpsertTargetProfileRequestSchema,
   EnginesEnvelopeSchema,
   ErrorEnvelopeSchema,
   HealthEnvelopeSchema,
@@ -35,7 +40,27 @@ export function createOpenApiDocument(input: OpenApiInput): object {
   );
   const runResultResponse = registry.register("RunResultResponse", RunResultEnvelopeSchema);
   const cancelRunResponse = registry.register("CancelRunResponse", CancelRunEnvelopeSchema);
+  const targetProfileResponse = registry.register(
+    "TargetProfileResponse",
+    TargetProfileEnvelopeSchema,
+  );
+  const targetProfilesResponse = registry.register(
+    "TargetProfilesResponse",
+    TargetProfilesEnvelopeSchema,
+  );
+  const deleteTargetProfileResponse = registry.register(
+    "DeleteTargetProfileResponse",
+    DeleteTargetProfileEnvelopeSchema,
+  );
+  const upsertTargetProfileRequest = registry.register(
+    "UpsertTargetProfileRequest",
+    UpsertTargetProfileRequestSchema,
+  );
   const runIdParams = registry.register("RunIdParams", RunIdParamsSchema);
+  const targetProfileIdParams = registry.register(
+    "TargetProfileIdParams",
+    TargetProfileIdParamsSchema,
+  );
   const errorResponse = registry.register("ErrorResponse", ErrorEnvelopeSchema);
 
   registry.registerPath({
@@ -129,6 +154,218 @@ export function createOpenApiDocument(input: OpenApiInput): object {
       },
       401: {
         description: "Authentication required",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/targets",
+    summary: "List SSH target profiles",
+    tags: ["targets"],
+    responses: {
+      200: {
+        description: "Known SSH target profiles",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: targetProfilesResponse,
+          },
+        },
+      },
+      401: {
+        description: "Authentication required",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+      500: {
+        description: "Target profile load failed",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/targets",
+    summary: "Create or update an SSH target profile",
+    tags: ["targets"],
+    request: {
+      body: {
+        required: true,
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: upsertTargetProfileRequest,
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: "Target profile updated",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: targetProfileResponse,
+          },
+        },
+      },
+      201: {
+        description: "Target profile created",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: targetProfileResponse,
+          },
+        },
+      },
+      400: {
+        description: "Target profile validation failed",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+      401: {
+        description: "Authentication required",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+      413: {
+        description: "Payload too large",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+      415: {
+        description: "Unsupported content type",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+      500: {
+        description: "Target profile persistence failed",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/targets/{id}",
+    summary: "Read an SSH target profile",
+    tags: ["targets"],
+    request: {
+      params: targetProfileIdParams,
+    },
+    responses: {
+      200: {
+        description: "Target profile",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: targetProfileResponse,
+          },
+        },
+      },
+      400: {
+        description: "Invalid target profile id",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+      401: {
+        description: "Authentication required",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+      404: {
+        description: "Target profile not found",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+      500: {
+        description: "Target profile load failed",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/targets/{id}",
+    summary: "Delete an SSH target profile",
+    tags: ["targets"],
+    request: {
+      params: targetProfileIdParams,
+    },
+    responses: {
+      200: {
+        description: "Target profile deleted",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: deleteTargetProfileResponse,
+          },
+        },
+      },
+      400: {
+        description: "Invalid target profile id",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+      401: {
+        description: "Authentication required",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+      404: {
+        description: "Target profile not found",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
+      500: {
+        description: "Target profile delete failed",
         content: {
           [JSON_CONTENT_TYPE]: {
             schema: errorResponse,

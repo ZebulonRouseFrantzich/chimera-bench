@@ -8,6 +8,10 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../runs/defaults.ts";
+import {
+  TargetProfileIdSchema as TargetProfileIdentifierSchema,
+  TargetProfileSchema as TargetProfileModelSchema,
+} from "../targets/target-profile.ts";
 
 extendZodWithOpenApi(z);
 
@@ -112,6 +116,12 @@ export const RunIdParamsSchema = z.object({
   runId: RunIdSchema,
 });
 
+export const TargetProfileIdParamsSchema = z.object({
+  id: TargetProfileIdentifierSchema,
+});
+
+export const UpsertTargetProfileRequestSchema = TargetProfileModelSchema;
+
 export const HealthDataSchema = z.object({
   healthy: z.literal(true),
   version: z.string().min(1),
@@ -173,6 +183,18 @@ export const CancelRunDataSchema = z.object({
   status: RunStatusSchema,
 });
 
+export const TargetProfileDataSchema = z.object({
+  profile: TargetProfileModelSchema,
+});
+
+export const TargetProfilesDataSchema = z.object({
+  profiles: z.array(TargetProfileModelSchema),
+});
+
+export const DeleteTargetProfileDataSchema = z.object({
+  id: TargetProfileIdentifierSchema,
+});
+
 export const HealthEnvelopeSchema = successEnvelopeSchema(HealthDataSchema);
 export const EnginesEnvelopeSchema = successEnvelopeSchema(EnginesDataSchema);
 export const CreateRunEnvelopeSchema = successEnvelopeSchema(
@@ -181,6 +203,15 @@ export const CreateRunEnvelopeSchema = successEnvelopeSchema(
 export const RunSummaryEnvelopeSchema = successEnvelopeSchema(RunSummaryDataSchema);
 export const RunResultEnvelopeSchema = successEnvelopeSchema(RunResultDataSchema);
 export const CancelRunEnvelopeSchema = successEnvelopeSchema(CancelRunDataSchema);
+export const TargetProfileEnvelopeSchema = successEnvelopeSchema(
+  TargetProfileDataSchema,
+);
+export const TargetProfilesEnvelopeSchema = successEnvelopeSchema(
+  TargetProfilesDataSchema,
+);
+export const DeleteTargetProfileEnvelopeSchema = successEnvelopeSchema(
+  DeleteTargetProfileDataSchema,
+);
 export const ErrorEnvelopeSchema = errorEnvelopeSchema(z.string());
 
 export interface NormalizedCreateRunRequest {

@@ -506,6 +506,431 @@
           "meta"
         ]
       },
+      "TargetProfileResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "object",
+                "properties": {
+                  "schemaVersion": {
+                    "type": "number",
+                    "enum": [
+                      1
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "host": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253
+                  },
+                  "port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "default": 22
+                  },
+                  "username": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "auth": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "method": {
+                            "type": "string",
+                            "enum": [
+                              "ssh-agent"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "method"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "method": {
+                            "type": "string",
+                            "enum": [
+                              "key-path"
+                            ]
+                          },
+                          "privateKeyPath": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096
+                          }
+                        },
+                        "required": [
+                          "method",
+                          "privateKeyPath"
+                        ]
+                      }
+                    ],
+                    "default": {
+                      "method": "ssh-agent"
+                    }
+                  },
+                  "remoteModelRoots": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "minItems": 1,
+                    "maxItems": 64
+                  },
+                  "llamaServerPath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "default": "llama-server"
+                  }
+                },
+                "required": [
+                  "schemaVersion",
+                  "id",
+                  "displayName",
+                  "host",
+                  "username",
+                  "remoteModelRoots"
+                ]
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "requestId"
+            ]
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "meta"
+        ]
+      },
+      "TargetProfilesResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "profiles": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "host": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 253
+                    },
+                    "port": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535,
+                      "default": 22
+                    },
+                    "username": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 32,
+                      "pattern": "^[A-Za-z0-9._-]+$"
+                    },
+                    "auth": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "method": {
+                              "type": "string",
+                              "enum": [
+                                "ssh-agent"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "method"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "method": {
+                              "type": "string",
+                              "enum": [
+                                "key-path"
+                              ]
+                            },
+                            "privateKeyPath": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096
+                            }
+                          },
+                          "required": [
+                            "method",
+                            "privateKeyPath"
+                          ]
+                        }
+                      ],
+                      "default": {
+                        "method": "ssh-agent"
+                      }
+                    },
+                    "remoteModelRoots": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      },
+                      "minItems": 1,
+                      "maxItems": 64
+                    },
+                    "llamaServerPath": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096,
+                      "default": "llama-server"
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "id",
+                    "displayName",
+                    "host",
+                    "username",
+                    "remoteModelRoots"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "profiles"
+            ]
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "requestId"
+            ]
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "meta"
+        ]
+      },
+      "DeleteTargetProfileResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "requestId"
+            ]
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "meta"
+        ]
+      },
+      "UpsertTargetProfileRequest": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "default": 22
+          },
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "auth": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "ssh-agent"
+                    ]
+                  }
+                },
+                "required": [
+                  "method"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "key-path"
+                    ]
+                  },
+                  "privateKeyPath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "required": [
+                  "method",
+                  "privateKeyPath"
+                ]
+              }
+            ],
+            "default": {
+              "method": "ssh-agent"
+            }
+          },
+          "remoteModelRoots": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "minItems": 1,
+            "maxItems": 64
+          },
+          "llamaServerPath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "default": "llama-server"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "id",
+          "displayName",
+          "host",
+          "username",
+          "remoteModelRoots"
+        ]
+      },
       "RunIdParams": {
         "type": "object",
         "properties": {
@@ -516,6 +941,19 @@
         },
         "required": [
           "runId"
+        ]
+      },
+      "TargetProfileIdParams": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        },
+        "required": [
+          "id"
         ]
       },
       "ErrorResponse": {
@@ -679,6 +1117,276 @@
           },
           "401": {
             "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/targets": {
+      "get": {
+        "summary": "List SSH target profiles",
+        "tags": [
+          "targets"
+        ],
+        "responses": {
+          "200": {
+            "description": "Known SSH target profiles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetProfilesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Target profile load failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create or update an SSH target profile",
+        "tags": [
+          "targets"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertTargetProfileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Target profile updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetProfileResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Target profile created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Target profile validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported content type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Target profile persistence failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/targets/{id}": {
+      "get": {
+        "summary": "Read an SSH target profile",
+        "tags": [
+          "targets"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Target profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid target profile id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Target profile not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Target profile load failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete an SSH target profile",
+        "tags": [
+          "targets"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Target profile deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteTargetProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid target profile id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Target profile not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Target profile delete failed",
             "content": {
               "application/json": {
                 "schema": {

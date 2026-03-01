@@ -17,6 +17,7 @@ interface BuildAppInput {
   engines?: EngineCatalog;
   engineEnvironmentValidation?: EngineEnvironmentValidationSettings;
   runArtifactsRootDir?: string;
+  targetProfilesRootDir?: string;
 }
 
 export const TEST_MODEL_IDENTIFIER = "/tmp/model.gguf";
@@ -70,6 +71,11 @@ export function buildApp(input: BuildAppInput): {
       ...(input.engines
         ? {
             engines: input.engines,
+          }
+        : {}),
+      ...(input.targetProfilesRootDir
+        ? {
+            targetProfilesRootDir: input.targetProfilesRootDir,
           }
         : {}),
     }),

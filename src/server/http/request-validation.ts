@@ -2,12 +2,7 @@ import type { Context } from "hono";
 import { z } from "zod";
 import { jsonError } from "../api/envelope.ts";
 import { RunIdParamsSchema } from "../api/schemas.ts";
-
-interface ValidationErrorIssue {
-  code: string;
-  message: string;
-  path: string;
-}
+import { formatValidationIssues } from "./validation-issues.ts";
 
 export async function parseJsonBody<T>(
   context: Context,
@@ -127,44 +122,4 @@ async function readJsonPayloadWithLimit(
       message: "Request body must be valid JSON.",
     });
   }
-}
-
-function formatValidationIssues(
-  issues: readonly z.ZodIssue[],
-): ValidationErrorIssue[] {
-  return issues.map((issue) => ({
-    code: issue.code,
-    message: issue.message,
-    path: formatIssuePath(issue.path),
-  }));
-}
-
-function formatIssuePath(path: readonly PropertyKey[]): string {
-  if (path.length === 0) {
-    return "(root)";
-  }
-
-  let formatted = "";
-
-  for (const segment of path) {
-    if (typeof segment === "number") {
-      formatted += `[${segment}]`;
-      continue;
-    }
-
-    const normalized =
-      typeof segment === "string" ? segment : String(segment.description ?? segment);
-
-    if (!normalized) {
-      continue;
-    }
-
-    if (formatted.length === 0) {
-      formatted = normalized;
-    } else {
-      formatted += `.${normalized}`;
-    }
-  }
-
-  return formatted.length > 0 ? formatted : "(root)";
 }
