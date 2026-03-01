@@ -1,10 +1,11 @@
 import { constants as fsConstants } from "node:fs";
-import { access, stat } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { Context } from "hono";
 import type { Hono } from "hono";
 import { z } from "zod";
+import { TargetProfileIdParamsSchema } from "../api/schemas.ts";
 import {
   getOrCreateRequestId,
   jsonError,
@@ -19,7 +20,6 @@ import {
 } from "../logging.ts";
 import {
   type TargetProfile,
-  TargetProfileIdSchema,
   TargetProfileSchema,
 } from "../targets/target-profile.ts";
 import {
@@ -31,10 +31,6 @@ import {
 
 const TARGET_PROFILE_BODY_LIMIT_BYTES = 32 * 1024;
 const PRIVATE_KEY_ROOT_DIR = resolve(homedir(), ".ssh");
-
-const TargetProfileIdParamsSchema = z.object({
-  id: TargetProfileIdSchema,
-});
 
 interface RegisterTargetRoutesOptions {
   targetProfiles: TargetProfileStore;
@@ -227,14 +223,28 @@ async function validatePrivateKeyPath(
   }
 
   const privateKeyPath = resolve(profile.auth.privateKeyPath);
-  if (!isPathWithinRoot(privateKeyPath, PRIVATE_KEY_ROOT_DIR)) {
+  let canonicalPrivateKeyRoot: string;
+  try {
+    canonicalPrivateKeyRoot = await realpath(PRIVATE_KEY_ROOT_DIR);
+  } catch {
+    return [createPrivateKeyPathIssue()];
+  }
+
+  let canonicalPrivateKeyPath: string;
+  try {
+    canonicalPrivateKeyPath = await realpath(privateKeyPath);
+  } catch {
+    return [createPrivateKeyPathIssue()];
+  }
+
+  if (!isPathWithinRoot(canonicalPrivateKeyPath, canonicalPrivateKeyRoot)) {
     return [createPrivateKeyPathIssue()];
   }
 
   let keyPathStat: Awaited<ReturnType<typeof stat>>;
 
   try {
-    keyPathStat = await stat(privateKeyPath);
+    keyPathStat = await stat(canonicalPrivateKeyPath);
   } catch {
     return [createPrivateKeyPathIssue()];
   }
@@ -244,7 +254,7 @@ async function validatePrivateKeyPath(
   }
 
   try {
-    await access(privateKeyPath, fsConstants.R_OK);
+    await access(canonicalPrivateKeyPath, fsConstants.R_OK);
   } catch {
     return [createPrivateKeyPathIssue()];
   }
@@ -283,11 +293,6 @@ function logTargetProfileError(
 }
 
 function isPathWithinRoot(path: string, rootDir: string): boolean {
-  if (path === rootDir) {
-    return true;
-  }
-
-  const normalizedRootWithSeparator =
-    rootDir.endsWith(sep) ? rootDir : `${rootDir}${sep}`;
-  return path.startsWith(normalizedRootWithSeparator);
+  const relativePath = relative(rootDir, path);
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
