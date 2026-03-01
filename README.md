@@ -20,6 +20,16 @@ This repo includes a Nix flake for a reproducible dev shell.
 - Generate SDK scaffolding: `bun run sdk:generate`
 - Check OpenAPI/SDK drift: `bun run openapi:check`
 
+## Prerequisites (llama.cpp)
+
+`chimera-bench` uses `llama-server` from llama.cpp. Install/build it and ensure it is on your `PATH`:
+
+```bash
+llama-server --help
+```
+
+`chimera-bench` does not download models for you; you need a local `.gguf` file.
+
 ## Run the server
 
 Start (loopback, no auth by default):
@@ -43,7 +53,46 @@ Notes:
 - Basic auth: `CHIMERA_SERVER_PASSWORD` enables auth; `CHIMERA_SERVER_USERNAME` defaults to `chimera`.
 - Non-loopback binds require a strong password (`CHIMERA_SERVER_PASSWORD`) and model-root confinement (`CHIMERA_MODEL_ROOTS`).
 - CORS allowlist: `--cors <origin>` (repeatable).
+- mDNS advertisement: `--mdns` (default domain `chimera.local`, override with `--mdns-domain`).
+- Proxy mode: set `CHIMERA_SERVER_TRUST_PROXY=1` only behind a trusted reverse proxy (affects auth rate limiting).
 - Global SSE: `GET /event`.
+
+## Run a benchmark
+
+List engines:
+
+```bash
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/engines
+```
+
+Create a run (defaults to built-in starter workload):
+
+```bash
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
+  -H "Content-Type: application/json" \
+  http://127.0.0.1:4096/runs \
+  -d '{"engineId":"llama-cpp","target":{"type":"local"},"model":{"identifier":"/absolute/path/to/model.gguf"}}'
+```
+
+Watch run events (SSE):
+
+```bash
+curl -N -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/runs/<runId>/event
+```
+
+Read status, cancel, and fetch the persisted result:
+
+```bash
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/runs/<runId>
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD -X POST http://127.0.0.1:4096/runs/<runId>/cancel
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/runs/<runId>/result
+```
+
+Notes:
+
+- Only one active run is allowed at a time.
+- Results are persisted to `runs/<runId>/result.json`.
+- `validationMode` defaults to `strict`; set `permissive` to experiment with unknown `engine.serverArgs` / `engine.requestParams`.
 
 ## API docs and generated artifacts
 
