@@ -66,7 +66,7 @@ Prefer `just` wrappers for common tasks; use `bun` directly for targeted runs.
 
 Examples:
 - `just serve -- --hostname 127.0.0.1 --port 4096`
-- `CHIMERA_SERVER_PASSWORD=devpass CHIMERA_MODEL_ROOTS=/abs/models just serve -- --hostname 0.0.0.0`
+- `CHIMERA_SERVER_PASSWORD="$(openssl rand -base64 24)" CHIMERA_MODEL_ROOTS=/abs/models just serve -- --hostname 0.0.0.0`
 - Health check: `curl -sS http://127.0.0.1:4096/global/health`
 
 ### Optional Nix helpers

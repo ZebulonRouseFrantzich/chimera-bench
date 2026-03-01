@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { buildApp, createBasicAuthorization } from "./helpers/app-fixture.ts";
 
+const TEST_SERVER_PASSWORD = "Sup3rSecurePassphrase!";
+
 describe("auth and CORS middleware", () => {
   test("requires auth when configured", async () => {
     const { app } = buildApp({
       auth: {
         enabled: true,
         username: "chimera",
-        password: "devpass",
+        password: TEST_SERVER_PASSWORD,
       },
     });
 
@@ -20,7 +22,7 @@ describe("auth and CORS middleware", () => {
 
     const authorized = await app.request("http://localhost/global/health", {
       headers: {
-        Authorization: createBasicAuthorization(),
+        Authorization: createBasicAuthorization("chimera", TEST_SERVER_PASSWORD),
       },
     });
 
@@ -32,7 +34,7 @@ describe("auth and CORS middleware", () => {
       auth: {
         enabled: true,
         username: "chimera",
-        password: "devpass",
+        password: TEST_SERVER_PASSWORD,
       },
     });
 
@@ -44,7 +46,7 @@ describe("auth and CORS middleware", () => {
 
     const docsAuthorized = await app.request("http://localhost/doc", {
       headers: {
-        Authorization: createBasicAuthorization(),
+        Authorization: createBasicAuthorization("chimera", TEST_SERVER_PASSWORD),
       },
     });
     expect(docsAuthorized.status).toBe(200);
@@ -55,7 +57,7 @@ describe("auth and CORS middleware", () => {
       auth: {
         enabled: true,
         username: "chimera",
-        password: "devpass",
+        password: TEST_SERVER_PASSWORD,
       },
     });
 
@@ -83,7 +85,7 @@ describe("auth and CORS middleware", () => {
       auth: {
         enabled: true,
         username: "chimera",
-        password: "devpass",
+        password: TEST_SERVER_PASSWORD,
       },
     });
 
@@ -109,7 +111,7 @@ describe("auth and CORS middleware", () => {
       auth: {
         enabled: true,
         username: "chimera",
-        password: "devpass",
+        password: TEST_SERVER_PASSWORD,
         trustProxy: true,
       },
     });
@@ -143,7 +145,7 @@ describe("auth and CORS middleware", () => {
       auth: {
         enabled: true,
         username: "chimera",
-        password: "devpass",
+        password: TEST_SERVER_PASSWORD,
       },
       corsAllowlist: ["http://localhost:5173"],
     });
@@ -172,7 +174,7 @@ describe("auth and CORS middleware", () => {
       auth: {
         enabled: true,
         username: "chimera",
-        password: "devpass",
+        password: TEST_SERVER_PASSWORD,
       },
       corsAllowlist: ["http://localhost:5173"],
     });

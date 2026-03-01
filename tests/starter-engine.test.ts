@@ -140,6 +140,67 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     });
   });
 
+  test("redacts api keys and bounds startup failure log excerpts", async () => {
+    const processHandle = new FakeChildProcess(61000);
+
+    const plugin = createStarterLlamaCppPlugin({
+      allocateLoopbackPort: async () => 43133,
+      createApiKey: () => TEST_API_KEY,
+      startupProbeWindowMs: 5,
+      startupRetryAttempts: 1,
+      diagnosticExcerptChars: 80,
+      spawnProcess: () => {
+        queueMicrotask(() => {
+          processHandle.stderr.write(`${"x".repeat(400)} stderr secret=${TEST_API_KEY}`);
+          processHandle.stdout.write(`${"y".repeat(400)} stdout secret=${TEST_API_KEY}`);
+          processHandle.emitExit(1, null);
+        });
+
+        return processHandle.asChildProcess();
+      },
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(createRunConfig());
+    const context = createContext("run_redaction", launchConfig);
+
+    let startupError: (Error & {
+      code?: string;
+      details?: Record<string, unknown>;
+    }) | null = null;
+
+    try {
+      await plugin.start(context);
+    } catch (error) {
+      startupError = error as Error & {
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+    }
+
+    expect(startupError).not.toBeNull();
+    if (!startupError) {
+      throw new Error("Expected startup to fail with ENGINE_START_FAILED.");
+    }
+
+    expect(startupError.code).toBe("ENGINE_START_FAILED");
+    expect(startupError.message).toContain("[REDACTED]");
+    expect(startupError.message).not.toContain(TEST_API_KEY);
+
+    const launchCommand = String(startupError.details?.launchCommand ?? "");
+    const stderrExcerpt = String(startupError.details?.stderrExcerpt ?? "");
+    const stdoutExcerpt = String(startupError.details?.stdoutExcerpt ?? "");
+
+    expect(launchCommand).toContain("[REDACTED]");
+    expect(launchCommand).not.toContain(TEST_API_KEY);
+
+    expect(stderrExcerpt).toContain("[REDACTED]");
+    expect(stdoutExcerpt).toContain("[REDACTED]");
+    expect(stderrExcerpt).not.toContain(TEST_API_KEY);
+    expect(stdoutExcerpt).not.toContain(TEST_API_KEY);
+    expect(stderrExcerpt.length).toBeLessThanOrEqual(80);
+    expect(stdoutExcerpt.length).toBeLessThanOrEqual(80);
+  });
+
   test("retries startup with a new port when early bind failure occurs", async () => {
     const spawnArgs: string[][] = [];
     const signalCalls: Array<{ pid: number; signal: NodeJS.Signals }> = [];

@@ -10,7 +10,10 @@
     "serve": "bun run ./bin/chimera-bench serve",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "lint": "bun run typecheck"
+    "lint": "bun run typecheck",
+    "openapi:generate": "bun run ./scripts/generate-openapi.ts",
+    "sdk:generate": "bun run ./scripts/generate-sdk.ts",
+    "openapi:check": "bun run ./scripts/check-openapi-drift.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.4.1",
