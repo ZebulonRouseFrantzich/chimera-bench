@@ -18,7 +18,10 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "./defaults.ts";
-import type { RunArtifactStore } from "./run-artifact-store.ts";
+import {
+  type RunArtifactStore,
+  RunArtifactWriteError,
+} from "./run-artifact-store.ts";
 import type { StarterWorkload } from "./starter-workload.ts";
 import { estimateTokenCount } from "./token-estimation.ts";
 
@@ -442,8 +445,11 @@ export class RunOrchestrator {
     try {
       await this.options.runArtifacts.writeResult(runId, result);
     } catch (error) {
-      const reason = sanitizeControlCharacters(toError(error).message);
-      console.error(`[chimera-bench] runId=${runId} runResultPersistError=${reason}`);
+      const reason =
+        error instanceof RunArtifactWriteError ? error.logReason : toError(error).message;
+      console.error(
+        `[chimera-bench] runId=${runId} runResultPersistError=${sanitizeControlCharacters(reason)}`,
+      );
     }
   }
 

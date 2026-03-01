@@ -859,6 +859,9 @@ describe("run routes", () => {
       expect(resultResponse.status).toBe(200);
 
       const artifactPath = join(runArtifactsRootDir, runId, "result.json");
+      await waitForCondition(() => {
+        return existsSync(artifactPath);
+      });
       expect(existsSync(artifactPath)).toBe(true);
 
       const artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as {
@@ -1039,6 +1042,7 @@ describe("run routes", () => {
       const resultPayload = await resultResponse.json();
       expect(resultPayload.error.code).toBe("RUN_RESULT_PERSIST_FAILED");
       expect(resultPayload.error.details.reason).toContain("Failed to persist run artifact");
+      expect(resultPayload.error.details.reason).not.toContain(blockedRoot);
     } finally {
       rmSync(runArtifactsTempDirectory, {
         recursive: true,
@@ -1119,6 +1123,7 @@ describe("run routes", () => {
       const resultPayload = await resultResponse.json();
       expect(resultPayload.error.code).toBe("RUN_RESULT_READ_FAILED");
       expect(resultPayload.error.details.reason).toContain("Failed to parse run artifact");
+      expect(resultPayload.error.details.reason).not.toContain(runArtifactsRootDir);
     } finally {
       rmSync(runArtifactsRootDir, {
         recursive: true,

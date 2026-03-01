@@ -14,16 +14,22 @@ const MAX_WRITE_FAILURES = 1000;
 export const DEFAULT_RUN_ARTIFACTS_ROOT_DIR = "runs";
 
 export class RunArtifactWriteError extends Error {
-  constructor(message: string) {
+  readonly logReason: string;
+
+  constructor(message: string, logReason: string = message) {
     super(message);
     this.name = "RunArtifactWriteError";
+    this.logReason = logReason;
   }
 }
 
 export class RunArtifactReadError extends Error {
-  constructor(message: string) {
+  readonly logReason: string;
+
+  constructor(message: string, logReason: string = message) {
     super(message);
     this.name = "RunArtifactReadError";
+    this.logReason = logReason;
   }
 }
 
@@ -56,9 +62,8 @@ export class RunArtifactStore {
       await rename(tempPath, resultPath);
       this.writeFailures.delete(runId);
     } catch (error) {
-      const reason = toError(error).message;
-      const message = `Failed to persist run artifact at '${resultPath}': ${reason}`;
-      this.setWriteFailure(runId, message);
+      const writeError = buildWriteError(runId, resultPath, error);
+      this.setWriteFailure(runId, writeError.message);
 
       try {
         await unlink(tempPath);
@@ -66,7 +71,7 @@ export class RunArtifactStore {
         // Best effort cleanup for failed atomic writes.
       }
 
-      throw new RunArtifactWriteError(message);
+      throw writeError;
     }
   }
 
@@ -81,22 +86,19 @@ export class RunArtifactStore {
         return null;
       }
 
-      throw new RunArtifactReadError(
-        `Failed to read run artifact at '${resultPath}': ${toError(error).message}`,
-      );
+      throw buildReadError("read", runId, resultPath, error);
     }
 
     let parsedResult: unknown;
     try {
       parsedResult = JSON.parse(serializedResult);
     } catch (error) {
-      throw new RunArtifactReadError(
-        `Failed to parse run artifact at '${resultPath}': ${toError(error).message}`,
-      );
+      throw buildReadError("parse", runId, resultPath, error);
     }
 
     if (!isRecord(parsedResult)) {
       throw new RunArtifactReadError(
+        `Failed to parse run artifact for run '${runId}'. Expected a JSON object.`,
         `Run artifact at '${resultPath}' must be a JSON object.`,
       );
     }
@@ -125,12 +127,14 @@ export class RunArtifactStore {
     const resultPath = resolve(this.rootDir, runId, RESULT_FILENAME);
 
     if (!isPathWithinRoot(resultPath, this.rootDir)) {
-      const message = `Invalid runId '${runId}' would escape artifact root '${this.rootDir}'.`;
+      const message = `Invalid runId '${runId}' is outside artifact root.`;
+      const logReason =
+        `Invalid runId '${runId}' would escape artifact root '${this.rootDir}'.`;
       if (operation === "read") {
-        throw new RunArtifactReadError(message);
+        throw new RunArtifactReadError(message, logReason);
       }
 
-      throw new RunArtifactWriteError(message);
+      throw new RunArtifactWriteError(message, logReason);
     }
 
     return resultPath;
@@ -159,6 +163,60 @@ function toError(value: unknown): Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function buildWriteError(
+  runId: string,
+  resultPath: string,
+  error: unknown,
+): RunArtifactWriteError {
+  const code = getNodeErrorCode(error);
+  const clientReason =
+    code !== null
+      ? `Failed to persist run artifact for run '${runId}'. Filesystem error (${code}).`
+      : `Failed to persist run artifact for run '${runId}'.`;
+
+  return new RunArtifactWriteError(
+    clientReason,
+    `Failed to persist run artifact at '${resultPath}': ${toError(error).message}`,
+  );
+}
+
+function buildReadError(
+  mode: "read" | "parse",
+  runId: string,
+  resultPath: string,
+  error: unknown,
+): RunArtifactReadError {
+  if (mode === "parse") {
+    return new RunArtifactReadError(
+      `Failed to parse run artifact for run '${runId}'. Invalid JSON payload.`,
+      `Failed to parse run artifact at '${resultPath}': ${toError(error).message}`,
+    );
+  }
+
+  const code = getNodeErrorCode(error);
+  const clientReason =
+    code !== null
+      ? `Failed to read run artifact for run '${runId}'. Filesystem error (${code}).`
+      : `Failed to read run artifact for run '${runId}'.`;
+
+  return new RunArtifactReadError(
+    clientReason,
+    `Failed to read run artifact at '${resultPath}': ${toError(error).message}`,
+  );
+}
+
+function getNodeErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const maybeError = error as {
+    code?: unknown;
+  };
+
+  return typeof maybeError.code === "string" ? maybeError.code : null;
 }
 
 function isPathWithinRoot(path: string, rootDir: string): boolean {

@@ -23,6 +23,7 @@ import {
 import {
   RunArtifactReadError,
   type RunArtifactStore,
+  RunArtifactWriteError,
 } from "../runs/run-artifact-store.ts";
 import { RunOrchestrator } from "../runs/run-orchestrator.ts";
 import { getBuiltInWorkload } from "../runs/starter-workload.ts";
@@ -311,7 +312,11 @@ export function registerRunRoutes(
       void persistRunArtifact(runId, options.runStore, options.runArtifacts).catch(
         (error) => {
           const reason =
-            error instanceof Error ? error.message : "Unknown artifact persistence error.";
+            error instanceof RunArtifactWriteError
+              ? error.logReason
+              : error instanceof Error
+                ? error.message
+                : "Unknown artifact persistence error.";
           console.error(
             `[chimera-bench] runId=${runId} cancelResultPersistError=${sanitizeControlCharacters(reason)}`,
           );
