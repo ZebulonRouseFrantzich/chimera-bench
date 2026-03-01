@@ -13,6 +13,7 @@ const DEFAULT_FLAGS: ServeCliFlags = {
   mdns: false,
   mdnsDomain: "chimera.local",
 };
+const STRONG_SERVER_PASSWORD = "Sup3rSecurePassphrase!";
 
 describe("resolveServeConfig", () => {
   test("warns when auth is not configured", async () => {
@@ -20,8 +21,20 @@ describe("resolveServeConfig", () => {
 
     expect(config.auth.enabled).toBe(false);
     expect(config.auth.username).toBe("chimera");
+    expect(config.devMode).toBe(false);
     expect(config.startupWarnings.length).toBe(1);
     expect(config.version).toBe("0.1.0");
+  });
+
+  test("enables dev mode when CHIMERA_BENCH_DEV is set", async () => {
+    const config = await resolveServeConfig(DEFAULT_FLAGS, {
+      CHIMERA_BENCH_DEV: "1",
+    });
+
+    expect(config.devMode).toBe(true);
+    expect(
+      config.startupWarnings.some((warning) => warning.includes("CHIMERA_BENCH_DEV")),
+    ).toBe(true);
   });
 
   test("rejects non-loopback bind when auth is disabled", async () => {
@@ -44,7 +57,7 @@ describe("resolveServeConfig", () => {
           hostname: "0.0.0.0",
         },
         {
-          CHIMERA_SERVER_PASSWORD: "devpass",
+          CHIMERA_SERVER_PASSWORD: STRONG_SERVER_PASSWORD,
         },
       ),
     ).rejects.toThrow("CHIMERA_MODEL_ROOTS");
@@ -57,7 +70,7 @@ describe("resolveServeConfig", () => {
         hostname: "0.0.0.0",
       },
       {
-        CHIMERA_SERVER_PASSWORD: "devpass",
+        CHIMERA_SERVER_PASSWORD: STRONG_SERVER_PASSWORD,
         CHIMERA_MODEL_ROOTS: ["/models", "/more-models"].join(delimiter),
       },
     );
@@ -95,7 +108,7 @@ describe("resolveServeConfig", () => {
         hostname: "0.0.0.0",
       },
       {
-        CHIMERA_SERVER_PASSWORD: "devpass",
+        CHIMERA_SERVER_PASSWORD: STRONG_SERVER_PASSWORD,
         CHIMERA_MODEL_ROOTS: ["/models", "/other-models"].join(delimiter),
       },
     );
@@ -105,7 +118,7 @@ describe("resolveServeConfig", () => {
 
   test("enables trust proxy mode when configured", async () => {
     const config = await resolveServeConfig(DEFAULT_FLAGS, {
-      CHIMERA_SERVER_PASSWORD: "devpass",
+      CHIMERA_SERVER_PASSWORD: STRONG_SERVER_PASSWORD,
       CHIMERA_SERVER_TRUST_PROXY: "true",
     });
 
@@ -114,5 +127,31 @@ describe("resolveServeConfig", () => {
     expect(
       config.startupWarnings.some((warning) => warning.includes("CHIMERA_SERVER_TRUST_PROXY")),
     ).toBe(true);
+  });
+
+  test("warns on weak password for loopback binds", async () => {
+    const config = await resolveServeConfig(DEFAULT_FLAGS, {
+      CHIMERA_SERVER_PASSWORD: "devpass",
+    });
+
+    expect(config.auth.enabled).toBe(true);
+    expect(
+      config.startupWarnings.some((warning) => warning.includes("appears weak")),
+    ).toBe(true);
+  });
+
+  test("rejects weak password for non-loopback binds", async () => {
+    await expect(
+      resolveServeConfig(
+        {
+          ...DEFAULT_FLAGS,
+          hostname: "0.0.0.0",
+        },
+        {
+          CHIMERA_SERVER_PASSWORD: "devpass",
+          CHIMERA_MODEL_ROOTS: ["/models"].join(delimiter),
+        },
+      ),
+    ).rejects.toThrow("too weak");
   });
 });

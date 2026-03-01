@@ -5,6 +5,16 @@ import type { ServeCliFlags, ServeConfig } from "./types.ts";
 const DEFAULT_USERNAME = "chimera";
 const FALLBACK_APP_VERSION = "0.0.0";
 const PACKAGE_JSON_URL = new URL("../../package.json", import.meta.url);
+const MIN_SERVER_PASSWORD_LENGTH = 12;
+const COMMON_WEAK_PASSWORDS = new Set([
+  "password",
+  "password123",
+  "admin",
+  "changeme",
+  "letmein",
+  "qwerty",
+  "devpass",
+]);
 
 let cachedAppVersion: string | null = null;
 
@@ -17,6 +27,7 @@ export async function resolveServeConfig(
   const password = sanitizeEnv(env.CHIMERA_SERVER_PASSWORD);
   const username = sanitizeEnv(env.CHIMERA_SERVER_USERNAME) ?? DEFAULT_USERNAME;
   const trustProxy = parseBooleanEnv(env.CHIMERA_SERVER_TRUST_PROXY);
+  const devMode = parseBooleanEnv(env.CHIMERA_BENCH_DEV);
   const startupWarnings: string[] = [];
   const nonLoopback = !(await isLoopbackHost(flags.hostname));
   const appVersion = await getAppVersion();
@@ -31,6 +42,27 @@ export async function resolveServeConfig(
     startupWarnings.push(
       "CHIMERA_SERVER_TRUST_PROXY is enabled; only use this behind a trusted reverse proxy that sanitizes forwarding headers.",
     );
+  }
+
+  if (devMode) {
+    startupWarnings.push(
+      "CHIMERA_BENCH_DEV is enabled; verbose request access logs are active.",
+    );
+  }
+
+  if (password) {
+    const passwordIssue = getServerPasswordIssue(password);
+    if (passwordIssue) {
+      if (nonLoopback) {
+        throw new ServeConfigurationError(
+          `CHIMERA_SERVER_PASSWORD is too weak for non-loopback binds: ${passwordIssue}. Generate a stronger password (for example: CHIMERA_SERVER_PASSWORD=\"$(openssl rand -base64 24)\").`,
+        );
+      }
+
+      startupWarnings.push(
+        `CHIMERA_SERVER_PASSWORD appears weak (${passwordIssue}). Use a stronger password for shared environments (for example: CHIMERA_SERVER_PASSWORD=\"$(openssl rand -base64 24)\").`,
+      );
+    }
   }
 
   if (nonLoopback && !password) {
@@ -67,6 +99,7 @@ export async function resolveServeConfig(
         },
     startupWarnings,
     version: appVersion,
+    devMode,
   };
 }
 
@@ -165,4 +198,27 @@ function normalizeCorsOrigins(origins: string[]): string[] {
   }
 
   return Array.from(normalized);
+}
+
+function getServerPasswordIssue(password: string): string | null {
+  if (password.length < MIN_SERVER_PASSWORD_LENGTH) {
+    return `must be at least ${MIN_SERVER_PASSWORD_LENGTH} characters`;
+  }
+
+  if (COMMON_WEAK_PASSWORDS.has(password.toLowerCase())) {
+    return "matches a commonly used weak password";
+  }
+
+  const characterClassCount = [
+    /[a-z]/.test(password),
+    /[A-Z]/.test(password),
+    /\d/.test(password),
+    /[^a-zA-Z0-9]/.test(password),
+  ].filter((match) => match).length;
+
+  if (characterClassCount < 3) {
+    return "must include at least three character classes (lowercase, uppercase, digits, symbols)";
+  }
+
+  return null;
 }

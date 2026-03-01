@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app.ts";
 import type { EngineCatalog } from "../../src/server/engines/engine-catalog.ts";
+import type { ServerLogger } from "../../src/server/logging.ts";
 import type { EngineEnvironmentValidationSettings } from "../../src/server/routes/engine-routes.ts";
 import { RuntimeControl } from "../../src/server/runtime-control.ts";
 import type { BasicAuthSettings } from "../../src/server/types.ts";
@@ -10,6 +11,8 @@ import type { BasicAuthSettings } from "../../src/server/types.ts";
 interface BuildAppInput {
   auth: BasicAuthSettings;
   corsAllowlist?: string[];
+  devMode?: boolean;
+  logger?: ServerLogger;
   modelRoots?: string[];
   engines?: EngineCatalog;
   engineEnvironmentValidation?: EngineEnvironmentValidationSettings;
@@ -44,6 +47,16 @@ export function buildApp(input: BuildAppInput): {
       corsAllowlist: input.corsAllowlist ?? [],
       runtime,
       runArtifactsRootDir: input.runArtifactsRootDir ?? TEST_RUN_ARTIFACTS_ROOT_DIR,
+      ...(typeof input.devMode === "boolean"
+        ? {
+            devMode: input.devMode,
+          }
+        : {}),
+      ...(input.logger
+        ? {
+            logger: input.logger,
+          }
+        : {}),
       ...(input.modelRoots
         ? {
             modelRoots: input.modelRoots,
@@ -102,7 +115,7 @@ export async function createRun(app: ReturnType<typeof createApp>): Promise<stri
 
 export function createBasicAuthorization(
   username = "chimera",
-  password = "devpass",
+  password = "Sup3rSecurePassphrase!",
 ): string {
   return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 }

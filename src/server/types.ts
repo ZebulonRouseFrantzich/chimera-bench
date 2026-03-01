@@ -23,4 +23,5 @@ export interface ServeConfig {
   auth: BasicAuthSettings;
   startupWarnings: string[];
   version: string;
+  devMode: boolean;
 }

@@ -1,5 +1,9 @@
 import type { Hono } from "hono";
-import { jsonError, jsonSuccess } from "../api/envelope.ts";
+import {
+  getOrCreateRequestId,
+  jsonError,
+  jsonSuccess,
+} from "../api/envelope.ts";
 import {
   CreateRunRequestSchema,
   normalizeCreateRunRequest,
@@ -28,6 +32,10 @@ import {
 import { RunOrchestrator } from "../runs/run-orchestrator.ts";
 import { getBuiltInWorkload } from "../runs/starter-workload.ts";
 import { createSseResponse } from "../sse/sse-response.ts";
+import {
+  DEFAULT_SERVER_LOGGER,
+  type ServerLogger,
+} from "../logging.ts";
 import type { RuntimeControl } from "../runtime-control.ts";
 
 const RUN_CREATE_BODY_LIMIT_BYTES = 64 * 1024;
@@ -38,12 +46,14 @@ interface RegisterRunRoutesOptions {
   runStore: InMemoryRunStore;
   runArtifacts: RunArtifactStore;
   engines: EngineCatalog;
+  logger?: ServerLogger;
 }
 
 export function registerRunRoutes(
   app: Hono,
   options: RegisterRunRoutesOptions,
 ): void {
+  const logger = options.logger ?? DEFAULT_SERVER_LOGGER;
   const runOrchestrator = new RunOrchestrator({
     runtime: options.runtime,
     runStore: options.runStore,
@@ -143,6 +153,12 @@ export function registerRunRoutes(
     }
 
     const runId = createRunResult.runId;
+    const requestId = getOrCreateRequestId(context);
+
+    logger.info(
+      `[chimera-bench] requestId=${requestId} runId=${runId} event=run.created engineId=${sanitizeControlCharacters(request.engineId)} workloadId=${sanitizeControlCharacters(request.workloadId)}`,
+    );
+
     const runConfig: EngineRunConfig = {
       engineId: request.engineId,
       target: request.target,
@@ -317,7 +333,7 @@ export function registerRunRoutes(
               : error instanceof Error
                 ? error.message
                 : "Unknown artifact persistence error.";
-          console.error(
+          logger.error(
             `[chimera-bench] runId=${runId} cancelResultPersistError=${sanitizeControlCharacters(reason)}`,
           );
         },
