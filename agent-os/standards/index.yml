@@ -1,3 +1,13 @@
+cli:
+  arg-parsing:
+    description: CLI flag parsing conventions (strict, repeatable, --flag=value)
+  exit-codes:
+    description: CLI exit code taxonomy and error classification
+  serve-command-output:
+    description: Serve startup output lines and stability rules
+  signal-shutdown:
+    description: SIGINT/SIGTERM handling and shutdown flow
+
 global:
   sanitization-and-safe-errors:
     description: Shared sanitization and safe API error exposure conventions.
@@ -7,11 +17,55 @@ global:
 plugins:
   engine-interface:
     description: Engine plugin contract, lifecycle, and pass-through argument rules.
+  llama-cpp-api-key-and-redaction:
+    description: llama.cpp per-run API key generation and redaction rules
+  llama-cpp-model-identifier-validation:
+    description: llama.cpp model identifier validation and CHIMERA_MODEL_ROOTS confinement
+  llama-cpp-readiness-probe:
+    description: llama.cpp readiness probe contract for /health
+  llama-cpp-stop-escalation:
+    description: llama.cpp stop escalation (SIGTERM/SIGKILL) and process-group cleanup
+  llama-cpp-strict-flag-validation:
+    description: llama.cpp strict server-arg validation via --help flag discovery
+  llama-cpp-subprocess-startup:
+    description: llama.cpp subprocess startup probe and loopback port retry policy
 
 runs:
+  artifact-store:
+    description: Atomic run result persistence and path safety
+  orchestrator-cancellation-timeouts:
+    description: Run cancellation/timeout orchestration semantics
   result-schema:
     description: Benchmark run manifest and result row schema for JSON, CSV, and markdown exports.
+  run-events:
+    description: Run event names, payload rules, and replay policy
 
 server:
   api-conventions:
     description: API route, validation, response envelope, and error handling conventions for the server.
+  basic-auth:
+    description: Basic auth middleware, rate limiting, and proxy trust
+  cors-allowlist:
+    description: CORS allowlist rules for origins, headers, and methods
+  graceful-shutdown:
+    description: Graceful shutdown ordering and failure handling
+  json-request-validation:
+    description: JSON body size limits and validation error details shape
+  log-line-format:
+    description: Server log line format (key=value), sanitization, and redaction
+  openapi-and-sdk-artifacts:
+    description: Committed OpenAPI/SDK artifacts and drift-check workflow
+  serve-exposure-safety:
+    description: Serve-mode security gates for non-loopback binds
+  sse-streams:
+    description: SSE lifecycle events, payload shape, and shutdown behavior
+
+testing:
+  app-fixtures:
+    description: Test app fixtures and helper conventions
+  async-polling:
+    description: Bounded polling helpers for async test conditions
+  log-assertions:
+    description: Token-based log assertions with injected logger
+  sse-testing:
+    description: SSE route testing via raw stream reads
