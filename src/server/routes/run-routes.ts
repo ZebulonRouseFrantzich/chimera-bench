@@ -20,6 +20,10 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../runs/defaults.ts";
+import {
+  RunArtifactReadError,
+  type RunArtifactStore,
+} from "../runs/run-artifact-store.ts";
 import { RunOrchestrator } from "../runs/run-orchestrator.ts";
 import { getBuiltInWorkload } from "../runs/starter-workload.ts";
 import { createSseResponse } from "../sse/sse-response.ts";
@@ -28,8 +32,10 @@ import type { RuntimeControl } from "../runtime-control.ts";
 const RUN_CREATE_BODY_LIMIT_BYTES = 64 * 1024;
 
 interface RegisterRunRoutesOptions {
+  version: string;
   runtime: RuntimeControl;
   runStore: InMemoryRunStore;
+  runArtifacts: RunArtifactStore;
   engines: EngineCatalog;
 }
 
@@ -40,6 +46,7 @@ export function registerRunRoutes(
   const runOrchestrator = new RunOrchestrator({
     runtime: options.runtime,
     runStore: options.runStore,
+    runArtifacts: options.runArtifacts,
     engines: options.engines,
   });
 
@@ -109,8 +116,12 @@ export function registerRunRoutes(
 
     const createRunResult = options.runStore.tryCreateQueuedRunDetailed({
       engineId: request.engineId,
+      engineVersion: plugin.version,
+      orchestratorVersion: options.version,
+      target: request.target.type,
       modelIdentifier: request.model.identifier,
       workloadId: request.workloadId,
+      engineArgs: request.engine.serverArgs,
       totalCases: workload.cases.length,
       caseTimeoutMs,
       runTimeoutMs,
@@ -181,7 +192,7 @@ export function registerRunRoutes(
     return jsonSuccess(context, summary);
   });
 
-  app.get("/runs/:runId/result", (context) => {
+  app.get("/runs/:runId/result", async (context) => {
     const runId = parseRunIdParam(context);
     if (runId instanceof Response) {
       return runId;
@@ -195,7 +206,47 @@ export function registerRunRoutes(
       });
     }
 
-    const result = options.runStore.getRunResult(runId);
+    if (!isTerminalRunStatus(status)) {
+      return jsonError(context, 409, {
+        code: "RUN_RESULT_NOT_READY",
+        message: `Run '${runId}' has not persisted a result yet.`,
+      });
+    }
+
+    const persistenceFailure = options.runArtifacts.getWriteFailure(runId);
+    if (persistenceFailure) {
+      return jsonError(context, 500, {
+        code: "RUN_RESULT_PERSIST_FAILED",
+        message: `Run '${runId}' result artifact could not be persisted.`,
+        details: {
+          reason: persistenceFailure,
+        },
+      });
+    }
+
+    let result: Record<string, unknown> | null;
+    try {
+      result = await options.runArtifacts.readResult(runId);
+    } catch (error) {
+      const reason =
+        error instanceof RunArtifactReadError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "Unknown artifact read error.";
+      return jsonError(context, 500, {
+        code: "RUN_RESULT_READ_FAILED",
+        message: `Run '${runId}' result artifact could not be read.`,
+        details: {
+          reason,
+        },
+      });
+    }
+
+    if (!result) {
+      result = options.runStore.getRunResult(runId) ?? null;
+    }
+
     if (!result) {
       return jsonError(context, 409, {
         code: "RUN_RESULT_NOT_READY",
@@ -255,6 +306,18 @@ export function registerRunRoutes(
         new Date().toISOString(),
         "user-cancel-request",
       ) ?? runStatus;
+
+    if (cancelledStatus === "cancelled") {
+      void persistRunArtifact(runId, options.runStore, options.runArtifacts).catch(
+        (error) => {
+          const reason =
+            error instanceof Error ? error.message : "Unknown artifact persistence error.";
+          console.error(
+            `[chimera-bench] runId=${runId} cancelResultPersistError=${sanitizeControlCharacters(reason)}`,
+          );
+        },
+      );
+    }
 
     return jsonSuccess(context, {
       runId,
@@ -339,4 +402,21 @@ function buildValidationFailurePayload(
 function sanitizeIssuePath(path: string | undefined): string {
   const sanitized = sanitizeControlCharacters(path ?? "(root)");
   return sanitized.length > 0 ? sanitized : "(root)";
+}
+
+function isTerminalRunStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+async function persistRunArtifact(
+  runId: string,
+  runStore: InMemoryRunStore,
+  runArtifacts: RunArtifactStore,
+): Promise<void> {
+  const result = runStore.getRunResult(runId);
+  if (!result) {
+    return;
+  }
+
+  await runArtifacts.writeResult(runId, result);
 }

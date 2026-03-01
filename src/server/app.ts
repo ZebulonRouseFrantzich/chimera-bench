@@ -11,6 +11,10 @@ import { registerEngineRoutes } from "./routes/engine-routes.ts";
 import type { EngineEnvironmentValidationSettings } from "./routes/engine-routes.ts";
 import { registerGlobalRoutes } from "./routes/global-routes.ts";
 import { registerRunRoutes } from "./routes/run-routes.ts";
+import {
+  DEFAULT_RUN_ARTIFACTS_ROOT_DIR,
+  RunArtifactStore,
+} from "./runs/run-artifact-store.ts";
 import { InMemoryRunStore } from "./runs/in-memory-run-store.ts";
 import type { RuntimeControl } from "./runtime-control.ts";
 import type { BasicAuthSettings } from "./types.ts";
@@ -23,6 +27,7 @@ interface AppOptions {
   modelRoots?: string[];
   engines?: EngineCatalog;
   engineEnvironmentValidation?: EngineEnvironmentValidationSettings;
+  runArtifactsRootDir?: string;
 }
 
 export function createApp(options: AppOptions): Hono {
@@ -32,6 +37,9 @@ export function createApp(options: AppOptions): Hono {
   });
   const engines = options.engines ?? createDefaultEngineCatalog(options.modelRoots ?? []);
   const runStore = new InMemoryRunStore();
+  const runArtifacts = new RunArtifactStore(
+    options.runArtifactsRootDir ?? DEFAULT_RUN_ARTIFACTS_ROOT_DIR,
+  );
 
   app.use("*", async (context, next) => {
     const requestId = randomUUID();
@@ -62,8 +70,10 @@ export function createApp(options: AppOptions): Hono {
       : {}),
   });
   registerRunRoutes(app, {
+    version: options.version,
     runtime: options.runtime,
     runStore,
+    runArtifacts,
     engines,
   });
 
