@@ -38,11 +38,49 @@ Make local development reproducible and low-friction via a Nix flake `devShell`,
 ## Implementation tasks
 
 1. Save spec documentation (this folder).
+   - Ensure the spec folder contains `plan.md`, `shape.md`, `references.md`, `standards.md`, and `visuals/README.md`.
+   - Manual testing steps:
+     - `ls agent-os/specs/2026-02-24-1905-local-dev-env-nix-flake/`
+
 2. Add `flake.nix` dev shell for Bun/TypeScript development plus common CLI utilities.
+   - Provide `devShells.default` that works on Linux + macOS.
+   - Include: `bun`, `nodejs` (if needed for tooling), `just`, `git`, `ripgrep`, and common SSL/certs tooling.
+   - Keep shell activation fast; avoid heavyweight language toolchains not required by the repo.
+   - Manual testing steps:
+     - `nix --extra-experimental-features "nix-command flakes" flake check`
+     - `nix --extra-experimental-features "nix-command flakes" develop`
+     - In the shell: `bun --version && just --version && rg --version`
+
 3. Add `.envrc` (`use flake`) and `.gitignore` for `.direnv/`.
+   - Root `.envrc` contains only `use flake`.
+   - Root `.gitignore` includes `.direnv/`.
+   - Manual testing steps:
+     - `direnv allow`
+     - Exit and re-enter the repo directory; verify auto enter/exit activates the flake shell.
+
 4. Add dev-only `Justfile` (Nix helpers + minimal Bun placeholders).
+   - Provide recipes that wrap Nix commands (`fmt`, `check`, `shell`).
+   - Add placeholders for Bun tasks that do not fail when `package.json` does not exist yet.
+   - Manual testing steps:
+     - `just --list`
+     - `just check`
+     - `just shell`
+
 5. Document local dev workflow in `CONTRIBUTING.md`.
-6. Verify: `nix flake check`, `nix develop`, `direnv allow` + auto enter/exit.
+   - Include: installing Nix, enabling flakes, installing `direnv` + `nix-direnv`, and `direnv allow`.
+   - Include: common `just` recipes and when to use them.
+   - Manual testing steps:
+     - Read `CONTRIBUTING.md` and follow the steps from a fresh shell to confirm they work end-to-end.
+
+6. Verify the full workflow.
+   - Required checks:
+     - `nix flake check`
+     - `nix develop`
+     - `direnv allow` + auto enter/exit
+   - Manual testing steps:
+     - `just check`
+     - `just shell`
+     - `direnv reload`
 
 ## Exit criteria
 

@@ -21,10 +21,24 @@ install:
     fi
 
 lint:
-    @echo "Placeholder: add scripts.lint in package.json, then update this recipe."
+    @if [ -f package.json ]; then \
+      bun run lint; \
+    else \
+      echo "No package.json yet; lint is a placeholder until app scaffolding lands."; \
+    fi
 
 test:
-    @echo "Placeholder: add tests/package scripts, then update this recipe."
+    @if [ -f package.json ]; then \
+      bun run test; \
+    else \
+      echo "No package.json yet; test is a placeholder until app scaffolding lands."; \
+    fi
 
-serve:
-    @echo "Placeholder: add runtime entrypoint, then update this recipe."
+serve *args:
+    @if [ -f package.json ]; then \
+      set -- {{args}}; \
+      if [ "${1:-}" = "--" ]; then shift; fi; \
+      exec ./bin/chimera-bench serve "$@"; \
+    else \
+      echo "No package.json yet; serve is a placeholder until app scaffolding lands."; \
+    fi

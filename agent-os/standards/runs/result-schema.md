@@ -29,7 +29,7 @@ Persist benchmark data as JSON first, then derive CSV and markdown exports from 
 - `requestParams`
 - `status`
 - `latencyMs`
-- `ttftMs`
+- `ttftMs` (nullable; best-effort until deep log parsing is implemented)
 - `outputTokens`
 - `tokensPerSecond`
 - `promptEvalTokensPerSecond` (nullable)

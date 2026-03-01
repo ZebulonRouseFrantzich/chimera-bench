@@ -33,6 +33,22 @@ Common commands:
 - `just check` - run `nix flake check`
 - `just fmt` - run `nix fmt flake.nix`
 - `just shell` - enter the dev shell manually
+- `bun run openapi:generate` - regenerate `openapi/openapi.json`
+- `bun run sdk:generate` - regenerate SDK scaffolding in `sdk/generated/`
+- `bun run openapi:check` - fail if OpenAPI/SDK artifacts drift
+
+Generated OpenAPI/SDK artifacts are committed to git. Regenerate and include them in your PR when route/schema changes affect API shape.
+
+### Optional dev-mode server logging
+
+Set `CHIMERA_BENCH_DEV=1` to enable verbose request access logs while developing locally.
+The default is disabled.
+
+Example:
+
+```bash
+CHIMERA_BENCH_DEV=1 chimera-bench serve
+```
 
 `just` is for developer ergonomics only. End users should run `chimera-bench ...` commands directly.
 

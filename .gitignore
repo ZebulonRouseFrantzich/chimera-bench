@@ -1,1 +1,6 @@
 .direnv/
+node_modules/
+coverage/
+/runs/
+
+# openapi/ and sdk/generated/ are committed artifacts.

@@ -1,43 +1,56 @@
 # Engine Plugin Interface
 
-All inference backends (`llama.cpp`, `vLLM`, `exo`, etc.) implement one stable plugin contract.
+All inference backends (`llama.cpp`, `vLLM`, `exo`, etc.) implement `EnginePlugin`.
+Core must not branch on engine-specific behavior.
+
+## Registration requirements
+
+- `apiVersion` must equal `ENGINE_PLUGIN_API_VERSION`.
+- `id` must be unique and match `^[a-z0-9]+(?:-[a-z0-9]+)*$` (example: `llama-cpp`).
 
 ## Required plugin metadata
 
-- `id`: stable identifier (`llama-cpp`).
 - `displayName`: human-friendly name.
 - `version`: plugin version.
-- `capabilities`: supported features (streaming, speculative decoding metrics, remote compatibility).
+- `capabilities`: supported features.
 
-## Required lifecycle
-
-Each plugin must implement these lifecycle methods:
+## Required lifecycle (in order)
 
 1. `validateEnvironment()`
-2. `buildLaunchConfig(runConfig)`
-3. `start(context)`
-4. `waitUntilReady(context)`
-5. `executeCase(context, caseConfig)`
-6. `collectMetrics(context)`
-7. `stop(context)`
+2. `validateRunConfig(runConfig)`
+3. `buildLaunchConfig(runConfig)`
+4. `start(context)`
+5. `waitUntilReady(context)`
+6. `executeCase(context, caseConfig)`
+7. `collectMetrics(context)`
+8. `stop(context)`
 
-The core runner only calls this interface and must not branch on engine-specific behavior.
+## Run config validation
+
+- Plugin owns validation + normalization of:
+  - `model.identifier`
+  - `engine.serverArgs` (launch flags)
+  - `engine.requestParams` (request payload params)
+- `validationMode`:
+  - `strict` (default): reject unknown flags/params.
+  - `permissive`: allow unknown flags/params for experimentation.
+- Reserved/denylisted flags/params are rejected in all modes.
+- Prefer capability checks over version caps.
 
 ## Config boundaries
 
-- Core owns generic benchmark config (`model`, `workload`, `sweep`, `target`).
-- Plugin owns engine-specific config under `engine.options`.
-- Keep raw pass-through support so new engine flags do not require core changes:
+- Core owns generic benchmark config; plugin owns mapping to launches/requests.
+- Preserve raw pass-through so new engine flags do not require core changes:
   - `engine.serverArgs: string[]`
   - `engine.requestParams: Record<string, unknown>`
 
-## Metrics and parsing
+## Launch safety
 
-- Plugins parse stdout/stderr into typed metric fragments.
-- If parsing fails, keep run execution alive and mark metric as unavailable with reason.
-- Include a bounded raw log excerpt for auditability when parse errors happen.
+- Plugins must not install, download, build, or upgrade engine software.
+- `EngineLaunchConfig.environmentOverrides` must not include unsafe injection keys (`LD_PRELOAD`, `LD_AUDIT`, `NODE_OPTIONS`, `DYLD_*`). No bypass.
 
-## Isolation rules
+## Errors + diagnostics
 
-- Engine-specific command building, readiness checks, and regex parsing live in the plugin package.
-- Shared utilities may be imported, but plugin logic stays self-contained.
+- For expected failures, throw an error with `code` + safe `message` (+ optional `details`).
+- Use `ENGINE_*` codes for fatal engine failures.
+- Treat subprocess output as untrusted; sanitize + bound excerpts; redact secrets (for example API keys) from args and logs.
