@@ -93,6 +93,7 @@ export interface EngineLaunchConfig {
   command: string;
   args: string[];
   environmentOverrides?: Record<string, string>;
+  metadata?: Record<string, unknown>;
 }
 
 export function hasRestrictedEnvironmentOverrides(

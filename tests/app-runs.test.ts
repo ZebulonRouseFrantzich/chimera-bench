@@ -293,6 +293,7 @@ describe("run routes", () => {
         enabled: false,
         username: "chimera",
       },
+      engines: createEngineCatalog([createTestPlugin()]),
     });
 
     const response = await app.request("http://localhost/runs", {

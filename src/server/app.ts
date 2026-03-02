@@ -46,12 +46,13 @@ export function createApp(options: AppOptions): Hono {
   const openApiDocument = createOpenApiDocument({
     version: options.version,
   });
-  const engines = options.engines ?? createDefaultEngineCatalog(options.modelRoots ?? []);
+  const targetProfiles = new TargetProfileStore(options.targetProfilesRootDir);
+  const engines =
+    options.engines ?? createDefaultEngineCatalog(options.modelRoots ?? [], targetProfiles);
   const runStore = new InMemoryRunStore();
   const runArtifacts = new RunArtifactStore(
     options.runArtifactsRootDir ?? DEFAULT_RUN_ARTIFACTS_ROOT_DIR,
   );
-  const targetProfiles = new TargetProfileStore(options.targetProfilesRootDir);
 
   app.use("*", async (context, next) => {
     const requestId = randomUUID();
@@ -140,10 +141,16 @@ export function createApp(options: AppOptions): Hono {
   return app;
 }
 
-function createDefaultEngineCatalog(modelRoots: string[]): EngineCatalog {
+function createDefaultEngineCatalog(
+  modelRoots: string[],
+  targetProfiles: TargetProfileStore,
+): EngineCatalog {
   return createEngineCatalog([
     createStarterLlamaCppPlugin({
       modelRoots,
+      getTargetProfile: async (profileId: string) => {
+        return await targetProfiles.getProfile(profileId);
+      },
     }),
   ]);
 }

@@ -22,7 +22,7 @@ describe("engine routes", () => {
     expect(payload.success).toBe(true);
     expect(payload.data.engines).toHaveLength(1);
     expect(payload.data.engines[0].id).toBe("llama-cpp");
-    expect(payload.data.engines[0].capabilities.sshTarget).toBe(false);
+    expect(payload.data.engines[0].capabilities.sshTarget).toBe(true);
   });
 
   test("returns error summary when environment validation throws", async () => {

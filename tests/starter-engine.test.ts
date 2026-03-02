@@ -21,6 +21,7 @@ import type {
   EngineRuntimeContext,
 } from "../src/server/engines/engine-plugin.ts";
 import { createStarterLlamaCppPlugin } from "../src/server/engines/starter-engine.ts";
+import type { TargetProfile } from "../src/server/targets/target-profile.ts";
 
 const TEST_API_KEY = "k".repeat(43);
 const TEST_MODEL_IDENTIFIER = "/tmp/model.gguf";
@@ -51,6 +52,392 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     expect(launchConfig.args).toContain(TEST_API_KEY);
     expect(launchConfig.args).toContain("--no-webui");
     expect(launchConfig.args).toContain("--threads=4");
+  });
+
+  test("advertises SSH target capability", async () => {
+    const plugin = createStarterLlamaCppPlugin();
+    expect(plugin.capabilities.sshTarget).toBe(true);
+  });
+
+  test("uses cached remote strict flag discovery per profile/path with ttl", async () => {
+    let discoveryCalls = 0;
+    let nowMs = 1_000;
+    const profile = createSshProfile("lab");
+
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+      discoverRemoteSupportedServerFlags: async () => {
+        discoveryCalls += 1;
+        return new Set(["--threads", "--model", "--host", "--port", "--api-key", "--no-webui"]);
+      },
+      remoteHelpCacheTtlMs: 100,
+      now: () => nowMs,
+    });
+
+    const firstValidation = await plugin.validateRunConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        serverArgs: ["--threads", "4"],
+      }),
+    );
+
+    const secondValidation = await plugin.validateRunConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        serverArgs: ["--threads", "8"],
+      }),
+    );
+
+    expect(firstValidation.ok).toBe(true);
+    expect(secondValidation.ok).toBe(true);
+    expect(discoveryCalls).toBe(1);
+
+    nowMs += 101;
+
+    const thirdValidation = await plugin.validateRunConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        serverArgs: ["--threads", "16"],
+      }),
+    );
+
+    expect(thirdValidation.ok).toBe(true);
+    expect(discoveryCalls).toBe(2);
+  });
+
+  test("invalidates remote strict flag cache when SSH connection identity changes", async () => {
+    let discoveryCalls = 0;
+    let profile = createSshProfile("lab");
+
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+      discoverRemoteSupportedServerFlags: async () => {
+        discoveryCalls += 1;
+        return new Set(["--threads", "--model", "--host", "--port", "--api-key", "--no-webui"]);
+      },
+      remoteHelpCacheTtlMs: 60_000,
+      now: () => 1_000,
+    });
+
+    const firstValidation = await plugin.validateRunConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        serverArgs: ["--threads", "4"],
+      }),
+    );
+    expect(firstValidation.ok).toBe(true);
+
+    profile = {
+      ...profile,
+      host: "10.0.0.11",
+    };
+
+    const secondValidation = await plugin.validateRunConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        serverArgs: ["--threads", "8"],
+      }),
+    );
+    expect(secondValidation.ok).toBe(true);
+    expect(discoveryCalls).toBe(2);
+  });
+
+  test("rejects unknown server flags in strict SSH mode", async () => {
+    const profile = createSshProfile("lab");
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+      discoverRemoteSupportedServerFlags: async () =>
+        new Set(["--threads", "--model", "--host", "--port", "--api-key", "--no-webui"]),
+    });
+
+    const validationResult = await plugin.validateRunConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        serverArgs: ["--not-a-real-flag"],
+      }),
+    );
+
+    expect(validationResult.ok).toBe(false);
+    if (!validationResult.ok) {
+      expect(validationResult.issues?.[0]?.code).toBe("SERVER_ARG_UNKNOWN");
+    }
+  });
+
+  test("fails strict SSH validation when remote --help markers are missing", async () => {
+    const profile = createSshProfile("lab");
+
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+      executeSshCommand: async () => ({
+        argv: ["ssh", "..."],
+        stdoutExcerpt: "--threads\n--ctx-size",
+        stderrExcerpt: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      }),
+    });
+
+    const validationResult = await plugin.validateRunConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        serverArgs: ["--threads", "4"],
+      }),
+    );
+
+    expect(validationResult.ok).toBe(false);
+    if (!validationResult.ok) {
+      expect(validationResult.code).toBe("VALIDATION_ENGINE_OPTIONS_INVALID");
+      expect(validationResult.issues?.[0]?.code).toBe("SERVER_ARG_FLAG_DISCOVERY_FAILED");
+    }
+  });
+
+  test("starts SSH-managed remote llama-server with loopback-only forwarding", async () => {
+    const processHandle = new FakeChildProcess(64001);
+    const signalCalls: NodeJS.Signals[] = [];
+    const profile = createSshProfile("lab");
+    let observedCommand = "";
+    let observedArgs: string[] = [];
+
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+      createApiKey: () => TEST_API_KEY,
+      allocateLoopbackPort: async () => 18080,
+      allocateRemoteSshPort: () => 28080,
+      startupProbeWindowMs: 5,
+      sshStartupRetryAttempts: 1,
+      spawnProcess: (command, args) => {
+        observedCommand = command;
+        observedArgs = [...args];
+        return processHandle.asChildProcess();
+      },
+      signalProcessGroup: (_pid, signal) => {
+        signalCalls.push(signal);
+        if (signal === "SIGTERM") {
+          processHandle.emitExit(0, null);
+        }
+      },
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        validationMode: "permissive",
+      }),
+    );
+    const context = createContext("run_remote_start", launchConfig);
+
+    await plugin.start(context);
+
+    expect(observedCommand).toBe("ssh");
+    expect(observedArgs).toContain("-L");
+    expect(observedArgs).toContain("127.0.0.1:18080:127.0.0.1:28080");
+    expect(observedArgs).toContain("ubuntu@10.0.0.10");
+    expect(observedArgs.at(-1)).toContain("exec ");
+    expect(observedArgs.at(-1)).toContain("--api-key");
+    expect(observedArgs.at(-1)).toContain("--no-webui");
+
+    await plugin.stop(context);
+    expect(signalCalls).toEqual(["SIGTERM"]);
+  });
+
+  test("retries SSH startup with a new remote port on bind collisions", async () => {
+    const profile = createSshProfile("lab");
+    const remotePorts = [28080, 28081];
+    const spawnArgs: string[][] = [];
+    let activeProcess: FakeChildProcess | null = null;
+
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+      createApiKey: () => TEST_API_KEY,
+      allocateLoopbackPort: async () => 18080,
+      allocateRemoteSshPort: () => {
+        const nextPort = remotePorts.shift();
+        if (nextPort === undefined) {
+          throw new Error("No remote SSH port available.");
+        }
+
+        return nextPort;
+      },
+      startupProbeWindowMs: 5,
+      sshStartupRetryAttempts: 2,
+      spawnProcess: (_command, args) => {
+        spawnArgs.push([...args]);
+
+        if (spawnArgs.length === 1) {
+          const failedProcess = new FakeChildProcess(64003);
+          queueMicrotask(() => {
+            failedProcess.stderr.write("bind: Address already in use");
+            failedProcess.emitExit(1, null);
+          });
+          return failedProcess.asChildProcess();
+        }
+
+        activeProcess = new FakeChildProcess(64004);
+        return activeProcess.asChildProcess();
+      },
+      signalProcessGroup: (pid, signal) => {
+        if (activeProcess && activeProcess.pid === pid && signal === "SIGTERM") {
+          activeProcess.emitExit(0, null);
+        }
+      },
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        validationMode: "permissive",
+      }),
+    );
+
+    const context = createContext("run_remote_retry", launchConfig);
+    await plugin.start(context);
+
+    expect(spawnArgs).toHaveLength(2);
+    expect(spawnArgs[0]).toContain("127.0.0.1:18080:127.0.0.1:28080");
+    expect(spawnArgs[1]).toContain("127.0.0.1:18080:127.0.0.1:28081");
+
+    await plugin.stop(context);
+  });
+
+  test("reserves distinct SSH remote ports for concurrent runs", async () => {
+    const profile = createSshProfile("lab");
+    const remotePorts = [28080, 28080, 28081];
+    const localPorts = [18080, 18081];
+    const spawnedByPid = new Map<number, FakeChildProcess>();
+    const spawnArgs: string[][] = [];
+
+    let nextPid = 65000;
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+      createApiKey: () => TEST_API_KEY,
+      allocateLoopbackPort: async () => {
+        const nextPort = localPorts.shift();
+        if (nextPort === undefined) {
+          throw new Error("No local port available");
+        }
+
+        return nextPort;
+      },
+      allocateRemoteSshPort: () => {
+        const nextPort = remotePorts.shift();
+        if (nextPort === undefined) {
+          throw new Error("No remote port available");
+        }
+
+        return nextPort;
+      },
+      startupProbeWindowMs: 5,
+      sshStartupRetryAttempts: 2,
+      spawnProcess: (_command, args) => {
+        spawnArgs.push([...args]);
+        const process = new FakeChildProcess(nextPid);
+        nextPid += 1;
+        spawnedByPid.set(process.pid, process);
+        return process.asChildProcess();
+      },
+      signalProcessGroup: (pid, signal) => {
+        const process = spawnedByPid.get(pid);
+        if (process && signal === "SIGTERM") {
+          process.emitExit(0, null);
+        }
+      },
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        validationMode: "permissive",
+      }),
+    );
+
+    const contextOne = createContext("run_remote_concurrent_1", launchConfig);
+    const contextTwo = createContext("run_remote_concurrent_2", launchConfig);
+
+    await plugin.start(contextOne);
+    await plugin.start(contextTwo);
+
+    expect(spawnArgs).toHaveLength(2);
+    expect(spawnArgs[0]).toContain("127.0.0.1:18080:127.0.0.1:28080");
+    expect(spawnArgs[1]).toContain("127.0.0.1:18081:127.0.0.1:28081");
+
+    await plugin.stop(contextOne);
+    await plugin.stop(contextTwo);
+  });
+
+  test("classifies SSH transport startup failures as REMOTE_SSH_FAILED", async () => {
+    const profile = createSshProfile("lab");
+
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+      createApiKey: () => TEST_API_KEY,
+      allocateLoopbackPort: async () => 18080,
+      allocateRemoteSshPort: () => 28080,
+      startupProbeWindowMs: 5,
+      sshStartupRetryAttempts: 1,
+      spawnProcess: () => {
+        const processHandle = new FakeChildProcess(64002);
+        queueMicrotask(() => {
+          processHandle.stderr.write("Permission denied (publickey).");
+          processHandle.emitExit(255, null);
+        });
+        return processHandle.asChildProcess();
+      },
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        validationMode: "permissive",
+      }),
+    );
+
+    await expect(plugin.start(createContext("run_remote_auth_failure", launchConfig))).rejects.toMatchObject({
+      code: "REMOTE_SSH_FAILED",
+    });
   });
 
   test("rejects weak api keys during start before spawning", async () => {
@@ -684,13 +1071,16 @@ function createRunConfig(
     requestParams?: Record<string, unknown>;
     validationMode?: "strict" | "permissive";
     modelIdentifier?: string;
+    target?: EngineRunConfig["target"];
   } = {},
 ): EngineRunConfig {
   return {
     engineId: "llama-cpp",
-    target: {
-      type: "local",
-    },
+    target:
+      options.target ??
+      {
+        type: "local",
+      },
     model: {
       identifier: options.modelIdentifier ?? TEST_MODEL_IDENTIFIER,
     },
@@ -700,6 +1090,22 @@ function createRunConfig(
       serverArgs: options.serverArgs ?? [],
       requestParams: options.requestParams ?? {},
     },
+  };
+}
+
+function createSshProfile(profileId: string): TargetProfile {
+  return {
+    schemaVersion: 1,
+    id: profileId,
+    displayName: "Lab LLM box",
+    host: "10.0.0.10",
+    port: 22,
+    username: "ubuntu",
+    auth: {
+      method: "ssh-agent",
+    },
+    remoteModelRoots: ["/models"],
+    llamaServerPath: "llama-server",
   };
 }
 

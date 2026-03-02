@@ -28,6 +28,24 @@ import {
   EngineStartFailedError as EngineStartFailedErrorClass,
   hasRestrictedEnvironmentOverrides,
 } from "./engine-plugin.ts";
+import {
+  allocateRandomSshRemotePort,
+  buildRemoteHelpCacheKey,
+  buildRemotePortReservationKey,
+  buildSshManagedLaunchArgv,
+  createStarterSshLaunchMetadata,
+  getMissingRequiredRemoteHelpFlags,
+  isLikelySshTransportFailure,
+  isRetryableRemoteStartupFailure,
+  isStarterSshLaunchMetadata,
+  serializeStarterSshLaunchMetadata,
+} from "./starter-engine-ssh.ts";
+import {
+  classifySshFailureGuidance,
+  executeSshCommand,
+  SshCommandExecutionError,
+} from "../ssh/ssh-exec.ts";
+import type { TargetProfile } from "../targets/target-profile.ts";
 
 export const STARTER_ENGINE_ID = "llama-cpp";
 
@@ -48,6 +66,8 @@ const DEFAULT_READINESS_REQUEST_TIMEOUT_MS = 1_000;
 const DEFAULT_SERVER_HELP_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_HELP_OUTPUT_CHARS = 128 * 1024;
 const READINESS_ERROR_EXCERPT_CHARS = 256;
+const DEFAULT_REMOTE_HELP_CACHE_TTL_MS = 60_000;
+const DEFAULT_SSH_STARTUP_RETRY_ATTEMPTS = 10;
 
 const RESERVED_SERVER_FLAGS = new Set([
   "-m",
@@ -100,6 +120,7 @@ interface ProcessTerminationError {
 type ProcessTermination = ProcessTerminationExit | ProcessTerminationError;
 
 interface LlamaServerRunState {
+  mode: "local" | "ssh";
   process: ChildProcessWithoutNullStreams;
   terminationPromise: Promise<ProcessTermination>;
   stdoutBuffer: RollingTextBuffer;
@@ -107,6 +128,11 @@ interface LlamaServerRunState {
   healthUrl: string;
   healthRequestHeaders: Record<string, string>;
   apiKey: string;
+  remotePortReservation?: {
+    destinationKey: string;
+    remotePort: number;
+  };
+  startupDiagnosticData?: Record<string, unknown>;
   removeAbortListener: () => void;
 }
 
@@ -149,6 +175,13 @@ interface SpawnAttemptInput {
   dependencies: StarterLlamaCppPluginDependencies;
 }
 
+interface StartSshLlamaServerInput {
+  runId: string;
+  launchMetadata: ReturnType<typeof createStarterSshLaunchMetadata>;
+  emitDiagnostic: EngineRuntimeContext["emitDiagnostic"];
+  dependencies: StarterLlamaCppPluginDependencies;
+}
+
 export interface StarterLlamaCppPluginDependencies {
   spawnProcess: (
     command: string,
@@ -159,12 +192,22 @@ export interface StarterLlamaCppPluginDependencies {
   createApiKey: () => string;
   modelRoots: readonly string[];
   signalProcessGroup: (pid: number, signal: NodeJS.Signals) => void;
+  getTargetProfile: (profileId: string) => Promise<TargetProfile>;
   discoverSupportedServerFlags: () => Promise<ReadonlySet<string>>;
+  discoverRemoteSupportedServerFlags: (
+    profile: TargetProfile,
+  ) => Promise<ReadonlySet<string>>;
+  executeSshCommand: typeof executeSshCommand;
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
   wait: (ms: number) => Promise<void>;
   now: () => number;
   startupProbeWindowMs: number;
   startupRetryAttempts: number;
+  sshStartupRetryAttempts: number;
+  remoteHelpCacheTtlMs: number;
+  allocateRemoteSshPort: () => number;
+  reserveRemoteSshPort: (destinationKey: string, remotePort: number) => boolean;
+  releaseRemoteSshPort: (destinationKey: string, remotePort: number) => void;
   stopGracePeriodMs: number;
   killWaitTimeoutMs: number;
   readinessPollIntervalMs: number;
@@ -227,7 +270,7 @@ export function createStarterLlamaCppPlugin(
     capabilities: {
       chatCompletions: true,
       localTarget: true,
-      sshTarget: false,
+      sshTarget: true,
       streaming: true,
     },
     async validateEnvironment(): Promise<EngineEnvironmentSummary> {
@@ -242,20 +285,36 @@ export function createStarterLlamaCppPlugin(
       const issues: EngineValidationIssue[] = [];
       let normalizedModelIdentifier = runConfig.model.identifier;
 
-      const modelIdentifierValidation = await validateModelIdentifier(
-        runConfig.model.identifier,
-        dependencies.modelRoots,
-      );
-      if (modelIdentifierValidation.ok) {
-        normalizedModelIdentifier = modelIdentifierValidation.normalizedIdentifier;
-      } else {
-        issues.push(...modelIdentifierValidation.issues);
+      let sshProfile: TargetProfile | null = null;
+
+      if (runConfig.target.type === "local") {
+        const modelIdentifierValidation = await validateModelIdentifier(
+          runConfig.model.identifier,
+          dependencies.modelRoots,
+        );
+        if (modelIdentifierValidation.ok) {
+          normalizedModelIdentifier = modelIdentifierValidation.normalizedIdentifier;
+        } else {
+          issues.push(...modelIdentifierValidation.issues);
+        }
+      } else if (runConfig.target.type === "ssh") {
+        try {
+          sshProfile = await dependencies.getTargetProfile(runConfig.target.profileId);
+        } catch {
+          issues.push({
+            code: "TARGET_PROFILE_NOT_FOUND",
+            message: "target.profileId must reference an existing target profile.",
+            path: "target.profileId",
+          });
+        }
       }
 
       const serverArgsValidation = await validateServerArgs(
         runConfig.engine.serverArgs,
         runConfig.validationMode,
         dependencies,
+        runConfig.target,
+        sshProfile,
       );
       issues.push(...serverArgsValidation.issues);
 
@@ -313,6 +372,32 @@ export function createStarterLlamaCppPlugin(
       };
     },
     async buildLaunchConfig(runConfig: EngineRunConfig): Promise<EngineLaunchConfig> {
+      const serverArgsValidation = await validateServerArgs(
+        runConfig.engine.serverArgs,
+        "permissive",
+        dependencies,
+        runConfig.target,
+        null,
+      );
+      if (serverArgsValidation.issues.length > 0) {
+        throw new Error("llama.cpp launch config rejected invalid server args.");
+      }
+
+      if (runConfig.target.type === "ssh") {
+        const profile = await dependencies.getTargetProfile(runConfig.target.profileId);
+        const launchMetadata = createStarterSshLaunchMetadata({
+          profile,
+          modelIdentifier: runConfig.model.identifier,
+          serverArgs: runConfig.engine.serverArgs,
+        });
+
+        return {
+          command: "ssh",
+          args: [],
+          metadata: serializeStarterSshLaunchMetadata(launchMetadata),
+        };
+      }
+
       const modelIdentifierValidation = await validateModelIdentifier(
         runConfig.model.identifier,
         dependencies.modelRoots,
@@ -321,15 +406,6 @@ export function createStarterLlamaCppPlugin(
         throw new Error(
           "llama.cpp launch config rejected model.identifier; expected a readable local .gguf file.",
         );
-      }
-
-      const serverArgsValidation = await validateServerArgs(
-        runConfig.engine.serverArgs,
-        "permissive",
-        dependencies,
-      );
-      if (serverArgsValidation.issues.length > 0) {
-        throw new Error("llama.cpp launch config rejected invalid server args.");
       }
 
       const port = await dependencies.allocateLoopbackPort();
@@ -368,6 +444,24 @@ export function createStarterLlamaCppPlugin(
         });
       }
 
+      const sshLaunchMetadata = parseSshLaunchMetadata(context.launchConfig.metadata);
+      if (sshLaunchMetadata) {
+        const runState = await startSshLlamaServerWithRetries({
+          runId: context.runId,
+          launchMetadata: sshLaunchMetadata,
+          emitDiagnostic: context.emitDiagnostic,
+          dependencies,
+        });
+
+        activateRunState({
+          context,
+          runState,
+          runStates,
+          dependencies,
+        });
+        return;
+      }
+
       const apiKey = extractRequiredFlagValue(context.launchConfig.args, "--api-key");
       assertApiKeyStrength(apiKey);
       let launchArgs = [...context.launchConfig.args];
@@ -388,151 +482,30 @@ export function createStarterLlamaCppPlugin(
         });
 
         if (attemptResult.ok) {
-          let abortListenerRemoved = false;
-          const removeAbortListener = () => {
-            if (abortListenerRemoved) {
-              return;
-            }
-
-            abortListenerRemoved = true;
-            context.abortSignal.removeEventListener("abort", abortListener);
-          };
-
           const runState: LlamaServerRunState = {
+            mode: "local",
             ...attemptResult.state,
             healthUrl: buildHealthUrl(launchArgs),
             healthRequestHeaders: buildHealthRequestHeaders(apiKey),
             apiKey,
-            removeAbortListener,
-          };
-
-          const abortListener = () => {
-            const activeRunState = runStates.get(context.runId);
-            if (activeRunState !== runState) {
-              return;
-            }
-
-            runStates.delete(context.runId);
-            void stopRunState(runState, {
-              runId: context.runId,
-              reason: "abort-signal",
-              emitDiagnostic: context.emitDiagnostic,
-              dependencies,
-            }).catch(() => {
-              context.emitDiagnostic?.({
-                level: "warn",
-                message:
-                  "llama.cpp process cleanup failed after abort signal; check server logs for details.",
-                data: {
-                  runId: context.runId,
-                },
-              });
-            });
-          };
-
-          context.abortSignal.addEventListener("abort", abortListener, { once: true });
-          runStates.set(context.runId, runState);
-
-          const startupPort = parseFlagIntValue(launchArgs, "--port");
-          context.emitDiagnostic?.({
-            level: "info",
-            message: "llama-server subprocess started.",
-            data: {
-              runId: context.runId,
-              ...(startupPort !== null
+            startupDiagnosticData: {
+              ...(parseFlagIntValue(launchArgs, "--port") !== null
                 ? {
-                    port: startupPort,
+                    port: parseFlagIntValue(launchArgs, "--port"),
                   }
                 : {}),
             },
+            removeAbortListener: () => {
+              return;
+            },
+          };
+
+          activateRunState({
+            context,
+            runState,
+            runStates,
+            dependencies,
           });
-
-          void runState.terminationPromise
-            .then((termination) => {
-              const activeRunState = runStates.get(context.runId);
-              if (activeRunState !== runState) {
-                return;
-              }
-
-              runStates.delete(context.runId);
-              runState.removeAbortListener();
-
-              const secret = runState.apiKey;
-              const stderrExcerpt = redactSecret(
-                runState.stderrBuffer.excerpt(dependencies.diagnosticExcerptChars),
-                secret,
-              );
-              const stdoutExcerpt = redactSecret(
-                runState.stdoutBuffer.excerpt(dependencies.diagnosticExcerptChars),
-                secret,
-              );
-              runState.apiKey = "";
-
-              if (termination.kind === "error") {
-                context.emitDiagnostic?.({
-                  level: "error",
-                  message: "llama-server subprocess terminated with an internal process error.",
-                  data: {
-                    runId: context.runId,
-                    reason: redactSecret(termination.error.message, secret),
-                    ...(stderrExcerpt.length > 0
-                      ? {
-                          stderrExcerpt,
-                        }
-                      : {}),
-                    ...(stdoutExcerpt.length > 0
-                      ? {
-                          stdoutExcerpt,
-                        }
-                      : {}),
-                  },
-                });
-                return;
-              }
-
-              if (termination.code === 0) {
-                return;
-              }
-
-              context.emitDiagnostic?.({
-                level: "warn",
-                message: "llama-server subprocess exited unexpectedly.",
-                data: {
-                  runId: context.runId,
-                  ...(termination.code !== null
-                    ? {
-                        exitCode: termination.code,
-                      }
-                    : {}),
-                  ...(termination.signal !== null
-                    ? {
-                        signal: termination.signal,
-                      }
-                    : {}),
-                  ...(stderrExcerpt.length > 0
-                    ? {
-                        stderrExcerpt,
-                      }
-                    : {}),
-                  ...(stdoutExcerpt.length > 0
-                    ? {
-                        stdoutExcerpt,
-                      }
-                    : {}),
-                },
-              });
-            })
-            .catch((error) => {
-              context.emitDiagnostic?.({
-                level: "warn",
-                message:
-                  "llama-server termination observer failed while handling process shutdown diagnostics.",
-                data: {
-                  runId: context.runId,
-                  reason: redactSecret(toError(error).message, runState.apiKey),
-                },
-              });
-            });
 
           return;
         }
@@ -585,6 +558,15 @@ export function createStarterLlamaCppPlugin(
         await waitForReadinessProbe(runState, context.abortSignal, dependencies);
       } catch (error) {
         const readinessError = toError(error);
+        context.emitDiagnostic?.({
+          level: "warn",
+          message: "llama-server readiness probe failed.",
+          data: {
+            runId: context.runId,
+            healthUrl: runState.healthUrl,
+            reason: redactSecret(readinessError.message, runState.apiKey),
+          },
+        });
         const startupFailure = buildEngineStartFailedError({
           runId: context.runId,
           reason: readinessError.message,
@@ -649,6 +631,11 @@ export function createStarterLlamaCppPlugin(
 function createDependencies(
   overrides: Partial<StarterLlamaCppPluginDependencies>,
 ): StarterLlamaCppPluginDependencies {
+  const now = overrides.now ?? Date.now;
+  const executeSshCommandImpl = overrides.executeSshCommand ?? executeSshCommand;
+  const remoteHelpCacheTtlMs =
+    overrides.remoteHelpCacheTtlMs ?? DEFAULT_REMOTE_HELP_CACHE_TTL_MS;
+
   const discoverSupportedServerFlagsImpl =
     overrides.discoverSupportedServerFlags ?? discoverSupportedServerFlags;
   let cachedSupportedServerFlagsPromise: Promise<ReadonlySet<string>> | null = null;
@@ -666,9 +653,90 @@ function createDependencies(
     return cachedSupportedServerFlagsPromise;
   };
 
+  const discoverRemoteSupportedServerFlagsImpl =
+    overrides.discoverRemoteSupportedServerFlags ??
+    (async (profile: TargetProfile) => {
+      return discoverRemoteSupportedServerFlags(profile, executeSshCommandImpl);
+    });
+  const remoteSupportedFlagCache = new Map<
+    string,
+    {
+      expiresAt: number;
+      supportedFlags: ReadonlySet<string>;
+    }
+  >();
+  const remoteDiscoveryInFlight = new Map<string, Promise<ReadonlySet<string>>>();
+
+  const discoverRemoteSupportedServerFlagsWithCache = async (
+    profile: TargetProfile,
+  ): Promise<ReadonlySet<string>> => {
+    const cacheKey = buildRemoteHelpCacheKey(profile);
+    const cached = remoteSupportedFlagCache.get(cacheKey);
+    const nowMs = now();
+    if (cached && cached.expiresAt > nowMs) {
+      return cached.supportedFlags;
+    }
+
+    const inFlight = remoteDiscoveryInFlight.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    // Failed discoveries are intentionally not cached. Concurrent callers will
+    // observe the same rejection, and the next call retries fresh discovery.
+    const discoveryPromise = discoverRemoteSupportedServerFlagsImpl(profile)
+      .then((supportedFlags) => {
+        remoteSupportedFlagCache.set(cacheKey, {
+          expiresAt: now() + remoteHelpCacheTtlMs,
+          supportedFlags,
+        });
+        return supportedFlags;
+      })
+      .finally(() => {
+        remoteDiscoveryInFlight.delete(cacheKey);
+      });
+
+    remoteDiscoveryInFlight.set(cacheKey, discoveryPromise);
+    return discoveryPromise;
+  };
+
+  const reservedRemotePortsByDestination = new Map<string, Set<number>>();
+  const reserveRemoteSshPort = (destinationKey: string, remotePort: number): boolean => {
+    if (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535) {
+      return false;
+    }
+
+    const existing = reservedRemotePortsByDestination.get(destinationKey);
+    if (existing?.has(remotePort)) {
+      return false;
+    }
+
+    if (existing) {
+      existing.add(remotePort);
+      return true;
+    }
+
+    reservedRemotePortsByDestination.set(destinationKey, new Set([remotePort]));
+    return true;
+  };
+
+  const releaseRemoteSshPort = (destinationKey: string, remotePort: number): void => {
+    const existing = reservedRemotePortsByDestination.get(destinationKey);
+    if (!existing) {
+      return;
+    }
+
+    existing.delete(remotePort);
+    if (existing.size === 0) {
+      reservedRemotePortsByDestination.delete(destinationKey);
+    }
+  };
+
   return {
     spawnProcess: overrides.spawnProcess ?? spawn,
     allocateLoopbackPort: overrides.allocateLoopbackPort ?? allocateLoopbackPort,
+    allocateRemoteSshPort:
+      overrides.allocateRemoteSshPort ?? (() => allocateRandomSshRemotePort()),
     createApiKey:
       overrides.createApiKey ??
       (() => randomBytes(API_KEY_ENTROPY_BYTES).toString("base64url")),
@@ -678,14 +746,28 @@ function createDependencies(
       ((pid, signal) => {
         process.kill(-pid, signal);
       }),
+    getTargetProfile:
+      overrides.getTargetProfile ??
+      (async (profileId: string) => {
+        throw new Error(
+          `SSH target profile '${profileId}' could not be resolved by llama.cpp plugin dependencies.`,
+        );
+      }),
     discoverSupportedServerFlags: discoverSupportedServerFlagsWithCache,
+    discoverRemoteSupportedServerFlags: discoverRemoteSupportedServerFlagsWithCache,
+    executeSshCommand: executeSshCommandImpl,
     fetch: overrides.fetch ?? fetch,
     wait: overrides.wait ?? delay,
-    now: overrides.now ?? Date.now,
+    now,
     startupProbeWindowMs:
       overrides.startupProbeWindowMs ?? DEFAULT_STARTUP_PROBE_WINDOW_MS,
     startupRetryAttempts:
       overrides.startupRetryAttempts ?? DEFAULT_STARTUP_RETRY_ATTEMPTS,
+    sshStartupRetryAttempts:
+      overrides.sshStartupRetryAttempts ?? DEFAULT_SSH_STARTUP_RETRY_ATTEMPTS,
+    remoteHelpCacheTtlMs,
+    reserveRemoteSshPort: overrides.reserveRemoteSshPort ?? reserveRemoteSshPort,
+    releaseRemoteSshPort: overrides.releaseRemoteSshPort ?? releaseRemoteSshPort,
     stopGracePeriodMs: overrides.stopGracePeriodMs ?? DEFAULT_STOP_GRACE_PERIOD_MS,
     killWaitTimeoutMs: overrides.killWaitTimeoutMs ?? DEFAULT_KILL_WAIT_TIMEOUT_MS,
     readinessPollIntervalMs:
@@ -697,6 +779,354 @@ function createDependencies(
     diagnosticExcerptChars:
       overrides.diagnosticExcerptChars ?? DEFAULT_DIAGNOSTIC_EXCERPT_CHARS,
   };
+}
+
+function parseSshLaunchMetadata(
+  metadata: Record<string, unknown> | undefined,
+): ReturnType<typeof createStarterSshLaunchMetadata> | null {
+  if (!metadata) {
+    return null;
+  }
+
+  if (!isStarterSshLaunchMetadata(metadata)) {
+    return null;
+  }
+
+  return metadata;
+}
+
+async function startSshLlamaServerWithRetries(
+  input: StartSshLlamaServerInput,
+): Promise<LlamaServerRunState> {
+  const apiKey = input.dependencies.createApiKey();
+  assertApiKeyStrength(apiKey);
+  const destinationKey = buildRemotePortReservationKey(input.launchMetadata.profile);
+  const attemptedRemotePorts = new Set<number>();
+
+  let lastFailure: LlamaServerStartupFailure | null = null;
+  let lastLaunchContext:
+    | {
+        command: string;
+        args: string[];
+        localPort: number;
+        remotePort: number;
+        destination: string;
+      }
+    | null = null;
+
+  for (let attempt = 1; attempt <= input.dependencies.sshStartupRetryAttempts; attempt += 1) {
+    const localPort = await input.dependencies.allocateLoopbackPort();
+    const remotePort = reserveUniqueRemoteSshPort({
+      destinationKey,
+      attemptedRemotePorts,
+      dependencies: input.dependencies,
+    });
+    const launch = buildSshManagedLaunchArgv({
+      profile: input.launchMetadata.profile,
+      localPort,
+      remotePort,
+      modelIdentifier: input.launchMetadata.modelIdentifier,
+      serverArgs: input.launchMetadata.serverArgs,
+      apiKey,
+    });
+
+    const [command, ...args] = launch.argv;
+    if (!command) {
+      throw new Error("SSH launch command argv cannot be empty.");
+    }
+
+    input.emitDiagnostic?.({
+      level: "info",
+      message: "Starting SSH-managed remote llama-server session.",
+      data: {
+        runId: input.runId,
+        profileId: input.launchMetadata.profile.id,
+        destination: launch.destination,
+        localPort,
+        remotePort,
+        attempt,
+      },
+    });
+
+    const attemptResult = await spawnLlamaServerAttempt({
+      command,
+      args,
+      runId: input.runId,
+      apiKey,
+      dependencies: input.dependencies,
+    });
+
+    if (attemptResult.ok) {
+      input.emitDiagnostic?.({
+        level: "info",
+        message: "SSH port-forward established for remote llama-server session.",
+        data: {
+          runId: input.runId,
+          profileId: input.launchMetadata.profile.id,
+          destination: launch.destination,
+          localPort,
+          remotePort,
+        },
+      });
+
+      return {
+        mode: "ssh",
+        ...attemptResult.state,
+        healthUrl: `http://${LOOPBACK_HOST}:${localPort}/health`,
+        healthRequestHeaders: buildHealthRequestHeaders(apiKey),
+        apiKey,
+        remotePortReservation: {
+          destinationKey,
+          remotePort,
+        },
+        startupDiagnosticData: {
+          profileId: input.launchMetadata.profile.id,
+          destination: launch.destination,
+          localPort,
+          remotePort,
+        },
+        removeAbortListener: () => {
+          return;
+        },
+      };
+    }
+
+    lastFailure = attemptResult.failure;
+    input.dependencies.releaseRemoteSshPort(destinationKey, remotePort);
+    lastLaunchContext = {
+      command,
+      args,
+      localPort,
+      remotePort,
+      destination: launch.destination,
+    };
+
+    const retryableFailureReason = `${lastFailure.reason}\n${lastFailure.stderrExcerpt}`;
+    const shouldRetry =
+      attempt < input.dependencies.sshStartupRetryAttempts &&
+      isRetryableRemoteStartupFailure(retryableFailureReason);
+
+    if (!shouldRetry) {
+      break;
+    }
+
+    input.emitDiagnostic?.({
+      level: "warn",
+      message:
+        "Remote llama-server exited during startup; retrying with a new SSH-forwarded remote port.",
+      data: {
+        runId: input.runId,
+        attempt,
+        reason: redactSecret(lastFailure.reason, apiKey),
+      },
+    });
+  }
+
+  if (!lastFailure || !lastLaunchContext) {
+    throw new Error("SSH-managed remote llama-server startup failed unexpectedly.");
+  }
+
+  input.emitDiagnostic?.({
+    level: "error",
+    message: "SSH-managed remote llama-server failed to start after retries.",
+    data: {
+      runId: input.runId,
+      profileId: input.launchMetadata.profile.id,
+      destination: lastLaunchContext.destination,
+      localPort: lastLaunchContext.localPort,
+      remotePort: lastLaunchContext.remotePort,
+      reason: redactSecret(lastFailure.reason, apiKey),
+    },
+  });
+
+  throw buildSshStartupFailureError({
+    runId: input.runId,
+    command: lastLaunchContext.command,
+    args: lastLaunchContext.args,
+    failure: lastFailure,
+    apiKey,
+    profileId: input.launchMetadata.profile.id,
+    destination: lastLaunchContext.destination,
+    localPort: lastLaunchContext.localPort,
+    remotePort: lastLaunchContext.remotePort,
+  });
+}
+
+function reserveUniqueRemoteSshPort(input: {
+  destinationKey: string;
+  attemptedRemotePorts: Set<number>;
+  dependencies: StarterLlamaCppPluginDependencies;
+}): number {
+  for (let attempt = 0; attempt < 256; attempt += 1) {
+    const candidatePort = input.dependencies.allocateRemoteSshPort();
+    if (input.attemptedRemotePorts.has(candidatePort)) {
+      continue;
+    }
+
+    input.attemptedRemotePorts.add(candidatePort);
+    if (input.dependencies.reserveRemoteSshPort(input.destinationKey, candidatePort)) {
+      return candidatePort;
+    }
+  }
+
+  throw new Error(
+    "Unable to reserve a unique remote SSH port for llama-server startup after 256 attempts.",
+  );
+}
+
+function activateRunState(input: {
+  context: EngineRuntimeContext;
+  runState: LlamaServerRunState;
+  runStates: Map<string, LlamaServerRunState>;
+  dependencies: StarterLlamaCppPluginDependencies;
+}): void {
+  let abortListenerRemoved = false;
+
+  const abortListener = () => {
+    const activeRunState = input.runStates.get(input.context.runId);
+    if (activeRunState !== input.runState) {
+      return;
+    }
+
+    input.runStates.delete(input.context.runId);
+    void stopRunState(input.runState, {
+      runId: input.context.runId,
+      reason: "abort-signal",
+      emitDiagnostic: input.context.emitDiagnostic,
+      dependencies: input.dependencies,
+    }).catch(() => {
+      input.context.emitDiagnostic?.({
+        level: "warn",
+        message:
+          "llama.cpp process cleanup failed after abort signal; check server logs for details.",
+        data: {
+          runId: input.context.runId,
+        },
+      });
+    });
+  };
+
+  const removeAbortListener = () => {
+    if (abortListenerRemoved) {
+      return;
+    }
+
+    abortListenerRemoved = true;
+    input.context.abortSignal.removeEventListener("abort", abortListener);
+  };
+
+  input.runState.removeAbortListener = removeAbortListener;
+  input.context.abortSignal.addEventListener("abort", abortListener, {
+    once: true,
+  });
+  input.runStates.set(input.context.runId, input.runState);
+
+  input.context.emitDiagnostic?.({
+    level: "info",
+    message:
+      input.runState.mode === "ssh"
+        ? "SSH-managed remote llama-server session started."
+        : "llama-server subprocess started.",
+    data: {
+      runId: input.context.runId,
+      ...(input.runState.startupDiagnosticData ?? {}),
+    },
+  });
+
+  void input.runState.terminationPromise
+    .then((termination) => {
+      const activeRunState = input.runStates.get(input.context.runId);
+      if (activeRunState !== input.runState) {
+        return;
+      }
+
+      input.runStates.delete(input.context.runId);
+      input.runState.removeAbortListener();
+
+      const secret = input.runState.apiKey;
+      const stderrExcerpt = redactSecret(
+        input.runState.stderrBuffer.excerpt(input.dependencies.diagnosticExcerptChars),
+        secret,
+      );
+      const stdoutExcerpt = redactSecret(
+        input.runState.stdoutBuffer.excerpt(input.dependencies.diagnosticExcerptChars),
+        secret,
+      );
+      input.runState.apiKey = "";
+
+      if (termination.kind === "error") {
+        input.context.emitDiagnostic?.({
+          level: "error",
+          message:
+            input.runState.mode === "ssh"
+              ? "SSH-managed remote llama-server session terminated with an internal process error."
+              : "llama-server subprocess terminated with an internal process error.",
+          data: {
+            runId: input.context.runId,
+            reason: redactSecret(termination.error.message, secret),
+            ...(input.runState.startupDiagnosticData ?? {}),
+            ...(stderrExcerpt.length > 0
+              ? {
+                  stderrExcerpt,
+                }
+              : {}),
+            ...(stdoutExcerpt.length > 0
+              ? {
+                  stdoutExcerpt,
+                }
+              : {}),
+          },
+        });
+        return;
+      }
+
+      if (termination.code === 0) {
+        return;
+      }
+
+      input.context.emitDiagnostic?.({
+        level: "warn",
+        message:
+          input.runState.mode === "ssh"
+            ? "SSH-managed remote llama-server session exited unexpectedly."
+            : "llama-server subprocess exited unexpectedly.",
+        data: {
+          runId: input.context.runId,
+          ...(input.runState.startupDiagnosticData ?? {}),
+          ...(termination.code !== null
+            ? {
+                exitCode: termination.code,
+              }
+            : {}),
+          ...(termination.signal !== null
+            ? {
+                signal: termination.signal,
+              }
+            : {}),
+          ...(stderrExcerpt.length > 0
+            ? {
+                stderrExcerpt,
+              }
+            : {}),
+          ...(stdoutExcerpt.length > 0
+            ? {
+                stdoutExcerpt,
+              }
+            : {}),
+        },
+      });
+    })
+    .catch((error) => {
+      input.context.emitDiagnostic?.({
+        level: "warn",
+        message:
+          "llama-server termination observer failed while handling process shutdown diagnostics.",
+        data: {
+          runId: input.context.runId,
+          reason: redactSecret(toError(error).message, input.runState.apiKey),
+        },
+      });
+    });
 }
 
 function assertApiKeyStrength(apiKey: string): void {
@@ -807,7 +1237,10 @@ function buildStartupFailureError(input: {
   apiKey: string;
 }): EngineStartFailedError {
   const redactedArgs = redactLaunchArgs(input.args);
-  const commandSummary = [input.command, ...redactedArgs].join(" ");
+  const commandSummary = redactSecret(
+    [input.command, ...redactedArgs].join(" "),
+    input.apiKey,
+  );
   const details: Record<string, unknown> = {
     code: "ENGINE_START_FAILED",
     reason: redactSecret(input.failure.reason, input.apiKey),
@@ -844,6 +1277,82 @@ function buildStartupFailureError(input: {
     `ENGINE_START_FAILED: ${messageParts.join(" ")}`,
     details,
   );
+}
+
+function buildSshStartupFailureError(input: {
+  runId: string;
+  command: string;
+  args: string[];
+  failure: LlamaServerStartupFailure;
+  apiKey: string;
+  profileId: string;
+  destination: string;
+  localPort: number;
+  remotePort: number;
+}): Error {
+  const redactedReason = redactSecret(input.failure.reason, input.apiKey);
+  const redactedStderrExcerpt = redactSecret(input.failure.stderrExcerpt, input.apiKey);
+  const redactedStdoutExcerpt = redactSecret(input.failure.stdoutExcerpt, input.apiKey);
+  const combinedFailureReason = `${redactedReason}\n${redactedStderrExcerpt}`;
+  const sshGuidance = classifySshFailureGuidance(combinedFailureReason);
+  const likelySshFailure =
+    sshGuidance !== null || isLikelySshTransportFailure(combinedFailureReason);
+
+  if (!likelySshFailure) {
+    return buildStartupFailureError({
+      runId: input.runId,
+      command: input.command,
+      args: input.args,
+      failure: {
+        ...input.failure,
+        reason: redactedReason,
+        stderrExcerpt: redactedStderrExcerpt,
+        stdoutExcerpt: redactedStdoutExcerpt,
+      },
+      apiKey: input.apiKey,
+    });
+  }
+
+  const launchCommand = redactSecret(
+    [input.command, ...redactLaunchArgs(input.args)].join(" "),
+    input.apiKey,
+  );
+
+  const details: Record<string, unknown> = {
+    reason: redactedReason,
+    launchCommand,
+    profileId: input.profileId,
+    destination: input.destination,
+    localPort: input.localPort,
+    remotePort: input.remotePort,
+    ...(redactedStderrExcerpt.length > 0
+      ? {
+          stderrExcerpt: redactedStderrExcerpt,
+        }
+      : {}),
+    ...(redactedStdoutExcerpt.length > 0
+      ? {
+          stdoutExcerpt: redactedStdoutExcerpt,
+        }
+      : {}),
+    ...(input.failure.exitCode !== null
+      ? {
+          exitCode: input.failure.exitCode,
+        }
+      : {}),
+    ...(input.failure.signal !== null
+      ? {
+          signal: input.failure.signal,
+        }
+      : {}),
+  };
+
+  const message =
+    `REMOTE_SSH_FAILED: Unable to start SSH-managed remote llama-server for run '${input.runId}'. ` +
+    redactedReason +
+    (sshGuidance ? ` ${sshGuidance}` : "");
+
+  return createCodeError("REMOTE_SSH_FAILED", message, details);
 }
 
 async function stopRunState(
@@ -908,8 +1417,28 @@ async function stopRunState(
         `${input.dependencies.stopGracePeriodMs + input.dependencies.killWaitTimeoutMs}ms after SIGTERM/SIGKILL.`,
     });
   } finally {
+    if (runState.remotePortReservation) {
+      input.dependencies.releaseRemoteSshPort(
+        runState.remotePortReservation.destinationKey,
+        runState.remotePortReservation.remotePort,
+      );
+      delete runState.remotePortReservation;
+    }
+
     runState.apiKey = "";
     runState.healthRequestHeaders = {};
+    input.emitDiagnostic?.({
+      level: "info",
+      message:
+        runState.mode === "ssh"
+          ? "SSH-managed remote llama-server cleanup complete."
+          : "llama-server cleanup complete.",
+      data: {
+        runId: input.runId,
+        reason: input.reason,
+        ...(runState.startupDiagnosticData ?? {}),
+      },
+    });
   }
 }
 
@@ -1237,6 +1766,8 @@ async function validateServerArgs(
   serverArgs: string[],
   validationMode: EngineValidationMode,
   dependencies: StarterLlamaCppPluginDependencies,
+  target: EngineRunConfig["target"],
+  sshProfile: TargetProfile | null,
 ): Promise<ServerArgsValidationResult> {
   const issues: EngineValidationIssue[] = [];
   const strictCandidateFlags: Array<{
@@ -1304,13 +1835,25 @@ async function validateServerArgs(
 
   let supportedFlags: ReadonlySet<string>;
   try {
-    supportedFlags = await dependencies.discoverSupportedServerFlags();
+    if (target.type === "ssh") {
+      if (!sshProfile) {
+        throw new Error(
+          "Remote strict validation requires a resolvable SSH target profile.",
+        );
+      }
+
+      supportedFlags = await dependencies.discoverRemoteSupportedServerFlags(sshProfile);
+    } else {
+      supportedFlags = await dependencies.discoverSupportedServerFlags();
+    }
   } catch (error) {
     const reason = normalizeIssueMessage(toError(error).message);
     issues.push({
       code: "SERVER_ARG_FLAG_DISCOVERY_FAILED",
       message:
-        "Unable to parse supported flags from `llama-server --help` in strict mode. " +
+        (target.type === "ssh"
+          ? "Unable to parse supported flags from remote `llama-server --help` in strict mode. "
+          : "Unable to parse supported flags from `llama-server --help` in strict mode. ") +
         `Retry with validationMode=permissive or fix llama-server installation. (${reason})`,
       path: "engine.serverArgs",
     });
@@ -1792,6 +2335,61 @@ async function discoverSupportedServerFlags(): Promise<ReadonlySet<string>> {
   );
 }
 
+async function discoverRemoteSupportedServerFlags(
+  profile: TargetProfile,
+  runSshCommand: StarterLlamaCppPluginDependencies["executeSshCommand"],
+): Promise<ReadonlySet<string>> {
+  let commandResult:
+    | {
+        stdoutExcerpt: string;
+        stderrExcerpt: string;
+      }
+    | undefined;
+
+  try {
+    commandResult = await runSshCommand({
+      profile: {
+        host: profile.host,
+        port: profile.port,
+        username: profile.username,
+        auth: profile.auth,
+      },
+      remoteArgv: [profile.llamaServerPath, "--help"],
+      overallTimeoutMs: DEFAULT_SERVER_HELP_TIMEOUT_MS,
+      maxBufferedChars: DEFAULT_MAX_HELP_OUTPUT_CHARS,
+      diagnosticExcerptChars: DEFAULT_MAX_HELP_OUTPUT_CHARS,
+      allowNonZeroExit: true,
+    });
+  } catch (error) {
+    if (error instanceof SshCommandExecutionError) {
+      throw new Error(
+        `Remote llama-server --help discovery failed over SSH. ${error.message}`,
+      );
+    }
+
+    throw error;
+  }
+
+  const supportedFlags = parseSupportedServerFlags(
+    `${commandResult.stdoutExcerpt}\n${commandResult.stderrExcerpt}`,
+  );
+  if (supportedFlags.size === 0) {
+    throw new Error(
+      "Unable to parse supported flags from remote `llama-server --help` output.",
+    );
+  }
+
+  const missingRequiredFlags = getMissingRequiredRemoteHelpFlags(supportedFlags);
+  if (missingRequiredFlags.length > 0) {
+    throw new Error(
+      "Remote `llama-server --help` output is missing required flags " +
+        `(${missingRequiredFlags.join(", ")}). Verify llamaServerPath points to a compatible binary.`,
+    );
+  }
+
+  return supportedFlags;
+}
+
 async function captureCommandOutput(
   command: string,
   args: string[],
@@ -2123,6 +2721,27 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function normalizeIssueMessage(message: string): string {
   return message.replace(/\s+/g, " ").trim();
+}
+
+function createCodeError(
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+): Error & {
+  code: string;
+  details?: Record<string, unknown>;
+} {
+  const error = new Error(message) as Error & {
+    code: string;
+    details?: Record<string, unknown>;
+  };
+
+  error.code = code;
+  if (details) {
+    error.details = details;
+  }
+
+  return error;
 }
 
 function delay(ms: number): Promise<void> {

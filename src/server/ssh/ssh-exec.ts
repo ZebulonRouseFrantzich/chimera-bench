@@ -47,6 +47,7 @@ export interface SshTargetConnection {
 export interface SshCommandRequest {
   profile: SshTargetConnection;
   remoteArgv: readonly string[];
+  allowNonZeroExit?: boolean;
   overallTimeoutMs?: number;
   abortSignal?: AbortSignal;
   maxBufferedChars?: number;
@@ -62,6 +63,8 @@ export interface SshCommandSuccess {
   stderrExcerpt: string;
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
 }
 
 interface SshExecutionDependencies {
@@ -315,6 +318,18 @@ export async function executeSshCommand(
     }
 
     if (termination.code !== 0) {
+      if (input.allowNonZeroExit && termination.code !== null) {
+        return {
+          argv: redactedArgv,
+          stdoutExcerpt,
+          stderrExcerpt,
+          stdoutTruncated,
+          stderrTruncated,
+          exitCode: termination.code,
+          signal: termination.signal,
+        };
+      }
+
       const guidance = classifySshFailureGuidance(stderrExcerpt);
       const guidanceSentence = guidance ? ` ${guidance}` : "";
       const reason =
