@@ -734,6 +734,53 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     expect(signalCalls).toEqual(["SIGTERM"]);
   });
 
+  test("waitUntilReady retries when socket closes unexpectedly during startup", async () => {
+    const processHandle = new FakeChildProcess(62011);
+    const signalCalls: NodeJS.Signals[] = [];
+    let fetchCalls = 0;
+
+    const plugin = createStarterLlamaCppPlugin({
+      allocateLoopbackPort: async () => 43140,
+      createApiKey: () => TEST_API_KEY,
+      startupProbeWindowMs: 5,
+      readinessPollIntervalMs: 1,
+      readinessTimeoutMs: 50,
+      readinessRequestTimeoutMs: 25,
+      spawnProcess: () => processHandle.asChildProcess(),
+      fetch: async () => {
+        fetchCalls += 1;
+        if (fetchCalls === 1) {
+          throw new Error(
+            "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+          );
+        }
+
+        return new Response("ok", {
+          status: 200,
+        });
+      },
+      wait: async () => {
+        return;
+      },
+      signalProcessGroup: (_pid, signal) => {
+        signalCalls.push(signal);
+        if (signal === "SIGTERM") {
+          processHandle.emitExit(0, null);
+        }
+      },
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(createRunConfig());
+    const context = createContext("run_ready_socket_closed_retry", launchConfig);
+
+    await plugin.start(context);
+    await plugin.waitUntilReady(context);
+    expect(fetchCalls).toBe(2);
+
+    await plugin.stop(context);
+    expect(signalCalls).toEqual(["SIGTERM"]);
+  });
+
   test("waitUntilReady surfaces ENGINE_START_FAILED on non-retryable health", async () => {
     const processHandle = new FakeChildProcess(62002);
     const signalCalls: NodeJS.Signals[] = [];

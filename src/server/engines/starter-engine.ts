@@ -2519,7 +2519,9 @@ function isTransientReadinessError(error: Error): boolean {
     normalizedMessage.includes("fetch failed") ||
     normalizedMessage.includes("timed out") ||
     normalizedMessage.includes("aborted") ||
-    normalizedMessage.includes("socket hang up")
+    normalizedMessage.includes("socket hang up") ||
+    normalizedMessage.includes("socket connection was closed unexpectedly") ||
+    normalizedMessage.includes("connection was closed unexpectedly")
   );
 }
 
