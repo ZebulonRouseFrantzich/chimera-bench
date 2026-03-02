@@ -41,14 +41,15 @@ export function validateSshModelIdentifier(
     });
   }
 
-  const normalizedIdentifier = posixPath.normalize(rawIdentifier);
-  if (normalizedIdentifier.split("/").includes("..")) {
+  if (hasPathTraversalSegment(rawIdentifier)) {
     issues.push({
       code: "MODEL_IDENTIFIER_PATH_TRAVERSAL",
       message: "model.identifier must not include '..' path traversal segments.",
       path: MODEL_IDENTIFIER_PATH,
     });
   }
+
+  const normalizedIdentifier = posixPath.normalize(rawIdentifier);
 
   if (!normalizedIdentifier.toLowerCase().endsWith(".gguf")) {
     issues.push({
@@ -99,4 +100,8 @@ export function isWithinNormalizedRoot(candidatePath: string, rootPath: string):
   }
 
   return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}/`);
+}
+
+function hasPathTraversalSegment(path: string): boolean {
+  return path.split("/").some((segment) => segment === "..");
 }

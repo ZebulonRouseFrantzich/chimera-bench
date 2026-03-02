@@ -41,8 +41,8 @@ SSH-managed llama-server notes:
 
 - For compatibility with upstream `llama-server` flags, the orchestrator passes the per-run API key via `--api-key` in the remote process argv.
   - This key is ephemeral and the remote server binds to loopback only.
-  - On multi-user remote hosts, other users with process visibility may still see argv values (`ps`, `/proc/<pid>/cmdline`).
-  - Run SSH targets only on hosts in the same trust domain as the orchestrator.
+  - On multi-user or shared remote hosts, other users with process visibility may still see argv values (`ps`, `/proc/<pid>/cmdline`) and recover the per-run API key and port.
+  - Run SSH targets only on dedicated single-tenant hosts in the same trust domain as the orchestrator.
 - If the orchestrator crashes or loses connectivity mid-run, the remote `llama-server` can remain running.
   - Verify and clean up on the remote host if needed, for example:
     - `ps aux | grep llama-server`

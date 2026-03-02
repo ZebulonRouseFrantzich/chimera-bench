@@ -318,7 +318,7 @@ describe("run routes", () => {
     expect(payload.error.code).toBe("ENGINE_TARGET_NOT_SUPPORTED");
   });
 
-  test("rejects ssh targets when the profile id is missing", async () => {
+  test("rejects ssh targets when the profile id is not found", async () => {
     const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-runs-ssh-targets-"));
     const targetsRootDir = join(tempDirectory, "targets");
 
@@ -600,7 +600,7 @@ describe("run routes", () => {
             profileId: "lab",
           },
           model: {
-            identifier: "/models/subdir/../model.gguf",
+            identifier: "/models/model.gguf",
           },
         }),
       });

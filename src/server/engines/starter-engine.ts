@@ -45,6 +45,7 @@ import {
   executeSshCommand,
   SshCommandExecutionError,
 } from "../ssh/ssh-exec.ts";
+import { validateSshModelIdentifier } from "../runs/ssh-model-identifier-validation.ts";
 import type { TargetProfile } from "../targets/target-profile.ts";
 
 export const STARTER_ENGINE_ID = "llama-cpp";
@@ -306,6 +307,18 @@ export function createStarterLlamaCppPlugin(
             message: "target.profileId must reference an existing target profile.",
             path: "target.profileId",
           });
+        }
+
+        if (sshProfile) {
+          const modelIdentifierValidation = validateSshModelIdentifier(
+            runConfig.model.identifier,
+            sshProfile.remoteModelRoots,
+          );
+          if (modelIdentifierValidation.ok) {
+            normalizedModelIdentifier = modelIdentifierValidation.normalizedIdentifier;
+          } else {
+            issues.push(...modelIdentifierValidation.issues);
+          }
         }
       }
 
@@ -821,105 +834,113 @@ async function startSshLlamaServerWithRetries(
       attemptedRemotePorts,
       dependencies: input.dependencies,
     });
-    const launch = buildSshManagedLaunchArgv({
-      profile: input.launchMetadata.profile,
-      localPort,
-      remotePort,
-      modelIdentifier: input.launchMetadata.modelIdentifier,
-      serverArgs: input.launchMetadata.serverArgs,
-      apiKey,
-    });
+    let reservationOwnedByRunState = false;
 
-    const [command, ...args] = launch.argv;
-    if (!command) {
-      throw new Error("SSH launch command argv cannot be empty.");
-    }
-
-    input.emitDiagnostic?.({
-      level: "info",
-      message: "Starting SSH-managed remote llama-server session.",
-      data: {
-        runId: input.runId,
-        profileId: input.launchMetadata.profile.id,
-        destination: launch.destination,
+    try {
+      const launch = buildSshManagedLaunchArgv({
+        profile: input.launchMetadata.profile,
         localPort,
         remotePort,
-        attempt,
-      },
-    });
+        modelIdentifier: input.launchMetadata.modelIdentifier,
+        serverArgs: input.launchMetadata.serverArgs,
+        apiKey,
+      });
 
-    const attemptResult = await spawnLlamaServerAttempt({
-      command,
-      args,
-      runId: input.runId,
-      apiKey,
-      dependencies: input.dependencies,
-    });
+      const [command, ...args] = launch.argv;
+      if (!command) {
+        throw new Error("SSH launch command argv cannot be empty.");
+      }
 
-    if (attemptResult.ok) {
       input.emitDiagnostic?.({
         level: "info",
-        message: "SSH port-forward established for remote llama-server session.",
+        message: "Starting SSH-managed remote llama-server session.",
         data: {
           runId: input.runId,
           profileId: input.launchMetadata.profile.id,
           destination: launch.destination,
           localPort,
           remotePort,
+          attempt,
         },
       });
 
-      return {
-        mode: "ssh",
-        ...attemptResult.state,
-        healthUrl: `http://${LOOPBACK_HOST}:${localPort}/health`,
-        healthRequestHeaders: buildHealthRequestHeaders(apiKey),
-        apiKey,
-        remotePortReservation: {
-          destinationKey,
-          remotePort,
-        },
-        startupDiagnosticData: {
-          profileId: input.launchMetadata.profile.id,
-          destination: launch.destination,
-          localPort,
-          remotePort,
-        },
-        removeAbortListener: () => {
-          return;
-        },
-      };
-    }
-
-    lastFailure = attemptResult.failure;
-    input.dependencies.releaseRemoteSshPort(destinationKey, remotePort);
-    lastLaunchContext = {
-      command,
-      args,
-      localPort,
-      remotePort,
-      destination: launch.destination,
-    };
-
-    const retryableFailureReason = `${lastFailure.reason}\n${lastFailure.stderrExcerpt}`;
-    const shouldRetry =
-      attempt < input.dependencies.sshStartupRetryAttempts &&
-      isRetryableRemoteStartupFailure(retryableFailureReason);
-
-    if (!shouldRetry) {
-      break;
-    }
-
-    input.emitDiagnostic?.({
-      level: "warn",
-      message:
-        "Remote llama-server exited during startup; retrying with a new SSH-forwarded remote port.",
-      data: {
+      const attemptResult = await spawnLlamaServerAttempt({
+        command,
+        args,
         runId: input.runId,
-        attempt,
-        reason: redactSecret(lastFailure.reason, apiKey),
-      },
-    });
+        apiKey,
+        dependencies: input.dependencies,
+      });
+
+      if (attemptResult.ok) {
+        input.emitDiagnostic?.({
+          level: "info",
+          message: "SSH port-forward established for remote llama-server session.",
+          data: {
+            runId: input.runId,
+            profileId: input.launchMetadata.profile.id,
+            destination: launch.destination,
+            localPort,
+            remotePort,
+          },
+        });
+
+        reservationOwnedByRunState = true;
+        return {
+          mode: "ssh",
+          ...attemptResult.state,
+          healthUrl: `http://${LOOPBACK_HOST}:${localPort}/health`,
+          healthRequestHeaders: buildHealthRequestHeaders(apiKey),
+          apiKey,
+          remotePortReservation: {
+            destinationKey,
+            remotePort,
+          },
+          startupDiagnosticData: {
+            profileId: input.launchMetadata.profile.id,
+            destination: launch.destination,
+            localPort,
+            remotePort,
+          },
+          removeAbortListener: () => {
+            return;
+          },
+        };
+      }
+
+      lastFailure = attemptResult.failure;
+      lastLaunchContext = {
+        command,
+        args,
+        localPort,
+        remotePort,
+        destination: launch.destination,
+      };
+
+      const retryableFailureReason = `${lastFailure.reason}\n${lastFailure.stderrExcerpt}`;
+      const shouldRetry =
+        attempt < input.dependencies.sshStartupRetryAttempts &&
+        isRetryableRemoteStartupFailure(retryableFailureReason);
+
+      if (!shouldRetry) {
+        break;
+      }
+
+      input.emitDiagnostic?.({
+        level: "warn",
+        message:
+          "Remote llama-server exited during startup; retrying with a new SSH-forwarded remote port.",
+        data: {
+          runId: input.runId,
+          attempt,
+          reason: redactSecret(lastFailure.reason, apiKey),
+        },
+      });
+    } finally {
+      if (!reservationOwnedByRunState) {
+        input.dependencies.releaseRemoteSshPort(destinationKey, remotePort);
+      }
+    }
   }
 
   if (!lastFailure || !lastLaunchContext) {

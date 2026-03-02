@@ -219,6 +219,48 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     }
   });
 
+  test("validates and normalizes SSH model identifiers in plugin validation", async () => {
+    const profile = createSshProfile("lab");
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+    });
+
+    const invalidValidation = await plugin.validateRunConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/outside/model.gguf",
+        validationMode: "permissive",
+      }),
+    );
+
+    expect(invalidValidation.ok).toBe(false);
+    if (!invalidValidation.ok) {
+      expect(invalidValidation.code).toBe("VALIDATION_MODEL_IDENTIFIER_INVALID");
+      expect(
+        invalidValidation.issues?.some((issue) => issue.code === "MODEL_IDENTIFIER_OUTSIDE_ALLOWED_ROOTS"),
+      ).toBe(true);
+    }
+
+    const validValidation = await plugin.validateRunConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models//model.gguf",
+        validationMode: "permissive",
+      }),
+    );
+
+    expect(validValidation.ok).toBe(true);
+    if (validValidation.ok) {
+      expect(validValidation.normalized.modelIdentifier).toBe("/models/model.gguf");
+    }
+  });
+
   test("starts SSH-managed remote llama-server with loopback-only forwarding", async () => {
     const processHandle = new FakeChildProcess(64001);
     const signalCalls: NodeJS.Signals[] = [];
@@ -333,6 +375,52 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     expect(spawnArgs[1]).toContain("127.0.0.1:18080:127.0.0.1:28081");
 
     await plugin.stop(context);
+  });
+
+  test("releases reserved SSH remote ports when argv construction fails", async () => {
+    const profile = createSshProfile("lab");
+    const reservedPorts: Array<{ destinationKey: string; remotePort: number }> = [];
+    const releasedPorts: Array<{ destinationKey: string; remotePort: number }> = [];
+
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+      createApiKey: () => TEST_API_KEY,
+      allocateLoopbackPort: async () => 0,
+      allocateRemoteSshPort: () => 28080,
+      sshStartupRetryAttempts: 1,
+      reserveRemoteSshPort: (destinationKey, remotePort) => {
+        reservedPorts.push({
+          destinationKey,
+          remotePort,
+        });
+        return true;
+      },
+      releaseRemoteSshPort: (destinationKey, remotePort) => {
+        releasedPorts.push({
+          destinationKey,
+          remotePort,
+        });
+      },
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        validationMode: "permissive",
+      }),
+    );
+
+    const context = createContext("run_remote_port_release_on_throw", launchConfig);
+    await expect(plugin.start(context)).rejects.toThrow(
+      "localPort must be an integer between 1 and 65535.",
+    );
+
+    expect(reservedPorts).toHaveLength(1);
+    expect(releasedPorts).toEqual(reservedPorts);
   });
 
   test("reserves distinct SSH remote ports for concurrent runs", async () => {

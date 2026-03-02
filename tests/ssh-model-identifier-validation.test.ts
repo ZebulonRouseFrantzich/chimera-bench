@@ -49,6 +49,19 @@ describe("SSH model identifier validation", () => {
     );
   });
 
+  test("rejects traversal segments even when root allowlist is '/'", () => {
+    const result = validateSshModelIdentifier("/models/../../etc/passwd.gguf", ["/"]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("Expected model path to be rejected.");
+    }
+
+    expect(result.issues.some((issue) => issue.code === "MODEL_IDENTIFIER_PATH_TRAVERSAL")).toBe(
+      true,
+    );
+  });
+
   test("rejects model identifiers containing control characters", () => {
     const identifiers = [
       "/models/model.gguf\u0000suffix",
