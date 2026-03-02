@@ -61,11 +61,25 @@ describe("gated SSH integration", () => {
       abortSignal: abortController.signal,
     });
 
-    const banner = await readSshBanner(handle.localPort);
-    expect(banner.startsWith("SSH-")).toBe(true);
+    try {
+      const banner = await readSshBanner(handle.localPort);
+      expect(banner.startsWith("SSH-")).toBe(true);
 
-    abortController.abort();
-    await expect(handle.waitForExit()).rejects.toBeInstanceOf(SshPortForwardExecutionError);
+      abortController.abort();
+      await expect(handle.waitForExit()).rejects.toBeInstanceOf(
+        SshPortForwardExecutionError,
+      );
+    } finally {
+      abortController.abort();
+
+      try {
+        await handle.waitForExit();
+      } catch (error) {
+        if (!(error instanceof SshPortForwardExecutionError)) {
+          throw error;
+        }
+      }
+    }
   });
 });
 
@@ -192,7 +206,14 @@ async function readSshBanner(localPort: number): Promise<string> {
             `Forwarded SSH connection to port ${localPort} closed before banner was received.`,
           ),
         );
+        return;
       }
+
+      finishError(
+        new Error(
+          `Forwarded SSH connection to port ${localPort} closed before complete SSH banner line was received.`,
+        ),
+      );
     };
 
     socket.setTimeout(SSH_BANNER_TIMEOUT_MS);

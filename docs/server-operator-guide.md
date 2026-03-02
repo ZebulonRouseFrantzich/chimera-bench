@@ -30,13 +30,20 @@ For sweeps, keep the orchestrator host, network path, and tunnel settings stable
 SSH target operations use strict host key checking (`StrictHostKeyChecking=yes`) and non-interactive mode (`BatchMode=yes`).
 `chimera-bench` relies on your OpenSSH `known_hosts` file at `~/.ssh/known_hosts`.
 
-1. Add trusted host keys before first use:
+1. Scan the host key and verify its fingerprint before trusting it:
 
 ```bash
-ssh-keyscan -H <ssh-host> >> ~/.ssh/known_hosts
+ssh-keyscan -H <ssh-host> | tee /tmp/<ssh-host>.keyscan
+ssh-keygen -lf /tmp/<ssh-host>.keyscan
 ```
 
-2. Verify access in non-interactive mode:
+2. Confirm the fingerprint out-of-band (for example, from your infrastructure inventory or host console), then add it to `known_hosts`:
+
+```bash
+cat /tmp/<ssh-host>.keyscan >> ~/.ssh/known_hosts
+```
+
+3. Verify access in non-interactive mode:
 
 ```bash
 ssh -o BatchMode=yes -o StrictHostKeyChecking=yes <user>@<ssh-host> "echo ok"
