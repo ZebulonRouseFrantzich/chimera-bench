@@ -16,17 +16,24 @@ import {
   SshCommandValidationError,
   type SshCommandSuccess,
 } from "../server/ssh/ssh-exec.ts";
+import {
+  SshPortForwardExecutionError,
+  SshPortForwardValidationError,
+  startSshPortForward,
+} from "../server/ssh/ssh-port-forward.ts";
 import { toError } from "../server/error-utils.ts";
 
 const TARGETS_EXEC_ENABLEMENT_ENV_KEY = "CHIMERA_ENABLE_TARGETS_EXEC";
 const CHECK_REMOTE_ARGV = ["echo", "ok"];
 const DEFAULT_TARGETS_CHECK_TIMEOUT_MS = 30_000;
 const DEFAULT_TARGETS_EXEC_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_TARGETS_FORWARD_STARTUP_TIMEOUT_MS = 15_000;
 
 interface TargetsCommandDependencies {
   readonly targetProfiles: TargetProfileStore;
   readonly executeSsh: typeof executeSshCommand;
   readonly buildSshArgv: typeof buildSshCommandArgv;
+  readonly startPortForward: typeof startSshPortForward;
   readonly addSignalListener: (
     signal: "SIGINT" | "SIGTERM",
     listener: () => void,
@@ -62,6 +69,11 @@ interface ParsedExecOptions {
   readonly remoteArgv: string[];
 }
 
+interface ParsedForwardOptions {
+  readonly profileId: string;
+  readonly remotePort: number;
+}
+
 export function getTargetsCommandHelp(): string {
   return [
     "Usage: chimera-bench targets <subcommand> [options]",
@@ -71,6 +83,8 @@ export function getTargetsCommandHelp(): string {
     "  show <profileId>                    Print one stored target profile JSON",
     "  rm <profileId>                      Remove one stored target profile",
     "  check <profileId>                   Run a remote SSH smoke check (echo ok)",
+    "  forward <profileId> --remote-port <port>",
+    "                                      Open SSH local port-forward and print local port",
     "  exec <profileId> [--dry-run] -- <argv...>",
     "                                      Run explicit remote argv over SSH",
     "",
@@ -80,6 +94,7 @@ export function getTargetsCommandHelp(): string {
     "Security:",
     "  `targets exec` only runs when CHIMERA_ENABLE_TARGETS_EXEC=1 is set.",
     "  `--dry-run` always works and prints the constructed ssh argv JSON.",
+    "  `targets forward` is intentionally ungated; it only opens a loopback-to-loopback tunnel.",
     "",
     "Remote shell requirement:",
     "  The remote SSH user must use a POSIX-compatible login shell (for example bash or dash).",
@@ -115,6 +130,9 @@ export async function runTargetsCommand(
       return;
     case "check":
       await runCheckCommand(subcommandArgs, dependencies);
+      return;
+    case "forward":
+      await runForwardCommand(subcommandArgs, dependencies);
       return;
     case "exec":
       await runExecCommand(subcommandArgs, dependencies);
@@ -232,6 +250,97 @@ async function runCheckCommand(
   dependencies.print(`Target '${profileId}' check succeeded.`);
 }
 
+async function runForwardCommand(
+  args: string[],
+  dependencies: TargetsCommandDependencies,
+): Promise<void> {
+  const normalizedArgs = stripNoOpSeparators(args);
+  if (containsHelpToken(normalizedArgs)) {
+    dependencies.print(getTargetsCommandHelp());
+    return;
+  }
+
+  const parsed = parseForwardOptions(normalizedArgs);
+  const profile = await readProfile(parsed.profileId, dependencies.targetProfiles);
+
+  const abortController = new AbortController();
+  let cancelledBySignal = false;
+  let shutdownCompletePrinted = false;
+  let signalHandlersRegistered = false;
+
+  const printShutdownComplete = () => {
+    if (shutdownCompletePrinted) {
+      return;
+    }
+
+    shutdownCompletePrinted = true;
+    dependencies.printError("[chimera-bench] shutdown complete.");
+  };
+
+  const cleanupSignalHandlers = () => {
+    if (!signalHandlersRegistered) {
+      return;
+    }
+
+    signalHandlersRegistered = false;
+    dependencies.removeSignalListener("SIGINT", onSigint);
+    dependencies.removeSignalListener("SIGTERM", onSigterm);
+  };
+
+  const shutdown = (signal: "SIGINT" | "SIGTERM") => {
+    if (cancelledBySignal) {
+      return;
+    }
+
+    cancelledBySignal = true;
+    cleanupSignalHandlers();
+    dependencies.printError(`[chimera-bench] received ${signal}, shutting down...`);
+    abortController.abort();
+  };
+
+  const onSigint = () => shutdown("SIGINT");
+  const onSigterm = () => shutdown("SIGTERM");
+
+  try {
+    dependencies.addSignalListener("SIGINT", onSigint);
+    dependencies.addSignalListener("SIGTERM", onSigterm);
+    signalHandlersRegistered = true;
+
+    const forwardHandle = await dependencies.startPortForward({
+      profile,
+      remotePort: parsed.remotePort,
+      startupTimeoutMs: DEFAULT_TARGETS_FORWARD_STARTUP_TIMEOUT_MS,
+      abortSignal: abortController.signal,
+    });
+
+    dependencies.print(
+      `Forward ready: 127.0.0.1:${forwardHandle.localPort} -> 127.0.0.1:${parsed.remotePort}`,
+    );
+
+    await forwardHandle.waitForExit();
+
+    if (!cancelledBySignal) {
+      throw new TargetsCommandRuntimeError(
+        `Target forward for profile '${sanitizeControlCharacters(parsed.profileId)}' stopped unexpectedly.`,
+      );
+    }
+
+    printShutdownComplete();
+  } catch (error) {
+    if (cancelledBySignal) {
+      printShutdownComplete();
+      return;
+    }
+
+    throw wrapSshPortForwardError(
+      `targets forward failed for profile '${sanitizeControlCharacters(parsed.profileId)}'.`,
+      error,
+    );
+  } finally {
+    cleanupSignalHandlers();
+  }
+}
+
 async function runExecCommand(
   args: string[],
   dependencies: TargetsCommandDependencies,
@@ -320,6 +429,80 @@ async function readProfile(
       error,
     );
   }
+}
+
+function parseForwardOptions(args: string[]): ParsedForwardOptions {
+  const [rawProfileId, ...rest] = args;
+  if (!rawProfileId) {
+    throw new TargetsCommandUsageError("targets forward requires <profileId>.");
+  }
+
+  const profileId = parseSingleProfileId([rawProfileId], "targets forward");
+  let remotePort: number | null = null;
+
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index];
+
+    if (token === "--remote-port") {
+      if (remotePort !== null) {
+        throw new TargetsCommandUsageError(
+          "targets forward accepts --remote-port at most once.",
+        );
+      }
+
+      remotePort = parsePortOption(rest[index + 1], "--remote-port");
+      index += 1;
+      continue;
+    }
+
+    if (token?.startsWith("--remote-port=")) {
+      if (remotePort !== null) {
+        throw new TargetsCommandUsageError(
+          "targets forward accepts --remote-port at most once.",
+        );
+      }
+
+      remotePort = parsePortOption(token.slice("--remote-port=".length), "--remote-port");
+      continue;
+    }
+
+    throw new TargetsCommandUsageError(
+      `Unknown option for targets forward: ${sanitizeControlCharacters(token ?? "")}`,
+    );
+  }
+
+  if (remotePort === null) {
+    throw new TargetsCommandUsageError(
+      "targets forward requires --remote-port <port>.",
+    );
+  }
+
+  return {
+    profileId,
+    remotePort,
+  };
+}
+
+function parsePortOption(value: string | undefined, optionName: string): number {
+  if (value === undefined) {
+    throw new TargetsCommandUsageError(`${optionName} requires a value.`);
+  }
+
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new TargetsCommandUsageError(
+      `${optionName} must be an integer between 1 and 65535.`,
+    );
+  }
+
+  const parsed = Number.parseInt(normalized, 10);
+  if (parsed < 1 || parsed > 65535) {
+    throw new TargetsCommandUsageError(
+      `${optionName} must be an integer between 1 and 65535.`,
+    );
+  }
+
+  return parsed;
 }
 
 function parseExecOptions(args: string[]): ParsedExecOptions {
@@ -460,6 +643,41 @@ function wrapSshCommandError(prefix: string, error: unknown): TargetsCommandRunt
   );
 }
 
+function wrapSshPortForwardError(
+  prefix: string,
+  error: unknown,
+): TargetsCommandRuntimeError {
+  if (error instanceof SshPortForwardValidationError) {
+    return new TargetsCommandRuntimeError(
+      `${prefix} ${sanitizeControlCharacters(error.message)}`,
+    );
+  }
+
+  if (error instanceof SshPortForwardExecutionError) {
+    const details: string[] = [];
+    if (error.details.stderrExcerpt.length > 0) {
+      details.push(
+        `stderr excerpt: ${sanitizeControlCharacters(error.details.stderrExcerpt)}`,
+      );
+    }
+
+    if (error.details.stdoutExcerpt.length > 0) {
+      details.push(
+        `stdout excerpt: ${sanitizeControlCharacters(error.details.stdoutExcerpt)}`,
+      );
+    }
+
+    const suffix = details.length > 0 ? ` ${details.join(" ")}` : "";
+    return new TargetsCommandRuntimeError(
+      `${prefix} ${sanitizeControlCharacters(error.message)}${suffix}`,
+    );
+  }
+
+  return new TargetsCommandRuntimeError(
+    `${prefix} ${sanitizeControlCharacters(toError(error).message)}`,
+  );
+}
+
 function wrapTargetStoreError(prefix: string, error: unknown): TargetsCommandRuntimeError {
   if (
     error instanceof TargetProfilePersistError ||
@@ -490,6 +708,7 @@ function createDependencies(
     targetProfiles: overrides.targetProfiles ?? new TargetProfileStore(),
     executeSsh: overrides.executeSsh ?? executeSshCommand,
     buildSshArgv: overrides.buildSshArgv ?? buildSshCommandArgv,
+    startPortForward: overrides.startPortForward ?? startSshPortForward,
     addSignalListener:
       overrides.addSignalListener ??
       ((signal, listener) => {

@@ -5,15 +5,22 @@ import type {
 } from "node:child_process";
 import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
-import type { Readable } from "node:stream";
 import { toError } from "../error-utils.ts";
 import type { TargetProfile } from "../targets/target-profile.ts";
 import {
   buildPosixShellCommand,
   PosixShellQuoteError,
 } from "./posix-shell.ts";
+import {
+  attachOutputStream,
+  cancelSubprocess,
+  createTerminationPromise,
+  normalizeRedactions,
+  redactArray,
+  redactText,
+  RollingTextBuffer,
+} from "./ssh-process-utils.ts";
 
-const REDACTED_VALUE = "[REDACTED]";
 const DEFAULT_MAX_BUFFERED_CHARS = 64 * 1024;
 const DEFAULT_DIAGNOSTIC_EXCERPT_CHARS = 4 * 1024;
 const DEFAULT_OVERALL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -29,19 +36,6 @@ const SSH_DEFAULT_OPTIONS: readonly string[] = [
   "ServerAliveInterval=10",
   "ServerAliveCountMax=3",
 ];
-
-interface SshTerminationExit {
-  kind: "exit";
-  code: number | null;
-  signal: NodeJS.Signals | null;
-}
-
-interface SshTerminationError {
-  kind: "error";
-  error: Error;
-}
-
-type SshTermination = SshTerminationExit | SshTerminationError;
 
 export interface SshTargetConnection {
   host: TargetProfile["host"];
@@ -107,26 +101,47 @@ export class SshCommandExecutionError extends Error {
   }
 }
 
+export interface SshBaseConnectionParts {
+  readonly command: "ssh";
+  readonly optionsArgv: readonly string[];
+  readonly destination: string;
+}
+
+export function buildSshBaseConnectionParts(
+  profile: SshTargetConnection,
+): SshBaseConnectionParts {
+  const destination = buildDestination(profile);
+  const optionsArgv: string[] = [];
+
+  for (const option of SSH_DEFAULT_OPTIONS) {
+    optionsArgv.push("-o", option);
+  }
+
+  if (profile.auth.method === "key-path") {
+    optionsArgv.push("-i", profile.auth.privateKeyPath);
+  }
+
+  optionsArgv.push("-p", String(profile.port));
+
+  return {
+    command: "ssh",
+    optionsArgv,
+    destination,
+  };
+}
+
+export function buildSshBaseConnectionArgv(profile: SshTargetConnection): string[] {
+  const parts = buildSshBaseConnectionParts(profile);
+  return [parts.command, ...parts.optionsArgv, parts.destination];
+}
+
 export function buildSshCommandArgv(input: {
   profile: SshTargetConnection;
   remoteArgv: readonly string[];
 }): string[] {
+  const parts = buildSshBaseConnectionParts(input.profile);
   const remoteCommand = buildSafeRemoteCommand(input.remoteArgv);
-  const destination = buildDestination(input.profile);
-  const argv = ["ssh"];
-
-  for (const option of SSH_DEFAULT_OPTIONS) {
-    argv.push("-o", option);
-  }
-
-  if (input.profile.auth.method === "key-path") {
-    argv.push("-i", input.profile.auth.privateKeyPath);
-  }
-
-  argv.push("-p", String(input.profile.port));
-  argv.push(destination, remoteCommand);
-
-  return argv;
+  return [parts.command, ...parts.optionsArgv, parts.destination, remoteCommand];
 }
 
 export async function executeSshCommand(
@@ -208,8 +223,26 @@ export async function executeSshCommand(
   const stdoutBuffer = new RollingTextBuffer(maxBufferedChars);
   const stderrBuffer = new RollingTextBuffer(maxBufferedChars);
 
-  attachOutput(subprocess.stdout, stdoutBuffer, redactions, input.onStdoutChunk);
-  attachOutput(subprocess.stderr, stderrBuffer, redactions, input.onStderrChunk);
+  attachOutputStream({
+    stream: subprocess.stdout,
+    outputBuffer: stdoutBuffer,
+    redactions,
+    ...(input.onStdoutChunk
+      ? {
+          onChunk: input.onStdoutChunk,
+        }
+      : {}),
+  });
+  attachOutputStream({
+    stream: subprocess.stderr,
+    outputBuffer: stderrBuffer,
+    redactions,
+    ...(input.onStderrChunk
+      ? {
+          onChunk: input.onStderrChunk,
+        }
+      : {}),
+  });
 
   let timedOut = false;
   let cancelled = false;
@@ -218,12 +251,20 @@ export async function executeSshCommand(
 
   const timeoutHandle = dependencies.setTimer(() => {
     timedOut = true;
-    cancelSubprocess(subprocess, dependencies);
+    cancelSubprocess(subprocess, {
+      setTimer: dependencies.setTimer,
+      clearTimer: dependencies.clearTimer,
+      killGracePeriodMs: CANCEL_KILL_GRACE_PERIOD_MS,
+    });
   }, overallTimeoutMs);
 
   const onAbort = () => {
     cancelled = true;
-    cancelSubprocess(subprocess, dependencies);
+    cancelSubprocess(subprocess, {
+      setTimer: dependencies.setTimer,
+      clearTimer: dependencies.clearTimer,
+      killGracePeriodMs: CANCEL_KILL_GRACE_PERIOD_MS,
+    });
   };
   input.abortSignal?.addEventListener("abort", onAbort, {
     once: true,
@@ -384,153 +425,6 @@ function buildSafeRemoteCommand(remoteArgv: readonly string[]): string {
     }
 
     throw error;
-  }
-}
-
-function attachOutput(
-  stream: Readable | null,
-  outputBuffer: RollingTextBuffer,
-  redactions: readonly string[],
-  onChunk?: (chunk: string) => void,
-): void {
-  if (!stream) {
-    return;
-  }
-
-  stream.setEncoding("utf8");
-  stream.on("data", (chunk: string | Buffer) => {
-    const normalizedChunk =
-      typeof chunk === "string" ? chunk : chunk.toString("utf8");
-    const redactedChunk = redactText(normalizedChunk, redactions);
-    outputBuffer.append(redactedChunk);
-    onChunk?.(redactedChunk);
-  });
-}
-
-function createTerminationPromise(
-  subprocess: ChildProcessWithoutNullStreams,
-): Promise<SshTermination> {
-  return new Promise((resolve) => {
-    const onError = (error: Error) => {
-      cleanup();
-      resolve({
-        kind: "error",
-        error,
-      });
-    };
-
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({
-        kind: "exit",
-        code,
-        signal,
-      });
-    };
-
-    const cleanup = () => {
-      subprocess.off("error", onError);
-      subprocess.off("close", onExit);
-    };
-
-    subprocess.once("error", onError);
-    subprocess.once("close", onExit);
-  });
-}
-
-function cancelSubprocess(
-  subprocess: ChildProcessWithoutNullStreams,
-  dependencies: SshExecutionDependencies,
-): void {
-  try {
-    subprocess.kill("SIGTERM");
-  } catch {
-    return;
-  }
-
-  const killTimer = dependencies.setTimer(() => {
-    try {
-      subprocess.kill("SIGKILL");
-    } catch {
-      // Best effort escalation if ssh ignores SIGTERM.
-    }
-  }, CANCEL_KILL_GRACE_PERIOD_MS);
-
-  const clearKillTimer = () => {
-    dependencies.clearTimer(killTimer);
-    subprocess.off("close", clearKillTimer);
-    subprocess.off("error", clearKillTimer);
-  };
-
-  subprocess.once("close", clearKillTimer);
-  subprocess.once("error", clearKillTimer);
-}
-
-function normalizeRedactions(redactions: readonly string[] | undefined): string[] {
-  if (!redactions || redactions.length === 0) {
-    return [];
-  }
-
-  return Array.from(
-    new Set(
-      redactions
-        .filter((candidate) => candidate.length > 0)
-        .sort((left, right) => right.length - left.length),
-    ),
-  );
-}
-
-function redactArray(values: readonly string[], redactions: readonly string[]): string[] {
-  return values.map((value) => redactText(value, redactions));
-}
-
-function redactText(value: string, redactions: readonly string[]): string {
-  if (redactions.length === 0 || value.length === 0) {
-    return value;
-  }
-
-  let redacted = value;
-  for (const secret of redactions) {
-    redacted = redacted.split(secret).join(REDACTED_VALUE);
-  }
-
-  return redacted;
-}
-
-class RollingTextBuffer {
-  private value = "";
-  private truncated = false;
-
-  constructor(private readonly maxChars: number) {}
-
-  append(chunk: string): void {
-    if (chunk.length === 0) {
-      return;
-    }
-
-    const normalizedChunk =
-      chunk.length > this.maxChars ? chunk.slice(-this.maxChars) : chunk;
-    if (normalizedChunk.length !== chunk.length) {
-      this.truncated = true;
-    }
-
-    this.value += normalizedChunk;
-    if (this.value.length > this.maxChars) {
-      this.truncated = true;
-      this.value = this.value.slice(-this.maxChars);
-    }
-  }
-
-  excerpt(maxChars: number): string {
-    if (this.value.length <= maxChars) {
-      return this.value.trim();
-    }
-
-    return this.value.slice(-maxChars).trim();
-  }
-
-  wasTruncated(): boolean {
-    return this.truncated;
   }
 }
 
