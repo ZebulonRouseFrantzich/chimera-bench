@@ -89,4 +89,76 @@ describe("TargetProfileSchema", () => {
 
     expect(parsed.success).toBe(false);
   });
+
+  test("accepts allowlisted llamaServerPath values", () => {
+    const defaultPath = TargetProfileSchema.safeParse({
+      schemaVersion: 1,
+      id: "lab",
+      displayName: "Lab LLM box",
+      host: "10.0.0.10",
+      username: "ubuntu",
+      remoteModelRoots: ["/models"],
+      llamaServerPath: "llama-server",
+    });
+
+    const absolutePath = TargetProfileSchema.safeParse({
+      schemaVersion: 1,
+      id: "lab",
+      displayName: "Lab LLM box",
+      host: "10.0.0.10",
+      username: "ubuntu",
+      remoteModelRoots: ["/models"],
+      llamaServerPath: "/opt/llama.cpp/bin/llama-server",
+    });
+
+    expect(defaultPath.success).toBe(true);
+    expect(absolutePath.success).toBe(true);
+  });
+
+  test("rejects disallowed llamaServerPath values", () => {
+    const relativePath = TargetProfileSchema.safeParse({
+      schemaVersion: 1,
+      id: "lab",
+      displayName: "Lab LLM box",
+      host: "10.0.0.10",
+      username: "ubuntu",
+      remoteModelRoots: ["/models"],
+      llamaServerPath: "./llama-server",
+    });
+
+    const wrongBinaryName = TargetProfileSchema.safeParse({
+      schemaVersion: 1,
+      id: "lab",
+      displayName: "Lab LLM box",
+      host: "10.0.0.10",
+      username: "ubuntu",
+      remoteModelRoots: ["/models"],
+      llamaServerPath: "/opt/llama.cpp/bin/llama-main",
+    });
+
+    const traversalPath = TargetProfileSchema.safeParse({
+      schemaVersion: 1,
+      id: "lab",
+      displayName: "Lab LLM box",
+      host: "10.0.0.10",
+      username: "ubuntu",
+      remoteModelRoots: ["/models"],
+      llamaServerPath: "/opt/../../etc/evil/llama-server",
+    });
+
+    const nonAsciiPath = TargetProfileSchema.safeParse({
+      schemaVersion: 1,
+      id: "lab",
+      displayName: "Lab LLM box",
+      host: "10.0.0.10",
+      username: "ubuntu",
+      remoteModelRoots: ["/models"],
+      llamaServerPath: "/opt/llama.cpp/bín/llama-server",
+    });
+
+    expect(relativePath.success).toBe(false);
+    expect(wrongBinaryName.success).toBe(false);
+    expect(traversalPath.success).toBe(false);
+    expect(nonAsciiPath.success).toBe(false);
+  });
 });
