@@ -62,6 +62,7 @@ function createPlugin(overrides: Partial<EnginePlugin>): EnginePlugin {
     capabilities: {
       chatCompletions: true,
       localTarget: true,
+      sshTarget: false,
       streaming: true,
     },
     validateEnvironment: async () => ({

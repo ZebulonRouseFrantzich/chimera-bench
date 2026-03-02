@@ -431,6 +431,15 @@ export function createOpenApiDocument(input: OpenApiInput): object {
           },
         },
       },
+      500: {
+        description:
+          "Run creation failed while loading target profile data (TARGET_PROFILE_PERSIST_FAILED)",
+        content: {
+          [JSON_CONTENT_TYPE]: {
+            schema: errorResponse,
+          },
+        },
+      },
     },
   });
 
@@ -588,11 +597,62 @@ export function createOpenApiDocument(input: OpenApiInput): object {
 
   const generator = new OpenApiGeneratorV31(registry.definitions);
 
-  return generator.generateDocument({
+  const document = generator.generateDocument({
     openapi: "3.1.0",
     info: {
       title: "chimera-bench server API",
       version: input.version,
     },
   });
+
+  addCreateRunTargetDiscriminator(document);
+  return document;
+}
+
+function addCreateRunTargetDiscriminator(document: object): void {
+  const root = asRecord(document);
+  if (!root) {
+    return;
+  }
+
+  const components = asRecord(root.components);
+  if (!components) {
+    return;
+  }
+
+  const schemas = asRecord(components.schemas);
+  if (!schemas) {
+    return;
+  }
+
+  const createRunRequest = asRecord(schemas.CreateRunRequest);
+  if (!createRunRequest) {
+    return;
+  }
+
+  const properties = asRecord(createRunRequest.properties);
+  if (!properties) {
+    return;
+  }
+
+  const target = asRecord(properties.target);
+  if (!target) {
+    return;
+  }
+
+  if (!Array.isArray(target.oneOf)) {
+    return;
+  }
+
+  target.discriminator = {
+    propertyName: "type",
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
 }

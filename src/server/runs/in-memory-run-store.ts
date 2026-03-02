@@ -79,6 +79,7 @@ interface RunRecord {
   engineVersion: string;
   orchestratorVersion: string;
   target: RunTargetType;
+  targetProfileId: string | null;
   modelIdentifier: string;
   workloadId: string;
   engineArgs: string[];
@@ -101,6 +102,7 @@ interface CreateQueuedRunInput {
   engineVersion?: string;
   orchestratorVersion?: string;
   target?: RunTargetType;
+  targetProfileId?: string;
   modelIdentifier: string;
   workloadId: string;
   engineArgs?: string[];
@@ -203,7 +205,11 @@ export class InMemoryRunStore {
       engineId: input.engineId,
       engineVersion: input.engineVersion ?? "unknown",
       orchestratorVersion: input.orchestratorVersion ?? "0.0.0",
+      // Kept for backwards compatibility with direct store callers that predate
+      // explicit target wiring in run route handling.
       target: input.target ?? "local",
+      targetProfileId:
+        input.target === "ssh" && input.targetProfileId ? input.targetProfileId : null,
       modelIdentifier: input.modelIdentifier,
       workloadId: input.workloadId,
       engineArgs: [...(input.engineArgs ?? [])],
@@ -605,6 +611,11 @@ export class InMemoryRunStore {
       engineId: run.engineId,
       engineVersion: run.engineVersion,
       target: run.target,
+      ...(run.target === "ssh" && run.targetProfileId
+        ? {
+            targetProfileId: run.targetProfileId,
+          }
+        : {}),
       model: {
         identifier: run.modelIdentifier,
       },

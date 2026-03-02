@@ -67,9 +67,19 @@ export const RunStatusSchema = z.enum([
   "cancelled",
 ]);
 
-export const RunTargetSchema = z.object({
+export const RunTargetLocalSchema = z.object({
   type: z.literal("local"),
-});
+}).strict();
+
+export const RunTargetSshSchema = z.object({
+  type: z.literal("ssh"),
+  profileId: TargetProfileIdentifierSchema,
+}).strict();
+
+export const RunTargetSchema = z.discriminatedUnion("type", [
+  RunTargetLocalSchema,
+  RunTargetSshSchema,
+]);
 
 export const RunModelSchema = z.object({
   identifier: z.string().min(1).max(MAX_MODEL_IDENTIFIER_LENGTH),
@@ -130,6 +140,7 @@ export const HealthDataSchema = z.object({
 export const EngineCapabilitiesSchema = z.object({
   chatCompletions: z.boolean(),
   localTarget: z.boolean(),
+  sshTarget: z.boolean(),
   streaming: z.boolean(),
 });
 

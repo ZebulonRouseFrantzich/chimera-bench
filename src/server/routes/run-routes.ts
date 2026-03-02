@@ -24,6 +24,7 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../runs/defaults.ts";
+import { validateSshModelIdentifier } from "../runs/ssh-model-identifier-validation.ts";
 import {
   RunArtifactReadError,
   type RunArtifactStore,
@@ -32,6 +33,12 @@ import {
 import { RunOrchestrator } from "../runs/run-orchestrator.ts";
 import { getBuiltInWorkload } from "../runs/starter-workload.ts";
 import { createSseResponse } from "../sse/sse-response.ts";
+import type { TargetProfile } from "../targets/target-profile.ts";
+import {
+  TargetProfileNotFoundError,
+  TargetProfilePersistError,
+  type TargetProfileStore,
+} from "../targets/target-profile-store.ts";
 import {
   DEFAULT_SERVER_LOGGER,
   type ServerLogger,
@@ -45,6 +52,7 @@ interface RegisterRunRoutesOptions {
   runtime: RuntimeControl;
   runStore: InMemoryRunStore;
   runArtifacts: RunArtifactStore;
+  targetProfiles: TargetProfileStore;
   engines: EngineCatalog;
   logger?: ServerLogger;
 }
@@ -89,6 +97,87 @@ export function registerRunRoutes(
       });
     }
 
+    let targetProfileId: string | undefined;
+
+    if (request.target.type === "ssh") {
+      if (!plugin.capabilities.sshTarget) {
+        return jsonError(context, 400, {
+          code: "ENGINE_TARGET_NOT_SUPPORTED",
+          message:
+            `Engine '${sanitizeControlCharacters(request.engineId)}' does not support ` +
+            "SSH targets.",
+        });
+      }
+
+      let targetProfile: TargetProfile;
+      try {
+        targetProfile = await options.targetProfiles.getProfile(request.target.profileId);
+      } catch (error) {
+        if (error instanceof TargetProfileNotFoundError) {
+          return jsonError(context, 400, {
+            code: "VALIDATION_TARGET_PROFILE_NOT_FOUND",
+            message:
+              `Target profile '${sanitizeControlCharacters(request.target.profileId)}' ` +
+              "was not found.",
+          });
+        }
+
+        if (error instanceof TargetProfilePersistError) {
+          const requestId = getOrCreateRequestId(context);
+          logger.error(
+            `[chimera-bench] requestId=${requestId} targetProfileOperation=get` +
+              ` profileId=${sanitizeControlCharacters(request.target.profileId)}` +
+              ` reason=${sanitizeControlCharacters(error.logReason)}`,
+          );
+
+          return jsonError(context, 500, {
+            code: "TARGET_PROFILE_PERSIST_FAILED",
+            message: "Failed to load target profile.",
+          });
+        }
+
+        throw error;
+      }
+
+      const modelPathValidation = validateSshModelIdentifier(
+        request.model.identifier,
+        targetProfile.remoteModelRoots,
+      );
+      if (!modelPathValidation.ok) {
+        return jsonError(context, 400, {
+          code: "VALIDATION_MODEL_IDENTIFIER_INVALID",
+          message:
+            "model.identifier must be an absolute .gguf path within target profile remoteModelRoots.",
+          details: {
+            issues: modelPathValidation.issues.map((issue) => ({
+              code: sanitizeErrorCode(issue.code, "VALIDATION_MODEL_IDENTIFIER_INVALID"),
+              message: sanitizeControlCharacters(issue.message),
+              path: sanitizeIssuePath(issue.path),
+            })),
+          },
+        });
+      }
+
+      request.model.identifier = modelPathValidation.normalizedIdentifier;
+      targetProfileId = targetProfile.id;
+    } else if (request.target.type === "local") {
+      if (!plugin.capabilities.localTarget) {
+        return jsonError(context, 400, {
+          code: "ENGINE_TARGET_NOT_SUPPORTED",
+          message:
+            `Engine '${sanitizeControlCharacters(request.engineId)}' does not support ` +
+            "local targets.",
+        });
+      }
+    } else {
+      const unreachableTarget: never = request.target;
+      void unreachableTarget;
+      return jsonError(context, 400, {
+        code: "VALIDATION_TARGET_INVALID",
+        message: "Run target is invalid.",
+      });
+    }
+
     let validationResult: EngineRunConfigValidationResult;
     try {
       validationResult = await plugin.validateRunConfig(request);
@@ -130,6 +219,11 @@ export function registerRunRoutes(
       engineVersion: plugin.version,
       orchestratorVersion: options.version,
       target: request.target.type,
+      ...(targetProfileId
+        ? {
+            targetProfileId,
+          }
+        : {}),
       modelIdentifier: request.model.identifier,
       workloadId: request.workloadId,
       engineArgs: request.engine.serverArgs,

@@ -70,6 +70,27 @@ describe("InMemoryRunStore", () => {
     expect(result?.status).toBe("cancelled");
   });
 
+  test("persists ssh targetProfileId in result artifacts", () => {
+    const store = new InMemoryRunStore();
+    const runId = store.tryCreateQueuedRun({
+      ...RUN_INPUT,
+      target: "ssh",
+      targetProfileId: "lab",
+    });
+
+    expect(typeof runId).toBe("string");
+    if (!runId) {
+      throw new Error("Expected run to be created.");
+    }
+
+    const status = store.cancelRun(runId, new Date().toISOString());
+    expect(status).toBe("cancelled");
+
+    const result = store.getRunResult(runId);
+    expect(result?.target).toBe("ssh");
+    expect(result?.targetProfileId).toBe("lab");
+  });
+
   test("prunes terminal runs that exceed retention window", () => {
     const store = new InMemoryRunStore({
       maxTrackedRuns: 1,
