@@ -16,6 +16,27 @@ llama-server --help
 
 If this command fails, run setup again or update your shell `PATH`.
 
+## SSH targets CLI (local profile store)
+
+You can inspect and smoke-test SSH target profiles without running the server process:
+
+```bash
+chimera-bench targets list
+chimera-bench targets show <profileId>
+chimera-bench targets rm <profileId>
+chimera-bench targets check <profileId>
+CHIMERA_ENABLE_TARGETS_EXEC=1 chimera-bench targets exec <profileId> -- <argv...>
+```
+
+Security and compatibility notes:
+
+- `targets exec` runs arbitrary remote commands and is disabled by default.
+  - Set `CHIMERA_ENABLE_TARGETS_EXEC=1` to enable execution.
+  - `--dry-run` always works and prints the constructed `ssh` argv.
+- Remote commands run through the SSH user's login shell.
+  - The remote user must have a POSIX-compatible shell (for example `bash` or `dash`), not `fish`/`csh`.
+- `ssh` is resolved from the orchestrator host `PATH`.
+
 ## Start the server safely
 
 Loopback-only (local machine):
