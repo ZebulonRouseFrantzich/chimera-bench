@@ -480,6 +480,14 @@ Extend `POST /runs` schema and normalization to support SSH targets.
 
 This task introduces a breaking type change to the engine plugin contract: `EngineRunConfig.target` becomes a discriminated union.
 
+Schema notes:
+
+- Represent `target` as a discriminated union on `target.type` in both server-side validation and OpenAPI.
+  - Prefer including an OpenAPI `discriminator` for SDK generation.
+- Keep each target branch strict:
+  - `target.type=local` rejects unknown keys (for example `profileId`).
+  - `target.type=ssh` requires `profileId`.
+
 Run config addition:
 
 ```json
@@ -501,13 +509,16 @@ Validation rules for SSH runs:
 - `model.identifier` must be within the profile's `remoteModelRoots`.
   - Path normalization (lexical; remote filesystem is not consulted):
     - Require the raw string starts with `/`.
+    - Reject control characters (including `\0`, newlines, tabs).
+    - Reject any identifier containing a literal `..` path segment *before* normalization.
+      - Example rejected input (even though it would normalize within `/models`): `/models/subdir/../model.gguf`.
     - Normalize with `path.posix.normalize`.
-    - Reject any normalized path that contains a `..` segment.
     - Normalize each root with `path.posix.normalize` and trim trailing `/`.
     - Root boundary check must be slash-aware:
       - A root `/models` matches `/models/x.gguf`.
       - A root `/models` does NOT match `/models2/x.gguf`.
       - Implement as: `candidate === root` OR `candidate.startsWith(root + "/")`.
+    - Even if `remoteModelRoots` includes `/`, traversal segments are still rejected.
 - Persist SSH target metadata in `result.json`:
   - `target` is already required by the run result schema (`local` | `ssh`).
   - Add `targetProfileId` as an optional top-level field, required when `target === "ssh"`.
@@ -518,6 +529,7 @@ Stable error codes:
 - `VALIDATION_TARGET_PROFILE_NOT_FOUND`
 - `VALIDATION_MODEL_IDENTIFIER_INVALID`
 - `ENGINE_TARGET_NOT_SUPPORTED`
+- `TARGET_PROFILE_PERSIST_FAILED` (500; target profile store read failure)
 
 Expected implementation touchpoints (non-exhaustive):
 
@@ -535,7 +547,8 @@ Prereq: create a `lab` target profile (Task 1).
 1. Confirm engine list exposes SSH capability:
    - `curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/engines`
    - Confirm `llama-cpp` includes `sshTarget: true` after Task 5 is implemented.
-2. Attempt to create a run with a missing profile ID and confirm `400 VALIDATION_TARGET_PROFILE_NOT_FOUND`.
+2. Attempt to create a run with a non-existent `target.profileId` and confirm `400 VALIDATION_TARGET_PROFILE_NOT_FOUND`.
+   - Note: omitting `profileId` entirely should fail request validation (`400 VALIDATION_BODY_INVALID`).
 3. Attempt to create a run with a relative model path (e.g. `models/x.gguf`) and confirm validation error.
 4. Attempt to create a run with a path outside allowed roots and confirm validation error:
    - Profile root: `/models`
@@ -570,7 +583,9 @@ Remote startup requirements:
   - Known limitation: if passed as `--api-key <value>` in argv, the key may be visible to other users on the remote host via process listings (`ps`). This mode assumes the remote host is in the same trust domain / single-user. Operator docs must call this out.
 - Choose a remote port (retry on bind/start failure).
   - Recommended approach: pick a random port in a dedicated range (e.g. `18000..28000`) and retry a bounded number of times (e.g. 10 attempts) when the remote server exits early with a bind/listen failure.
+  - If multiple SSH runs can be active concurrently against the same destination, add an in-process reservation layer to avoid reusing the same remote port across concurrent runs.
 - Perform readiness checks via the forwarded local URL (`GET /health`).
+  - Treat transient connection errors (for example `ECONNREFUSED`, "fetch failed", and "socket connection was closed unexpectedly") as retryable until the readiness timeout elapses.
 
 Remote command composition:
 
@@ -595,7 +610,10 @@ Remote strict validation requirements:
 
 - When `validationMode=strict`, discover supported flags on the remote host by running:
   - `<llamaServerPath> --help`
-- Cache the discovered flag set per `(profileId, llamaServerPath)` for a short TTL (for example 60s) to avoid re-running `--help` for every sweep run.
+- Cache the discovered flag set for a short TTL (for example 60s) to avoid re-running `--help` for every sweep run.
+  - Cache key should include connection identity, not just `profileId`.
+    - Recommended minimum: `(profileId, host, port, username, auth method, llamaServerPath)`.
+  - Some `llama-server` builds exit non-zero for `--help` while still printing a full flag list; treat non-zero as acceptable as long as output parses and required markers are present.
 - Parse and validate `engine.serverArgs` against the discovered flags (same reserved/denylisted behavior as local mode).
 - In `permissive` mode, continue to denylist dangerous flags even if unknown flags are allowed.
 
@@ -633,22 +651,27 @@ Prereqs:
 
 - Remote host is reachable via SSH with `BatchMode=yes` and strict known-hosts.
 - Remote host has `llama-server` installed and callable as `llama-server` (or set `llamaServerPath`).
+  - Note: non-interactive SSH command environments often differ from interactive shells; if `llama-server` is only found in an interactive session, set `llamaServerPath` to an absolute path (for example `/home/user/llama.cpp/llama-server`).
 - Remote host has a model at an allowlisted path (example: `/models/model.gguf`).
 
 1. Create a `lab` target profile (Task 1) with `remoteModelRoots` containing the model directory.
 2. Start the chimera-bench server.
 3. Start a remote run:
-   - `curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD -H 'Content-Type: application/json' http://127.0.0.1:4096/runs -d '{"engineId":"llama-cpp","target":{"type":"ssh","profileId":"lab"},"model":{"identifier":"/models/model.gguf"},"engine":{"serverArgs":[],"requestParams":{}},"validationMode":"permissive"}'`
+   - `curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD -H 'Content-Type: application/json' http://127.0.0.1:4096/runs -d '{"engineId":"llama-cpp","target":{"type":"ssh","profileId":"lab"},"model":{"identifier":"/models/model.gguf"},"engine":{"serverArgs":["--ctx-size","2048","--parallel","1","--no-warmup"],"requestParams":{}},"validationMode":"permissive"}'`
+   - If this fails due to OOM or GPU allocation issues, retry with CPU-only layers:
+     - add `"--n-gpu-layers","0"` to `engine.serverArgs`.
 4. Confirm readiness over the forwarded port:
    - Watch run SSE (`GET /runs/:runId/event`) and confirm it transitions to `running` only after readiness succeeds.
 5. Confirm remote server is not exposed publicly:
    - On the remote host: `ss -ltnp | rg llama-server` (or equivalent)
    - Confirm it listens only on `127.0.0.1:<remotePort>`.
+   - `remotePort` should be visible in orchestrator diagnostics for the run (SSH session start / port-forward established).
 6. Cancellation behavior:
    - Cancel: `curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD -X POST http://127.0.0.1:4096/runs/RUN_ID/cancel`
    - Confirm:
-     - the local `ssh` process exits
-     - the remote `llama-server` process is no longer running
+      - the local `ssh` process exits
+      - the remote `llama-server` process is no longer running
+   - (Optional) After a completed run, confirm the remote `llama-server` process is also gone (best-effort).
 7. Strict flag discovery:
    - Run with `"validationMode":"strict"` and intentionally include an unknown flag in `engine.serverArgs`.
    - Confirm `400 VALIDATION_ENGINE_OPTIONS_INVALID` (or equivalent engine validation failure).

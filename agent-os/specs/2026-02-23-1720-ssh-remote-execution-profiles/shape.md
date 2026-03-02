@@ -27,11 +27,14 @@ Note: the repo also supports a co-located mode (run chimera-bench on the LLM mac
 - Avoid opening remote network ports. Remote `llama-server` binds to `127.0.0.1` and the orchestrator connects via SSH local port-forward.
 - Port forwarding is loopback-only in this phase (no non-loopback remote forwarding).
 - Constrain remote model paths via an allowlist of remote model roots in the target profile.
+  - Reject any model identifier containing literal `..` path segments (even if it would normalize within an allowed root).
 - Persist target profiles under `~/.chimera-bench/targets/` with restrictive permissions (POSIX `0700` dir / `0600` files) and a `schemaVersion` for future migration.
 - Treat remote command construction as a security boundary:
   - remote commands are executed by the remote user's shell
   - build commands from argv arrays and convert to command strings via strict POSIX shell quoting
 - Prefer a single SSH session per run that both establishes the port-forward and runs the remote `llama-server` in the foreground (`exec`) to minimize orphan risk.
+- Cache remote strict `--help` flag discovery for a short TTL keyed by full connection identity (host/port/user/auth + llamaServerPath) to avoid stale caches when profiles change.
+- Avoid remote-port collisions in the common case by reserving chosen remote ports per destination while runs are active.
 - Provide first-class local CLI commands (`chimera-bench targets list/show/rm/check/forward`) so operators can validate SSH connectivity and forwarding without writing scripts.
 - `chimera-bench targets exec` exists for debugging but is explicitly gated behind an opt-in environment variable to reduce accidental remote-shell capability on shared orchestrators.
 - Visuals: none.
@@ -39,6 +42,7 @@ Note: the repo also supports a co-located mode (run chimera-bench on the LLM mac
 ## Assumptions
 
 - Remote hosts already have `llama-server` installed and accessible (no install/build automation here).
+- Non-interactive SSH command environments can differ from interactive shells; operators may need to set `llamaServerPath` to an absolute path even if `which llama-server` works interactively.
 - Operators can provision SSH access and known-hosts entries.
 - Remote model files exist on the remote host (no model upload/sync in this spec).
 - The orchestrator and LLM machine can establish SSH port-forwarding (no firewall policy blocking it).
