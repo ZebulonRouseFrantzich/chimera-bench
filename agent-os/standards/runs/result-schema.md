@@ -18,6 +18,13 @@ Persist benchmark data as JSON first, then derive CSV and markdown exports from 
 - `finishedAt`
 - `durationMs`
 
+## Conditional top-level fields
+
+- `targetProfileId`
+  - required when `target` is `ssh`
+  - omitted (or `null`) when `target` is `local`
+  - additive field; no schema version bump required for this addition
+
 ## Required per-case fields
 
 - `caseId`
