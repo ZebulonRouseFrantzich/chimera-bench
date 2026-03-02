@@ -28,10 +28,13 @@ const DEFAULT_DIAGNOSTIC_EXCERPT_CHARS = 4 * 1024;
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const STARTUP_POLL_INTERVAL_MS = 75;
 const PROBE_CONNECT_TIMEOUT_MS = 250;
+const PROBE_STABILITY_WINDOW_MS = 150;
 const CANCEL_KILL_GRACE_PERIOD_MS = 500;
 const AUTO_LOCAL_PORT_ATTEMPTS = 3;
 const RETRYABLE_LOCAL_FORWARD_FAILURE_PATTERN =
   /address already in use|cannot assign requested address|could not request local forwarding/i;
+const REMOTE_LOOPBACK_CONNECT_FAILURE_PATTERN =
+  /open failed: connect failed|connection refused|connect failed/i;
 
 interface SshPortForwardDependencies extends ProcessTimerControls {
   spawnProcess: (
@@ -51,6 +54,7 @@ interface WaitForForwardReadyRequest {
   abortSignal?: AbortSignal;
   terminationPromise: Promise<SubprocessTermination>;
   probeForwardReady: (localPort: number) => Promise<boolean>;
+  hasRemoteConnectionFailure: () => boolean;
   now: () => number;
   setTimer: typeof setTimeout;
   clearTimer: typeof clearTimeout;
@@ -105,9 +109,19 @@ export class SshPortForwardExecutionError extends Error {
 }
 
 class SshPortForwardStartupError extends Error {
-  readonly reason: "cancelled" | "timeout" | "terminated";
+  readonly reason:
+    | "cancelled"
+    | "timeout"
+    | "terminated"
+    | "remote-unreachable";
 
-  constructor(reason: "cancelled" | "timeout" | "terminated") {
+  constructor(
+    reason:
+      | "cancelled"
+      | "timeout"
+      | "terminated"
+      | "remote-unreachable",
+  ) {
     super(`SSH port-forward startup failed: ${reason}.`);
     this.name = "SshPortForwardStartupError";
     this.reason = reason;
@@ -338,6 +352,11 @@ async function startSshPortForwardOnce(input: {
     ...(termination ? termination : {}),
   });
 
+  const hasRemoteConnectionFailure = (): boolean => {
+    const stderrExcerpt = stderrBuffer.excerpt(input.diagnosticExcerptChars);
+    return REMOTE_LOOPBACK_CONNECT_FAILURE_PATTERN.test(stderrExcerpt);
+  };
+
   try {
     await waitForForwardReady({
       localPort: input.localPort,
@@ -345,6 +364,7 @@ async function startSshPortForwardOnce(input: {
       pollIntervalMs: STARTUP_POLL_INTERVAL_MS,
       terminationPromise,
       probeForwardReady: input.dependencies.probeForwardReady,
+      hasRemoteConnectionFailure,
       now: input.dependencies.now,
       setTimer: input.dependencies.setTimer,
       clearTimer: input.dependencies.clearTimer,
@@ -366,6 +386,7 @@ async function startSshPortForwardOnce(input: {
       termination,
       getErrorDetails,
       input.startupTimeoutMs,
+      input.input.remotePort,
       input.redactions,
     );
   }
@@ -376,6 +397,7 @@ async function startSshPortForwardOnce(input: {
       observedTermination,
       getErrorDetails,
       input.startupTimeoutMs,
+      input.input.remotePort,
       input.redactions,
     );
   }
@@ -489,6 +511,7 @@ function buildStartupError(
     signal?: NodeJS.Signals | null;
   }) => SshPortForwardErrorDetails,
   startupTimeoutMs: number,
+  remotePort: number,
   redactions: readonly string[],
 ): SshPortForwardExecutionError {
   if (error instanceof SshPortForwardStartupError) {
@@ -502,6 +525,13 @@ function buildStartupError(
     if (error.reason === "timeout") {
       return new SshPortForwardExecutionError(
         `SSH port forward did not become ready within ${startupTimeoutMs}ms.`,
+        getErrorDetails(),
+      );
+    }
+
+    if (error.reason === "remote-unreachable") {
+      return new SshPortForwardExecutionError(
+        `SSH port forward could not connect to remote 127.0.0.1:${remotePort}. Ensure the remote service is listening on loopback and retry.`,
         getErrorDetails(),
       );
     }
@@ -553,6 +583,10 @@ async function waitForForwardReady(input: WaitForForwardReadyRequest): Promise<v
 
     if (probeOutcome.ready) {
       return;
+    }
+
+    if (input.hasRemoteConnectionFailure()) {
+      throw new SshPortForwardStartupError("remote-unreachable");
     }
 
     if (input.now() >= startupDeadline) {
@@ -655,6 +689,7 @@ async function probeLocalForwardReady(localPort: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new Socket();
     let settled = false;
+    let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
 
     const finish = (ready: boolean) => {
       if (settled) {
@@ -662,6 +697,9 @@ async function probeLocalForwardReady(localPort: number): Promise<boolean> {
       }
 
       settled = true;
+      if (stabilityTimer !== null) {
+        clearTimeout(stabilityTimer);
+      }
       cleanup();
       socket.destroy();
       resolve(ready);
@@ -672,7 +710,9 @@ async function probeLocalForwardReady(localPort: number): Promise<boolean> {
     };
 
     const onConnect = () => {
-      finish(true);
+      stabilityTimer = setTimeout(() => {
+        finish(true);
+      }, PROBE_STABILITY_WINDOW_MS);
     };
 
     const cleanup = () => {

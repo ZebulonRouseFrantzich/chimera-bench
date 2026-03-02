@@ -237,6 +237,36 @@ describe("startSshPortForward", () => {
     expect(fake.killSignals[0]).toBe("SIGTERM");
   });
 
+  test("fails fast when remote loopback port refuses forwarded connections", async () => {
+    const fake = createFakeSshProcess({
+      autoCloseSignals: new Set(["SIGTERM"]),
+    });
+
+    await expect(
+      startSshPortForward(
+        {
+          profile: createProfile(),
+          remotePort: 65511,
+          startupTimeoutMs: 10_000,
+        },
+        {
+          reserveLocalPort: async () => 18080,
+          spawnProcess: createSpawnProcessOverride((_command, _args, _options) => {
+            queueMicrotask(() => {
+              fake.stderr.write(
+                "channel 3: open failed: connect failed: Connection refused\n",
+              );
+            });
+            return fake.process;
+          }),
+          probeForwardReady: async () => false,
+        },
+      ),
+    ).rejects.toThrow("could not connect to remote 127.0.0.1:65511");
+
+    expect(fake.killSignals[0]).toBe("SIGTERM");
+  });
+
   test("fails startup if ssh exits right after readiness probe", async () => {
     const fake = createFakeSshProcess();
 
