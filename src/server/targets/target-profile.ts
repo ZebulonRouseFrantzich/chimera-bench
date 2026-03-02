@@ -1,7 +1,10 @@
 import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
-import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
+import {
+  isValidSshHost,
+  SSH_USERNAME_PATTERN,
+} from "../ssh/ssh-connection-validation.ts";
 
 extendZodWithOpenApi(z);
 
@@ -18,8 +21,6 @@ const TARGET_PROFILE_USERNAME_MAX_LENGTH = 32;
 const TARGET_PROFILE_PATH_MAX_LENGTH = 4096;
 const TARGET_PROFILE_REMOTE_MODEL_ROOTS_MAX_LENGTH = 64;
 export const PATH_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
-const SSH_USERNAME_PATTERN = /^[A-Za-z0-9._-]+$/;
-const HOSTNAME_LABEL_PATTERN = /^(?!-)[A-Za-z0-9-]{1,63}(?<!-)$/;
 
 const AbsolutePathSchema = z
   .string()
@@ -96,32 +97,24 @@ export const TargetProfileSchema = z.object({
     .default(DEFAULT_LLAMA_SERVER_PATH)
     .refine(isAllowedLlamaServerPath, {
       message:
-        "llamaServerPath must be 'llama-server' or an absolute ASCII path ending with '/llama-server'.",
+        "llamaServerPath must be 'llama-server' or an absolute ASCII path ending with '/llama-server' and must not contain '..' segments.",
     }),
 });
 
 export type TargetProfile = z.infer<typeof TargetProfileSchema>;
 
 function isAllowedLlamaServerPath(path: string): boolean {
-  return (
-    path === DEFAULT_LLAMA_SERVER_PATH ||
-    LLAMA_SERVER_ABSOLUTE_PATH_PATTERN.test(path)
-  );
-}
-
-function isValidSshHost(value: string): boolean {
-  if (isIP(value) !== 0) {
+  if (path === DEFAULT_LLAMA_SERVER_PATH) {
     return true;
   }
 
-  if (value.includes("..") || value.endsWith(".")) {
+  if (!LLAMA_SERVER_ABSOLUTE_PATH_PATTERN.test(path)) {
     return false;
   }
 
-  const labels = value.split(".");
-  if (labels.length === 0) {
-    return false;
-  }
+  return !hasPathTraversalSegment(path);
+}
 
-  return labels.every((label) => HOSTNAME_LABEL_PATTERN.test(label));
+function hasPathTraversalSegment(path: string): boolean {
+  return path.split("/").some((segment) => segment === "..");
 }

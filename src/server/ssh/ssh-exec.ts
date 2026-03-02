@@ -3,7 +3,6 @@ import type {
   ChildProcessWithoutNullStreams,
   SpawnOptionsWithoutStdio,
 } from "node:child_process";
-import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
 import { toError } from "../error-utils.ts";
 import type { TargetProfile } from "../targets/target-profile.ts";
@@ -20,13 +19,15 @@ import {
   redactText,
   RollingTextBuffer,
 } from "./ssh-process-utils.ts";
+import {
+  isValidSshHost,
+  SSH_USERNAME_PATTERN,
+} from "./ssh-connection-validation.ts";
 
 const DEFAULT_MAX_BUFFERED_CHARS = 64 * 1024;
 const DEFAULT_DIAGNOSTIC_EXCERPT_CHARS = 4 * 1024;
 const DEFAULT_OVERALL_TIMEOUT_MS = 10 * 60 * 1000;
 const CANCEL_KILL_GRACE_PERIOD_MS = 500;
-const SSH_USERNAME_PATTERN = /^[A-Za-z0-9._-]+$/;
-const HOSTNAME_LABEL_PATTERN = /^(?!-)[A-Za-z0-9-]{1,63}(?<!-)$/;
 
 const SSH_DEFAULT_OPTIONS: readonly string[] = [
   "BatchMode=yes",
@@ -441,21 +442,4 @@ function buildSafeRemoteCommand(remoteArgv: readonly string[]): string {
 
     throw error;
   }
-}
-
-function isValidSshHost(value: string): boolean {
-  if (isIP(value) !== 0) {
-    return true;
-  }
-
-  if (value.includes("..") || value.endsWith(".")) {
-    return false;
-  }
-
-  const labels = value.split(".");
-  if (labels.length === 0) {
-    return false;
-  }
-
-  return labels.every((label) => HOSTNAME_LABEL_PATTERN.test(label));
 }
