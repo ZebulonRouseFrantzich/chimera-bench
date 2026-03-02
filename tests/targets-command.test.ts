@@ -7,6 +7,7 @@ import {
   TargetsCommandUsageError,
 } from "../src/cli/targets-command.ts";
 import type { SshCommandSuccess } from "../src/server/ssh/ssh-exec.ts";
+import type { SshPortForwardRequest } from "../src/server/ssh/ssh-port-forward.ts";
 import { TargetProfileStore } from "../src/server/targets/target-profile-store.ts";
 
 describe("targets command", () => {
@@ -99,6 +100,177 @@ describe("targets command", () => {
     }
   });
 
+  test("forward starts port forwarding and cancels on signal", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-targets-cli-"));
+    const store = new TargetProfileStore(join(tempDirectory, "targets"));
+    const stdoutLines: string[] = [];
+    const stderrLines: string[] = [];
+    const listeners = new Map<"SIGINT" | "SIGTERM", () => void>();
+    const removedSignals: Array<"SIGINT" | "SIGTERM"> = [];
+    let observedRemotePort = -1;
+    let startedResolve: (() => void) | null = null;
+    const started = new Promise<void>((resolve) => {
+      startedResolve = resolve;
+    });
+
+    try {
+      await store.upsertProfile(createProfile("lab"));
+
+      const commandPromise = runTargetsCommand([
+        "forward",
+        "lab",
+        "--remote-port",
+        "8080",
+      ], {
+        targetProfiles: store,
+        startPortForward: async (request: SshPortForwardRequest) => {
+          observedRemotePort = request.remotePort;
+          startedResolve?.();
+
+          return {
+            localPort: 45123,
+            argv: ["ssh", "..."],
+            waitForExit: async () => {
+              if (request.abortSignal?.aborted) {
+                throw new Error("forward cancelled");
+              }
+
+              await new Promise<void>((resolve) => {
+                request.abortSignal?.addEventListener("abort", () => resolve(), {
+                  once: true,
+                });
+              });
+
+              throw new Error("forward cancelled");
+            },
+          };
+        },
+        addSignalListener: (signal, listener) => {
+          listeners.set(signal, listener);
+        },
+        removeSignalListener: (signal) => {
+          listeners.delete(signal);
+          removedSignals.push(signal);
+        },
+        print: (message) => {
+          stdoutLines.push(message);
+        },
+        printError: (message) => {
+          stderrLines.push(message);
+        },
+      });
+
+      await started;
+      const sigintListener = listeners.get("SIGINT");
+      if (!sigintListener) {
+        throw new Error("Expected SIGINT listener to be registered.");
+      }
+
+      sigintListener();
+
+      await expect(commandPromise).resolves.toBeUndefined();
+      expect(observedRemotePort).toBe(8080);
+      expect(
+        stdoutLines.some((line) => line.includes("127.0.0.1:45123")),
+      ).toBe(true);
+      expect(
+        stderrLines.some((line) => line.includes("received SIGINT, shutting down")),
+      ).toBe(true);
+      expect(stderrLines.some((line) => line.includes("shutdown complete"))).toBe(true);
+      expect(removedSignals).toContain("SIGINT");
+      expect(removedSignals).toContain("SIGTERM");
+    } finally {
+      rmSync(tempDirectory, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("forward supports --print-local-port machine output", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-targets-cli-"));
+    const store = new TargetProfileStore(join(tempDirectory, "targets"));
+    const stdoutLines: string[] = [];
+    const stderrLines: string[] = [];
+    const listeners = new Map<"SIGINT" | "SIGTERM", () => void>();
+    let startedResolve: (() => void) | null = null;
+    const started = new Promise<void>((resolve) => {
+      startedResolve = resolve;
+    });
+
+    try {
+      await store.upsertProfile(createProfile("lab"));
+
+      const commandPromise = runTargetsCommand([
+        "forward",
+        "lab",
+        "--remote-port",
+        "8080",
+        "--print-local-port",
+      ], {
+        targetProfiles: store,
+        startPortForward: async (request: SshPortForwardRequest) => {
+          startedResolve?.();
+
+          return {
+            localPort: 45123,
+            argv: ["ssh", "..."],
+            waitForExit: async () => {
+              if (request.abortSignal?.aborted) {
+                throw new Error("forward cancelled");
+              }
+
+              await new Promise<void>((resolve) => {
+                request.abortSignal?.addEventListener("abort", () => resolve(), {
+                  once: true,
+                });
+              });
+
+              throw new Error("forward cancelled");
+            },
+          };
+        },
+        addSignalListener: (signal, listener) => {
+          listeners.set(signal, listener);
+        },
+        removeSignalListener: (signal) => {
+          listeners.delete(signal);
+        },
+        print: (message) => {
+          stdoutLines.push(message);
+        },
+        printError: (message) => {
+          stderrLines.push(message);
+        },
+      });
+
+      await started;
+      const sigintListener = listeners.get("SIGINT");
+      if (!sigintListener) {
+        throw new Error("Expected SIGINT listener to be registered.");
+      }
+
+      sigintListener();
+      await expect(commandPromise).resolves.toBeUndefined();
+
+      expect(stdoutLines).toContain("45123");
+      expect(
+        stderrLines.some((line) => line.includes("Forward ready: 127.0.0.1:45123")),
+      ).toBe(true);
+    } finally {
+      rmSync(tempDirectory, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("forward requires --remote-port", async () => {
+    await expect(runTargetsCommand(["forward", "lab"], {})).rejects.toBeInstanceOf(
+      TargetsCommandUsageError,
+    );
+  });
+
   test("exec enforces enablement gate and allows --dry-run", async () => {
     const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-targets-cli-"));
     const store = new TargetProfileStore(join(tempDirectory, "targets"));
@@ -150,9 +322,16 @@ describe("targets command", () => {
       },
     });
 
-    expect(stdoutLines).toHaveLength(2);
+    await runTargetsCommand(["forward", "--help"], {
+      print: (message) => {
+        stdoutLines.push(message);
+      },
+    });
+
+    expect(stdoutLines).toHaveLength(3);
     expect(stdoutLines[0]).toContain("Usage: chimera-bench targets <subcommand>");
     expect(stdoutLines[1]).toContain("Usage: chimera-bench targets <subcommand>");
+    expect(stdoutLines[2]).toContain("Usage: chimera-bench targets <subcommand>");
   });
 
   test("ignores no-op separators for non-exec subcommands", async () => {
