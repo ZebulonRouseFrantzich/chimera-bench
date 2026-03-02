@@ -6,6 +6,7 @@ import {
   runTargetsCommand,
   TargetsCommandUsageError,
 } from "../src/cli/targets-command.ts";
+import type { SshCommandSuccess } from "../src/server/ssh/ssh-exec.ts";
 import { TargetProfileStore } from "../src/server/targets/target-profile-store.ts";
 
 describe("targets command", () => {
@@ -134,6 +135,58 @@ describe("targets command", () => {
     }
   });
 
+  test("prints help for subcommand help flags", async () => {
+    const stdoutLines: string[] = [];
+
+    await runTargetsCommand(["list", "--help"], {
+      print: (message) => {
+        stdoutLines.push(message);
+      },
+    });
+
+    await runTargetsCommand(["exec", "--help"], {
+      print: (message) => {
+        stdoutLines.push(message);
+      },
+    });
+
+    expect(stdoutLines).toHaveLength(2);
+    expect(stdoutLines[0]).toContain("Usage: chimera-bench targets <subcommand>");
+    expect(stdoutLines[1]).toContain("Usage: chimera-bench targets <subcommand>");
+  });
+
+  test("ignores no-op separators for non-exec subcommands", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-targets-cli-"));
+    const store = new TargetProfileStore(join(tempDirectory, "targets"));
+    const stdoutLines: string[] = [];
+
+    try {
+      await store.upsertProfile(createProfile("lab"));
+
+      await runTargetsCommand(["list", "--"], {
+        targetProfiles: store,
+        print: (message) => {
+          stdoutLines.push(message);
+        },
+      });
+
+      await runTargetsCommand(["show", "lab", "--"], {
+        targetProfiles: store,
+        print: (message) => {
+          stdoutLines.push(message);
+        },
+      });
+
+      expect(stdoutLines[0]).toContain("lab");
+      expect(stdoutLines[1]).toContain('"id": "lab"');
+    } finally {
+      rmSync(tempDirectory, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
   test("exec streams remote output and prints warning when enabled", async () => {
     const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-targets-cli-"));
     const store = new TargetProfileStore(join(tempDirectory, "targets"));
@@ -248,6 +301,63 @@ describe("targets command", () => {
       const parsedArgv = JSON.parse(stdoutLines[0] ?? "[]") as string[];
       expect(parsedArgv[0]).toBe("ssh");
       expect(parsedArgv.at(-1)).toContain("'--help'");
+    } finally {
+      rmSync(tempDirectory, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("removes signal handlers on first cancellation signal", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-targets-cli-"));
+    const store = new TargetProfileStore(join(tempDirectory, "targets"));
+    const listeners = new Map<"SIGINT" | "SIGTERM", () => void>();
+    const removedSignals: Array<"SIGINT" | "SIGTERM"> = [];
+    let executeInvokedResolve: (() => void) | null = null;
+    const executeInvoked = new Promise<void>((resolve) => {
+      executeInvokedResolve = resolve;
+    });
+
+    try {
+      await store.upsertProfile(createProfile("lab"));
+
+      const commandPromise = runTargetsCommand(["exec", "lab", "--", "sleep", "60"], {
+        targetProfiles: store,
+        env: {
+          CHIMERA_ENABLE_TARGETS_EXEC: "1",
+        },
+        addSignalListener: (signal, listener) => {
+          listeners.set(signal, listener);
+        },
+        removeSignalListener: (signal) => {
+          removedSignals.push(signal);
+          listeners.delete(signal);
+        },
+        executeSsh: async (request): Promise<SshCommandSuccess> => {
+          executeInvokedResolve?.();
+          await new Promise<never>((_, reject) => {
+            request.abortSignal?.addEventListener("abort", () => {
+              reject(new Error("aborted"));
+            });
+          });
+
+          throw new Error("unreachable");
+        },
+      });
+
+      await executeInvoked;
+
+      const sigintHandler = listeners.get("SIGINT");
+      if (!sigintHandler) {
+        throw new Error("Expected SIGINT listener to be registered.");
+      }
+
+      sigintHandler();
+
+      await expect(commandPromise).rejects.toThrow("aborted");
+      expect(removedSignals).toContain("SIGINT");
+      expect(removedSignals).toContain("SIGTERM");
     } finally {
       rmSync(tempDirectory, {
         recursive: true,

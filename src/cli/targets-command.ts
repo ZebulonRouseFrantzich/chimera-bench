@@ -27,6 +27,14 @@ interface TargetsCommandDependencies {
   readonly targetProfiles: TargetProfileStore;
   readonly executeSsh: typeof executeSshCommand;
   readonly buildSshArgv: typeof buildSshCommandArgv;
+  readonly addSignalListener: (
+    signal: "SIGINT" | "SIGTERM",
+    listener: () => void,
+  ) => void;
+  readonly removeSignalListener: (
+    signal: "SIGINT" | "SIGTERM",
+    listener: () => void,
+  ) => void;
   readonly env: NodeJS.ProcessEnv;
   readonly print: (message: string) => void;
   readonly printError: (message: string) => void;
@@ -83,13 +91,14 @@ export async function runTargetsCommand(
   overrides: Partial<TargetsCommandDependencies> = {},
 ): Promise<void> {
   const dependencies = createDependencies(overrides);
+  const normalizedArgs = stripLeadingNoOpSeparators(args);
 
-  if (args[0] === "--help" || args[0] === "-h" || args[0] === "help") {
+  if (isHelpToken(normalizedArgs[0])) {
     dependencies.print(getTargetsCommandHelp());
     return;
   }
 
-  const [subcommand, ...subcommandArgs] = args;
+  const [subcommand, ...subcommandArgs] = normalizedArgs;
   if (!subcommand) {
     throw new TargetsCommandUsageError("targets requires a subcommand.");
   }
@@ -119,7 +128,13 @@ async function runListCommand(
   args: string[],
   dependencies: TargetsCommandDependencies,
 ): Promise<void> {
-  assertNoExtraArgs(args, "targets list");
+  const normalizedArgs = stripNoOpSeparators(args);
+  if (containsHelpToken(normalizedArgs)) {
+    dependencies.print(getTargetsCommandHelp());
+    return;
+  }
+
+  assertNoExtraArgs(normalizedArgs, "targets list");
 
   let profiles: TargetProfile[];
   try {
@@ -144,7 +159,13 @@ async function runShowCommand(
   args: string[],
   dependencies: TargetsCommandDependencies,
 ): Promise<void> {
-  const profileId = parseSingleProfileId(args, "targets show");
+  const normalizedArgs = stripNoOpSeparators(args);
+  if (containsHelpToken(normalizedArgs)) {
+    dependencies.print(getTargetsCommandHelp());
+    return;
+  }
+
+  const profileId = parseSingleProfileId(normalizedArgs, "targets show");
   const profile = await readProfile(profileId, dependencies.targetProfiles);
   dependencies.print(`${JSON.stringify(profile, null, 2)}`);
 }
@@ -153,7 +174,13 @@ async function runRemoveCommand(
   args: string[],
   dependencies: TargetsCommandDependencies,
 ): Promise<void> {
-  const profileId = parseSingleProfileId(args, "targets rm");
+  const normalizedArgs = stripNoOpSeparators(args);
+  if (containsHelpToken(normalizedArgs)) {
+    dependencies.print(getTargetsCommandHelp());
+    return;
+  }
+
+  const profileId = parseSingleProfileId(normalizedArgs, "targets rm");
 
   try {
     await dependencies.targetProfiles.deleteProfile(profileId);
@@ -177,7 +204,13 @@ async function runCheckCommand(
   args: string[],
   dependencies: TargetsCommandDependencies,
 ): Promise<void> {
-  const profileId = parseSingleProfileId(args, "targets check");
+  const normalizedArgs = stripNoOpSeparators(args);
+  if (containsHelpToken(normalizedArgs)) {
+    dependencies.print(getTargetsCommandHelp());
+    return;
+  }
+
+  const profileId = parseSingleProfileId(normalizedArgs, "targets check");
   const profile = await readProfile(profileId, dependencies.targetProfiles);
 
   try {
@@ -203,7 +236,13 @@ async function runExecCommand(
   args: string[],
   dependencies: TargetsCommandDependencies,
 ): Promise<void> {
-  const parsed = parseExecOptions(args);
+  const normalizedArgs = stripLeadingNoOpSeparators(args);
+  if (containsHelpTokenBeforeExecSeparator(normalizedArgs)) {
+    dependencies.print(getTargetsCommandHelp());
+    return;
+  }
+
+  const parsed = parseExecOptions(normalizedArgs);
   if (!parsed.dryRun && dependencies.env[TARGETS_EXEC_ENABLEMENT_ENV_KEY] !== "1") {
     throw new TargetsCommandUsageError(
       "targets exec is disabled by default. Set CHIMERA_ENABLE_TARGETS_EXEC=1 to enable execution, or use --dry-run.",
@@ -343,12 +382,18 @@ async function runSshCommandWithCancellation(
   const abortController = new AbortController();
   let cancelledBySignal = false;
 
+  const cleanupSignalHandlers = () => {
+    dependencies.removeSignalListener("SIGINT", onSigint);
+    dependencies.removeSignalListener("SIGTERM", onSigterm);
+  };
+
   const shutdown = (signal: "SIGINT" | "SIGTERM") => {
     if (cancelledBySignal) {
       return;
     }
 
     cancelledBySignal = true;
+    cleanupSignalHandlers();
     dependencies.printError(
       `[chimera-bench] received ${signal}, cancelling SSH command...`,
     );
@@ -358,8 +403,8 @@ async function runSshCommandWithCancellation(
   const onSigint = () => shutdown("SIGINT");
   const onSigterm = () => shutdown("SIGTERM");
 
-  process.on("SIGINT", onSigint);
-  process.on("SIGTERM", onSigterm);
+  dependencies.addSignalListener("SIGINT", onSigint);
+  dependencies.addSignalListener("SIGTERM", onSigterm);
 
   try {
     return await dependencies.executeSsh({
@@ -379,8 +424,7 @@ async function runSshCommandWithCancellation(
         : {}),
     });
   } finally {
-    process.off("SIGINT", onSigint);
-    process.off("SIGTERM", onSigterm);
+    cleanupSignalHandlers();
   }
 }
 
@@ -446,6 +490,16 @@ function createDependencies(
     targetProfiles: overrides.targetProfiles ?? new TargetProfileStore(),
     executeSsh: overrides.executeSsh ?? executeSshCommand,
     buildSshArgv: overrides.buildSshArgv ?? buildSshCommandArgv,
+    addSignalListener:
+      overrides.addSignalListener ??
+      ((signal, listener) => {
+        process.on(signal, listener);
+      }),
+    removeSignalListener:
+      overrides.removeSignalListener ??
+      ((signal, listener) => {
+        process.off(signal, listener);
+      }),
     env: overrides.env ?? process.env,
     print: overrides.print ?? ((message: string) => console.log(message)),
     printError:
@@ -461,4 +515,39 @@ function createDependencies(
         process.stderr.write(chunk);
       }),
   };
+}
+
+function stripLeadingNoOpSeparators(args: string[]): string[] {
+  let firstNonSeparatorIndex = 0;
+  while (firstNonSeparatorIndex < args.length && args[firstNonSeparatorIndex] === "--") {
+    firstNonSeparatorIndex += 1;
+  }
+
+  return args.slice(firstNonSeparatorIndex);
+}
+
+function stripNoOpSeparators(args: string[]): string[] {
+  return args.filter((arg) => arg !== "--");
+}
+
+function isHelpToken(token: string | undefined): boolean {
+  return token === "--help" || token === "-h" || token === "help";
+}
+
+function containsHelpToken(args: readonly string[]): boolean {
+  return args.some((arg) => isHelpToken(arg));
+}
+
+function containsHelpTokenBeforeExecSeparator(args: readonly string[]): boolean {
+  for (const argument of args) {
+    if (argument === "--") {
+      return false;
+    }
+
+    if (isHelpToken(argument)) {
+      return true;
+    }
+  }
+
+  return false;
 }
