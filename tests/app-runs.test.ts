@@ -18,6 +18,7 @@ import {
 import {
   buildApp,
   createRun,
+  TEST_MODEL_IDENTIFIER,
 } from "./helpers/app-fixture.ts";
 
 describe("run routes", () => {
@@ -215,6 +216,422 @@ describe("run routes", () => {
     expect(response.status).toBe(400);
     const payload = await response.json();
     expect(payload.error.code).toBe("ENGINE_NOT_SUPPORTED");
+  });
+
+  test("rejects local targets for engines without local capability", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          capabilities: {
+            chatCompletions: true,
+            localTarget: false,
+            sshTarget: true,
+            streaming: true,
+          },
+        }),
+      ]),
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: TEST_MODEL_IDENTIFIER,
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("ENGINE_TARGET_NOT_SUPPORTED");
+  });
+
+  test("rejects local targets with unexpected profileId fields", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+          profileId: "lab",
+        },
+        model: {
+          identifier: TEST_MODEL_IDENTIFIER,
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_BODY_INVALID");
+  });
+
+  test("rejects ssh targets for engines without ssh capability", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        model: {
+          identifier: "/models/model.gguf",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("ENGINE_TARGET_NOT_SUPPORTED");
+  });
+
+  test("rejects ssh targets when the profile id is missing", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-runs-ssh-targets-"));
+    const targetsRootDir = join(tempDirectory, "targets");
+
+    try {
+      const { app } = buildApp({
+        auth: {
+          enabled: false,
+          username: "chimera",
+        },
+        targetProfilesRootDir: targetsRootDir,
+        engines: createEngineCatalog([createSshCapableTestPlugin()]),
+      });
+
+      const response = await app.request("http://localhost/runs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          engineId: "llama-cpp",
+          target: {
+            type: "ssh",
+            profileId: "does-not-exist",
+          },
+          model: {
+            identifier: "/models/model.gguf",
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const payload = await response.json();
+      expect(payload.error.code).toBe("VALIDATION_TARGET_PROFILE_NOT_FOUND");
+    } finally {
+      rmSync(tempDirectory, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("rejects ssh model paths outside slash-aware remote model roots", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-runs-ssh-model-"));
+    const targetsRootDir = join(tempDirectory, "targets");
+
+    try {
+      const { app } = buildApp({
+        auth: {
+          enabled: false,
+          username: "chimera",
+        },
+        targetProfilesRootDir: targetsRootDir,
+        engines: createEngineCatalog([createSshCapableTestPlugin()]),
+      });
+
+      await createTargetProfile(app, {
+        id: "lab",
+        remoteModelRoots: ["/models"],
+      });
+
+      const response = await app.request("http://localhost/runs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          engineId: "llama-cpp",
+          target: {
+            type: "ssh",
+            profileId: "lab",
+          },
+          model: {
+            identifier: "/models2/other.gguf",
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const payload = await response.json();
+      expect(payload.error.code).toBe("VALIDATION_MODEL_IDENTIFIER_INVALID");
+      expect(
+        payload.error.details.issues.some((issue: { code?: string }) => {
+          return issue.code === "MODEL_IDENTIFIER_OUTSIDE_ALLOWED_ROOTS";
+        }),
+      ).toBe(true);
+    } finally {
+      rmSync(tempDirectory, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("rejects relative ssh model identifiers", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-runs-ssh-relative-"));
+    const targetsRootDir = join(tempDirectory, "targets");
+
+    try {
+      const { app } = buildApp({
+        auth: {
+          enabled: false,
+          username: "chimera",
+        },
+        targetProfilesRootDir: targetsRootDir,
+        engines: createEngineCatalog([createSshCapableTestPlugin()]),
+      });
+
+      await createTargetProfile(app, {
+        id: "lab",
+        remoteModelRoots: ["/models"],
+      });
+
+      const response = await app.request("http://localhost/runs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          engineId: "llama-cpp",
+          target: {
+            type: "ssh",
+            profileId: "lab",
+          },
+          model: {
+            identifier: "models/relative.gguf",
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const payload = await response.json();
+      expect(payload.error.code).toBe("VALIDATION_MODEL_IDENTIFIER_INVALID");
+      expect(
+        payload.error.details.issues.some((issue: { code?: string }) => {
+          return issue.code === "MODEL_IDENTIFIER_NOT_ABSOLUTE";
+        }),
+      ).toBe(true);
+    } finally {
+      rmSync(tempDirectory, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("rejects ssh model identifiers with control characters", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-runs-ssh-control-char-"));
+    const targetsRootDir = join(tempDirectory, "targets");
+
+    try {
+      const { app } = buildApp({
+        auth: {
+          enabled: false,
+          username: "chimera",
+        },
+        targetProfilesRootDir: targetsRootDir,
+        engines: createEngineCatalog([createSshCapableTestPlugin()]),
+      });
+
+      await createTargetProfile(app, {
+        id: "lab",
+        remoteModelRoots: ["/models"],
+      });
+
+      const response = await app.request("http://localhost/runs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          engineId: "llama-cpp",
+          target: {
+            type: "ssh",
+            profileId: "lab",
+          },
+          model: {
+            identifier: "/models/unsafe.gguf\u0000suffix",
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const payload = await response.json();
+      expect(payload.error.code).toBe("VALIDATION_MODEL_IDENTIFIER_INVALID");
+      expect(
+        payload.error.details.issues.some((issue: { code?: string }) => {
+          return issue.code === "MODEL_IDENTIFIER_CONTROL_CHARACTERS";
+        }),
+      ).toBe(true);
+    } finally {
+      rmSync(tempDirectory, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("rejects ssh model identifiers that traverse outside remote roots", async () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "chimera-runs-ssh-traversal-"));
+    const targetsRootDir = join(tempDirectory, "targets");
+
+    try {
+      const { app } = buildApp({
+        auth: {
+          enabled: false,
+          username: "chimera",
+        },
+        targetProfilesRootDir: targetsRootDir,
+        engines: createEngineCatalog([createSshCapableTestPlugin()]),
+      });
+
+      await createTargetProfile(app, {
+        id: "lab",
+        remoteModelRoots: ["/models"],
+      });
+
+      const response = await app.request("http://localhost/runs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          engineId: "llama-cpp",
+          target: {
+            type: "ssh",
+            profileId: "lab",
+          },
+          model: {
+            identifier: "/models/../../etc/passwd.gguf",
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const payload = await response.json();
+      expect(payload.error.code).toBe("VALIDATION_MODEL_IDENTIFIER_INVALID");
+      expect(
+        payload.error.details.issues.some((issue: { code?: string }) => {
+          return issue.code === "MODEL_IDENTIFIER_OUTSIDE_ALLOWED_ROOTS";
+        }),
+      ).toBe(true);
+    } finally {
+      rmSync(tempDirectory, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("accepts ssh runs with allowlisted model paths and stores targetProfileId", async () => {
+    const runArtifactsRootDir = mkdtempSync(join(tmpdir(), "chimera-runs-ssh-artifacts-"));
+    const targetsRootDir = mkdtempSync(join(tmpdir(), "chimera-runs-ssh-targets-"));
+
+    try {
+      const { app } = buildApp({
+        auth: {
+          enabled: false,
+          username: "chimera",
+        },
+        runArtifactsRootDir,
+        targetProfilesRootDir: targetsRootDir,
+        engines: createEngineCatalog([createSshCapableTestPlugin()]),
+      });
+
+      await createTargetProfile(app, {
+        id: "lab",
+        remoteModelRoots: ["/models"],
+      });
+
+      const createResponse = await app.request("http://localhost/runs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          engineId: "llama-cpp",
+          target: {
+            type: "ssh",
+            profileId: "lab",
+          },
+          model: {
+            identifier: "/models/subdir/../model.gguf",
+          },
+        }),
+      });
+      expect(createResponse.status).toBe(202);
+
+      const createPayload = await createResponse.json();
+      const runId = createPayload.data?.runId;
+      expect(typeof runId).toBe("string");
+      if (typeof runId !== "string") {
+        throw new Error("Expected run creation response to include runId.");
+      }
+
+      const status = await waitForTerminalRunStatus(app, runId);
+      expect(status).toBe("completed");
+
+      const resultResponse = await app.request(`http://localhost/runs/${runId}/result`);
+      expect(resultResponse.status).toBe(200);
+
+      const resultPayload = await resultResponse.json();
+      expect(resultPayload.data.result.target).toBe("ssh");
+      expect(resultPayload.data.result.targetProfileId).toBe("lab");
+      expect(resultPayload.data.result.model.identifier).toBe("/models/model.gguf");
+    } finally {
+      rmSync(runArtifactsRootDir, {
+        recursive: true,
+        force: true,
+      });
+      rmSync(targetsRootDir, {
+        recursive: true,
+        force: true,
+      });
+    }
   });
 
   test("rejects missing model paths with model validation errors", async () => {
@@ -1389,6 +1806,45 @@ async function waitForCondition(predicate: () => boolean): Promise<void> {
   throw new Error("Condition did not become true in time.");
 }
 
+async function createTargetProfile(
+  app: ReturnType<typeof buildApp>["app"],
+  overrides: Record<string, unknown> = {},
+): Promise<void> {
+  const response = await app.request("http://localhost/targets", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      schemaVersion: 1,
+      id: "lab",
+      displayName: "Lab",
+      host: "10.0.0.10",
+      username: "ubuntu",
+      remoteModelRoots: ["/models"],
+      ...overrides,
+    }),
+  });
+
+  if (response.status !== 200 && response.status !== 201) {
+    throw new Error(`Expected target profile upsert status 200/201, got ${response.status}.`);
+  }
+}
+
+function createSshCapableTestPlugin(
+  overrides: Partial<EnginePlugin> = {},
+): EnginePlugin {
+  return createTestPlugin({
+    capabilities: {
+      chatCompletions: true,
+      localTarget: true,
+      sshTarget: true,
+      streaming: true,
+    },
+    ...overrides,
+  });
+}
+
 function createTestPlugin(
   overrides: Partial<EnginePlugin> = {},
 ): EnginePlugin {
@@ -1400,6 +1856,7 @@ function createTestPlugin(
     capabilities: {
       chatCompletions: true,
       localTarget: true,
+      sshTarget: false,
       streaming: true,
     },
     validateEnvironment: async () => ({

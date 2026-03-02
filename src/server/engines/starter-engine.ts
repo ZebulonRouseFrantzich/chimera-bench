@@ -227,6 +227,7 @@ export function createStarterLlamaCppPlugin(
     capabilities: {
       chatCompletions: true,
       localTarget: true,
+      sshTarget: false,
       streaming: true,
     },
     async validateEnvironment(): Promise<EngineEnvironmentSummary> {

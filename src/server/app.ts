@@ -110,6 +110,7 @@ export function createApp(options: AppOptions): Hono {
     runtime: options.runtime,
     runStore,
     runArtifacts,
+    targetProfiles,
     engines,
     logger,
   });

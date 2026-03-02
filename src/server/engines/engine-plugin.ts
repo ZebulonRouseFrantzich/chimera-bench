@@ -26,8 +26,18 @@ const RESTRICTED_ENVIRONMENT_OVERRIDE_KEYS = new Set([
 export interface EngineCapabilities {
   chatCompletions: boolean;
   localTarget: boolean;
+  sshTarget: boolean;
   streaming: boolean;
 }
+
+export type EngineRunTarget =
+  | {
+      type: "local";
+    }
+  | {
+      type: "ssh";
+      profileId: string;
+    };
 
 export interface EngineEnvironmentSummary {
   status: "ok" | "error" | "unknown";
@@ -36,9 +46,7 @@ export interface EngineEnvironmentSummary {
 
 export interface EngineRunConfig {
   engineId: string;
-  target: {
-    type: "local";
-  };
+  target: EngineRunTarget;
   model: {
     identifier: string;
   };

@@ -88,6 +88,9 @@
                         "localTarget": {
                           "type": "boolean"
                         },
+                        "sshTarget": {
+                          "type": "boolean"
+                        },
                         "streaming": {
                           "type": "boolean"
                         }
@@ -95,6 +98,7 @@
                       "required": [
                         "chatCompletions",
                         "localTarget",
+                        "sshTarget",
                         "streaming"
                       ]
                     },
@@ -160,18 +164,47 @@
             "maxLength": 128
           },
           "target": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "local"
-                ]
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "local"
+                    ]
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "ssh"
+                    ]
+                  },
+                  "profileId": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+                  }
+                },
+                "required": [
+                  "type",
+                  "profileId"
+                ],
+                "additionalProperties": false
               }
-            },
-            "required": [
-              "type"
-            ]
+            ],
+            "discriminator": {
+              "propertyName": "type"
+            }
           },
           "model": {
             "type": "object",
@@ -1457,6 +1490,16 @@
           },
           "415": {
             "description": "Unsupported content type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Run creation failed while loading target profile data (TARGET_PROFILE_PERSIST_FAILED)",
             "content": {
               "application/json": {
                 "schema": {
