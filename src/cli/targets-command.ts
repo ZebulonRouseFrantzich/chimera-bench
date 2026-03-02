@@ -72,6 +72,7 @@ interface ParsedExecOptions {
 interface ParsedForwardOptions {
   readonly profileId: string;
   readonly remotePort: number;
+  readonly printLocalPortOnly: boolean;
 }
 
 export function getTargetsCommandHelp(): string {
@@ -83,7 +84,7 @@ export function getTargetsCommandHelp(): string {
     "  show <profileId>                    Print one stored target profile JSON",
     "  rm <profileId>                      Remove one stored target profile",
     "  check <profileId>                   Run a remote SSH smoke check (echo ok)",
-    "  forward <profileId> --remote-port <port>",
+    "  forward <profileId> --remote-port <port> [--print-local-port]",
     "                                      Open SSH local port-forward and print local port",
     "  exec <profileId> [--dry-run] -- <argv...>",
     "                                      Run explicit remote argv over SSH",
@@ -95,6 +96,7 @@ export function getTargetsCommandHelp(): string {
     "  `targets exec` only runs when CHIMERA_ENABLE_TARGETS_EXEC=1 is set.",
     "  `--dry-run` always works and prints the constructed ssh argv JSON.",
     "  `targets forward` is intentionally ungated; it only opens a loopback-to-loopback tunnel.",
+    "  `--print-local-port` prints only the local port to stdout for scripts.",
     "",
     "Remote shell requirement:",
     "  The remote SSH user must use a POSIX-compatible login shell (for example bash or dash).",
@@ -313,9 +315,14 @@ async function runForwardCommand(
       abortSignal: abortController.signal,
     });
 
-    dependencies.print(
-      `Forward ready: 127.0.0.1:${forwardHandle.localPort} -> 127.0.0.1:${parsed.remotePort}`,
-    );
+    const statusLine =
+      `Forward ready: 127.0.0.1:${forwardHandle.localPort} -> 127.0.0.1:${parsed.remotePort}`;
+    if (parsed.printLocalPortOnly) {
+      dependencies.print(String(forwardHandle.localPort));
+      dependencies.printError(statusLine);
+    } else {
+      dependencies.print(statusLine);
+    }
 
     await forwardHandle.waitForExit();
 
@@ -439,6 +446,7 @@ function parseForwardOptions(args: string[]): ParsedForwardOptions {
 
   const profileId = parseSingleProfileId([rawProfileId], "targets forward");
   let remotePort: number | null = null;
+  let printLocalPortOnly = false;
 
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index];
@@ -466,6 +474,17 @@ function parseForwardOptions(args: string[]): ParsedForwardOptions {
       continue;
     }
 
+    if (token === "--print-local-port") {
+      if (printLocalPortOnly) {
+        throw new TargetsCommandUsageError(
+          "targets forward accepts --print-local-port at most once.",
+        );
+      }
+
+      printLocalPortOnly = true;
+      continue;
+    }
+
     throw new TargetsCommandUsageError(
       `Unknown option for targets forward: ${sanitizeControlCharacters(token ?? "")}`,
     );
@@ -480,6 +499,7 @@ function parseForwardOptions(args: string[]): ParsedForwardOptions {
   return {
     profileId,
     remotePort,
+    printLocalPortOnly,
   };
 }
 

@@ -593,15 +593,12 @@ async function waitForForwardReady(input: WaitForForwardReadyRequest): Promise<v
       throw new SshPortForwardStartupError("timeout");
     }
 
-    const waitOutcome = await Promise.race([
-      delayMs(input.pollIntervalMs, input.setTimer).then(() => ({
-        kind: "continue" as const,
-      })),
-      input.terminationPromise.then((termination) => ({
-        kind: "terminated" as const,
-        termination,
-      })),
-    ]);
+    const waitOutcome = await waitForDelayOrTermination({
+      durationMs: input.pollIntervalMs,
+      terminationPromise: input.terminationPromise,
+      setTimer: input.setTimer,
+      clearTimer: input.clearTimer,
+    });
 
     if (waitOutcome.kind === "terminated") {
       throw new SshPortForwardStartupError("terminated");
@@ -617,11 +614,46 @@ function assertPortInRange(port: number, fieldName: string): void {
   }
 }
 
-function delayMs(durationMs: number, setTimer: typeof setTimeout): Promise<void> {
+function waitForDelayOrTermination(input: {
+  durationMs: number;
+  terminationPromise: Promise<SubprocessTermination>;
+  setTimer: typeof setTimeout;
+  clearTimer: typeof clearTimeout;
+}): Promise<
+  | {
+      kind: "continue";
+    }
+  | {
+      kind: "terminated";
+      termination: SubprocessTermination;
+    }
+> {
   return new Promise((resolve) => {
-    setTimer(() => {
-      resolve();
-    }, durationMs);
+    let settled = false;
+    const delayTimer = input.setTimer(() => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      input.clearTimer(delayTimer);
+      resolve({
+        kind: "continue",
+      });
+    }, input.durationMs);
+
+    void input.terminationPromise.then((termination) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      input.clearTimer(delayTimer);
+      resolve({
+        kind: "terminated",
+        termination,
+      });
+    });
   });
 }
 

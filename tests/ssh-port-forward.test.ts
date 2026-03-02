@@ -237,6 +237,43 @@ describe("startSshPortForward", () => {
     expect(fake.killSignals[0]).toBe("SIGTERM");
   });
 
+  test("clears poll timer when process terminates during startup wait", async () => {
+    const fake = createFakeSshProcess();
+    let probeCalls = 0;
+    let clearTimerCalls = 0;
+
+    await expect(
+      startSshPortForward(
+        {
+          profile: createProfile(),
+          remotePort: 8080,
+          startupTimeoutMs: 5_000,
+        },
+        {
+          reserveLocalPort: async () => 18080,
+          spawnProcess: createSpawnProcessOverride(fake.process),
+          probeForwardReady: async () => {
+            probeCalls += 1;
+            if (probeCalls === 1) {
+              queueMicrotask(() => {
+                fake.emitClose(255, null);
+              });
+            }
+
+            return false;
+          },
+          setTimer: setTimeout,
+          clearTimer: ((timer: ReturnType<typeof setTimeout>) => {
+            clearTimerCalls += 1;
+            clearTimeout(timer);
+          }) as typeof clearTimeout,
+        },
+      ),
+    ).rejects.toThrow("during startup");
+
+    expect(clearTimerCalls).toBeGreaterThan(0);
+  });
+
   test("fails fast when remote loopback port refuses forwarded connections", async () => {
     const fake = createFakeSshProcess({
       autoCloseSignals: new Set(["SIGTERM"]),

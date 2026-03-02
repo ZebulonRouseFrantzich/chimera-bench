@@ -160,9 +160,17 @@ export function cancelSubprocess(
     killGracePeriodMs: number;
   },
 ): void {
+  let sentSigterm = false;
   try {
-    subprocess.kill("SIGTERM");
+    sentSigterm = subprocess.kill("SIGTERM");
   } catch {
+    return;
+  }
+
+  if (
+    !sentSigterm ||
+    (subprocess.exitCode !== null && subprocess.exitCode !== undefined)
+  ) {
     return;
   }
 
@@ -173,6 +181,11 @@ export function cancelSubprocess(
       // Best effort escalation if the subprocess ignores SIGTERM.
     }
   }, input.killGracePeriodMs);
+
+  const timerWithUnref = killTimer as {
+    unref?: () => void;
+  };
+  timerWithUnref.unref?.();
 
   const clearKillTimer = () => {
     input.clearTimer(killTimer);
