@@ -1,3 +1,9 @@
+/**
+ * Registers `/targets` API endpoints for target profile management.
+ *
+ * Handlers in this module validate profile payloads, normalize filesystem
+ * paths, and return stable envelope-style success/error responses.
+ */
 import { constants as fsConstants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";

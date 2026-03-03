@@ -1,3 +1,9 @@
+/**
+ * Persistent run artifact storage for terminal run results.
+ *
+ * Writes are atomic (temp file + rename), reads are path-confined, and failure
+ * reasons are tracked per run for operational diagnostics.
+ */
 import { randomUUID } from "node:crypto";
 import {
   mkdir,

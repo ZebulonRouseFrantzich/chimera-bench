@@ -1,3 +1,9 @@
+/**
+ * Built-in llama.cpp engine plugin implementation for local and SSH targets.
+ *
+ * This module owns launch validation, startup/readiness probing, case execution,
+ * diagnostics redaction, and shutdown behavior for the starter engine.
+ */
 import { spawn } from "node:child_process";
 import type {
   ChildProcess,

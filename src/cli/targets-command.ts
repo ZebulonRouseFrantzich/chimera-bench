@@ -1,3 +1,9 @@
+/**
+ * Implements `chimera-bench targets` subcommands.
+ *
+ * This module centralizes CLI parsing, target profile CRUD, SSH connectivity
+ * checks, and SSH command/port-forward execution flows.
+ */
 import { sanitizeControlCharacters } from "../server/http/sanitize.ts";
 import {
   type TargetProfile,

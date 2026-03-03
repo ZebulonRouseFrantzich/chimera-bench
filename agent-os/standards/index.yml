@@ -11,6 +11,8 @@ cli:
 global:
   sanitization-and-safe-errors:
     description: Shared sanitization and safe API error exposure conventions.
+  source-code-size-and-documentation:
+    description: Source file SLOC budgets, ratcheted legacy caps, and module-level documentation requirements.
   time-based-testing:
     description: Deterministic testing conventions for TTL and timeout logic.
 

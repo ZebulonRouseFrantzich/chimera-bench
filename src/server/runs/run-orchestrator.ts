@@ -1,3 +1,9 @@
+/**
+ * Run orchestration pipeline across engine lifecycle phases.
+ *
+ * This module translates engine interactions into stable run-store state,
+ * applies timeout/cancellation policy, and persists terminal artifacts.
+ */
 import type { EngineCatalog } from "../engines/engine-catalog.ts";
 import type {
   EngineCaseConfig,

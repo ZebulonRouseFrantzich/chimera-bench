@@ -1,3 +1,9 @@
+/**
+ * SSH local-port-forward lifecycle helpers.
+ *
+ * This module builds forwarding argv, probes readiness with bounded retries,
+ * and guarantees cancellation/teardown with redacted diagnostics.
+ */
 import { spawn } from "node:child_process";
 import type {
   ChildProcessWithoutNullStreams,

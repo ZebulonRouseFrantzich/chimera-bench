@@ -1,3 +1,9 @@
+/**
+ * Shared zod schemas for request validation and API envelopes.
+ *
+ * These schemas define the contract for route handlers, OpenAPI generation,
+ * and SDK artifact output.
+ */
 import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
 import {

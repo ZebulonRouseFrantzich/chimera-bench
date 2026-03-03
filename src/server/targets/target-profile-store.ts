@@ -1,3 +1,9 @@
+/**
+ * Filesystem-backed target profile persistence.
+ *
+ * This module validates profile payloads, enforces path safety and permissions,
+ * and uses atomic write patterns for durable updates.
+ */
 import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { homedir } from "node:os";

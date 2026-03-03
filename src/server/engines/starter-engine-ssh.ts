@@ -1,3 +1,9 @@
+/**
+ * SSH-specific helpers for starter-engine launch metadata and argv assembly.
+ *
+ * This module defines remote startup heuristics, metadata serialization, and
+ * strict validation used by the main starter engine implementation.
+ */
 import { randomInt } from "node:crypto";
 import {
   buildSshBaseConnectionParts,

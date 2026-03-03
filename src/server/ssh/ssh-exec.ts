@@ -1,3 +1,9 @@
+/**
+ * Non-interactive SSH command execution helpers.
+ *
+ * This module owns argv construction, host/profile validation, timeout and
+ * cancellation handling, plus redacted failure diagnostics.
+ */
 import { spawn } from "node:child_process";
 import type {
   ChildProcessWithoutNullStreams,

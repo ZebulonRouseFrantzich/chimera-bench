@@ -1,3 +1,9 @@
+/**
+ * CLI parser and runtime flow for `chimera-bench serve`.
+ *
+ * This module maps CLI args to validated server config, prints startup state,
+ * and coordinates signal-driven graceful shutdown.
+ */
 import { resolveServeConfig } from "../server/config.ts";
 import { startServer } from "../server/start-server.ts";
 import type { ServerHandle } from "../server/start-server.ts";

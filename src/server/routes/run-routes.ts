@@ -1,3 +1,9 @@
+/**
+ * Registers `/runs` API routes and their orchestration wiring.
+ *
+ * Handlers in this module validate input, preserve envelope conventions,
+ * and bridge request lifecycle events to the run store and SSE streams.
+ */
 import type { Hono } from "hono";
 import {
   getOrCreateRequestId,
@@ -11,10 +17,9 @@ import {
 import type { EngineCatalog } from "../engines/engine-catalog.ts";
 import type {
   EngineRunConfig,
-  EngineRunConfigValidationFailure,
   EngineRunConfigValidationResult,
 } from "../engines/engine-plugin.ts";
-import { parseJsonBody, parseRunIdParam } from "../http/request-validation.ts";
+import { parseJsonBody } from "../http/request-validation.ts";
 import {
   sanitizeControlCharacters,
   sanitizeErrorCode,
@@ -25,14 +30,9 @@ import {
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../runs/defaults.ts";
 import { validateSshModelIdentifier } from "../runs/ssh-model-identifier-validation.ts";
-import {
-  RunArtifactReadError,
-  type RunArtifactStore,
-  RunArtifactWriteError,
-} from "../runs/run-artifact-store.ts";
+import type { RunArtifactStore } from "../runs/run-artifact-store.ts";
 import { RunOrchestrator } from "../runs/run-orchestrator.ts";
 import { getBuiltInWorkload } from "../runs/starter-workload.ts";
-import { createSseResponse } from "../sse/sse-response.ts";
 import type { TargetProfile } from "../targets/target-profile.ts";
 import {
   TargetProfileNotFoundError,
@@ -44,6 +44,8 @@ import {
   type ServerLogger,
 } from "../logging.ts";
 import type { RuntimeControl } from "../runtime-control.ts";
+import { registerRunSupplementalRoutes } from "./run-routes-supplemental.ts";
+import { buildValidationFailurePayload } from "./run-routes-shared.ts";
 
 const RUN_CREATE_BODY_LIMIT_BYTES = 64 * 1024;
 
@@ -152,7 +154,7 @@ export function registerRunRoutes(
             issues: modelPathValidation.issues.map((issue) => ({
               code: sanitizeErrorCode(issue.code, "VALIDATION_MODEL_IDENTIFIER_INVALID"),
               message: sanitizeControlCharacters(issue.message),
-              path: sanitizeIssuePath(issue.path),
+              path: sanitizeValidationPath(issue.path),
             })),
           },
         });
@@ -285,253 +287,16 @@ export function registerRunRoutes(
       202,
     );
   });
-
-  app.get("/runs/:runId", (context) => {
-    const runId = parseRunIdParam(context);
-    if (runId instanceof Response) {
-      return runId;
-    }
-
-    const summary = options.runStore.getRunSummary(runId);
-    if (!summary) {
-      return jsonError(context, 404, {
-        code: "RUN_NOT_FOUND",
-        message: `Run '${runId}' was not found.`,
-      });
-    }
-
-    return jsonSuccess(context, summary);
-  });
-
-  app.get("/runs/:runId/result", async (context) => {
-    const runId = parseRunIdParam(context);
-    if (runId instanceof Response) {
-      return runId;
-    }
-
-    const status = options.runStore.getRunStatus(runId);
-    if (!status) {
-      return jsonError(context, 404, {
-        code: "RUN_NOT_FOUND",
-        message: `Run '${runId}' was not found.`,
-      });
-    }
-
-    if (!isTerminalRunStatus(status)) {
-      return jsonError(context, 409, {
-        code: "RUN_RESULT_NOT_READY",
-        message: `Run '${runId}' has not persisted a result yet.`,
-      });
-    }
-
-    const persistenceFailure = options.runArtifacts.getWriteFailure(runId);
-    if (persistenceFailure) {
-      return jsonError(context, 500, {
-        code: "RUN_RESULT_PERSIST_FAILED",
-        message: `Run '${runId}' result artifact could not be persisted.`,
-        details: {
-          reason: persistenceFailure,
-        },
-      });
-    }
-
-    let result: Record<string, unknown> | null;
-    try {
-      result = await options.runArtifacts.readResult(runId);
-    } catch (error) {
-      const reason =
-        error instanceof RunArtifactReadError
-          ? error.message
-          : error instanceof Error
-            ? error.message
-            : "Unknown artifact read error.";
-      return jsonError(context, 500, {
-        code: "RUN_RESULT_READ_FAILED",
-        message: `Run '${runId}' result artifact could not be read.`,
-        details: {
-          reason,
-        },
-      });
-    }
-
-    if (!result) {
-      result = options.runStore.getRunResult(runId) ?? null;
-    }
-
-    if (!result) {
-      return jsonError(context, 409, {
-        code: "RUN_RESULT_NOT_READY",
-        message: `Run '${runId}' has not persisted a result yet.`,
-      });
-    }
-
-    return jsonSuccess(context, {
-      runId,
-      status,
-      result,
-    });
-  });
-
-  app.post("/runs/:runId/cancel", async (context) => {
-    const runId = parseRunIdParam(context);
-    if (runId instanceof Response) {
-      return runId;
-    }
-
-    const runStatus = options.runStore.getRunStatus(runId);
-    if (!runStatus) {
-      return jsonError(context, 404, {
-        code: "RUN_NOT_FOUND",
-        message: `Run '${runId}' was not found.`,
-      });
-    }
-
-    if (!options.runStore.isRunCancellable(runId)) {
-      return jsonSuccess(context, {
-        runId,
-        status: runStatus,
-      });
-    }
-
-    if (runStatus === "queued" || runStatus === "running") {
-      try {
-        await options.runtime.cancelActiveRun("user-cancel-request");
-      } catch (error) {
-        return jsonError(context, 500, {
-          code: "RUN_CANCEL_FAILED",
-          message: "Run cancellation failed while stopping active runtime work.",
-          ...(error instanceof Error
-            ? {
-                details: {
-                  reason: error.message,
-                },
-              }
-            : {}),
-        });
-      }
-    }
-
-    const cancelledStatus =
-      options.runStore.cancelRun(
-        runId,
-        new Date().toISOString(),
-        "user-cancel-request",
-      ) ?? runStatus;
-
-    if (cancelledStatus === "cancelled") {
-      void persistRunArtifact(runId, options.runStore, options.runArtifacts).catch(
-        (error) => {
-          const reason =
-            error instanceof RunArtifactWriteError
-              ? error.logReason
-              : error instanceof Error
-                ? error.message
-                : "Unknown artifact persistence error.";
-          logger.error(
-            `[chimera-bench] runId=${runId} cancelResultPersistError=${sanitizeControlCharacters(reason)}`,
-          );
-        },
-      );
-    }
-
-    return jsonSuccess(context, {
-      runId,
-      status: cancelledStatus,
-    });
-  });
-
-  app.get("/runs/:runId/event", (context) => {
-    const runId = parseRunIdParam(context);
-    if (runId instanceof Response) {
-      return runId;
-    }
-
-    if (!options.runStore.hasRun(runId)) {
-      return jsonError(context, 404, {
-        code: "RUN_NOT_FOUND",
-        message: `Run '${runId}' was not found.`,
-      });
-    }
-
-    return createSseResponse(context, {
-      runtime: options.runtime,
-      connectedEvent: "run.connected",
-      heartbeatEvent: "run.heartbeat",
-      disconnectedEvent: "run.disconnected",
-      payloadBase: {
-        runId,
-      },
-      replayEvents: options.runStore.listRunEvents(runId),
-      subscribe: (emit) => {
-        return options.runStore.subscribeRunEvents(runId, (eventRecord) => {
-          emit(eventRecord.event, eventRecord.payload);
-        });
-      },
-      shouldCloseAfterEvent: (event) => {
-        return (
-          event === "run.completed" ||
-          event === "run.failed" ||
-          event === "run.cancelled"
-        );
-      },
-      closeReason: "run-terminal",
-    });
+  registerRunSupplementalRoutes({
+    app,
+    runtime: options.runtime,
+    runStore: options.runStore,
+    runArtifacts: options.runArtifacts,
+    logger,
   });
 }
 
-function buildValidationFailurePayload(
-  failure: EngineRunConfigValidationFailure,
-): {
-  code: string;
-  message: string;
-  details?: {
-    issues: Array<{
-      code: string;
-      message: string;
-      path: string;
-    }>;
-  };
-} {
-  const issues =
-    failure.issues
-      ?.map((issue) => ({
-        code: sanitizeErrorCode(issue.code, "VALIDATION_ENGINE_OPTIONS_INVALID"),
-        message: sanitizeControlCharacters(issue.message),
-        path: sanitizeIssuePath(issue.path),
-      }))
-      .filter((issue) => issue.code.length > 0 && issue.message.length > 0) ?? [];
-
-  return {
-    code: sanitizeErrorCode(failure.code, "VALIDATION_ENGINE_OPTIONS_INVALID"),
-    message: sanitizeControlCharacters(failure.message),
-    ...(issues.length > 0
-      ? {
-          details: {
-            issues,
-          },
-        }
-      : {}),
-  };
-}
-
-function sanitizeIssuePath(path: string | undefined): string {
+function sanitizeValidationPath(path: string | undefined): string {
   const sanitized = sanitizeControlCharacters(path ?? "(root)");
   return sanitized.length > 0 ? sanitized : "(root)";
-}
-
-function isTerminalRunStatus(status: string): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
-}
-
-async function persistRunArtifact(
-  runId: string,
-  runStore: InMemoryRunStore,
-  runArtifacts: RunArtifactStore,
-): Promise<void> {
-  const result = runStore.getRunResult(runId);
-  if (!result) {
-    return;
-  }
-
-  await runArtifacts.writeResult(runId, result);
 }

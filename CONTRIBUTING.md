@@ -33,6 +33,8 @@ Common commands:
 - `just check` - run `nix flake check`
 - `just fmt` - run `nix fmt flake.nix`
 - `just shell` - enter the dev shell manually
+- `bun run lint` - typecheck + source quality gate (SLOC and docs)
+- `bun run quality:check` - run only source quality checks
 - `bun run openapi:generate` - regenerate `openapi/openapi.json`
 - `bun run sdk:generate` - regenerate SDK scaffolding in `sdk/generated/`
 - `bun run openapi:check` - fail if OpenAPI/SDK artifacts drift
@@ -56,6 +58,7 @@ CHIMERA_BENCH_DEV=1 chimera-bench serve
 
 - Include tests or verification steps when relevant.
 - Update docs/specs when behavior or APIs change.
+- Keep source quality checks green (`bun run lint`) and avoid increasing legacy SLOC caps.
 - Ensure the branch is up to date with the target branch before requesting review.
 
 ## CLA check (one-time)

@@ -1,3 +1,9 @@
+/**
+ * In-memory run state and event store for the server process.
+ *
+ * This store enforces run-capacity constraints, tracks per-case progress,
+ * retains bounded event history, and expires terminal runs over time.
+ */
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
