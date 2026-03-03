@@ -1,3 +1,9 @@
+/**
+ * Shared zod schemas for request validation and API envelopes.
+ *
+ * These schemas define the contract for route handlers, OpenAPI generation,
+ * and SDK artifact output.
+ */
 import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
 import {
@@ -8,6 +14,10 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../runs/defaults.ts";
+import {
+  TargetProfileIdSchema as TargetProfileIdentifierSchema,
+  TargetProfileSchema as TargetProfileModelSchema,
+} from "../targets/target-profile.ts";
 
 extendZodWithOpenApi(z);
 
@@ -63,9 +73,19 @@ export const RunStatusSchema = z.enum([
   "cancelled",
 ]);
 
-export const RunTargetSchema = z.object({
+export const RunTargetLocalSchema = z.object({
   type: z.literal("local"),
-});
+}).strict();
+
+export const RunTargetSshSchema = z.object({
+  type: z.literal("ssh"),
+  profileId: TargetProfileIdentifierSchema,
+}).strict();
+
+export const RunTargetSchema = z.discriminatedUnion("type", [
+  RunTargetLocalSchema,
+  RunTargetSshSchema,
+]);
 
 export const RunModelSchema = z.object({
   identifier: z.string().min(1).max(MAX_MODEL_IDENTIFIER_LENGTH),
@@ -112,6 +132,12 @@ export const RunIdParamsSchema = z.object({
   runId: RunIdSchema,
 });
 
+export const TargetProfileIdParamsSchema = z.object({
+  id: TargetProfileIdentifierSchema,
+});
+
+export const UpsertTargetProfileRequestSchema = TargetProfileModelSchema;
+
 export const HealthDataSchema = z.object({
   healthy: z.literal(true),
   version: z.string().min(1),
@@ -120,6 +146,7 @@ export const HealthDataSchema = z.object({
 export const EngineCapabilitiesSchema = z.object({
   chatCompletions: z.boolean(),
   localTarget: z.boolean(),
+  sshTarget: z.boolean(),
   streaming: z.boolean(),
 });
 
@@ -173,6 +200,18 @@ export const CancelRunDataSchema = z.object({
   status: RunStatusSchema,
 });
 
+export const TargetProfileDataSchema = z.object({
+  profile: TargetProfileModelSchema,
+});
+
+export const TargetProfilesDataSchema = z.object({
+  profiles: z.array(TargetProfileModelSchema),
+});
+
+export const DeleteTargetProfileDataSchema = z.object({
+  id: TargetProfileIdentifierSchema,
+});
+
 export const HealthEnvelopeSchema = successEnvelopeSchema(HealthDataSchema);
 export const EnginesEnvelopeSchema = successEnvelopeSchema(EnginesDataSchema);
 export const CreateRunEnvelopeSchema = successEnvelopeSchema(
@@ -181,6 +220,15 @@ export const CreateRunEnvelopeSchema = successEnvelopeSchema(
 export const RunSummaryEnvelopeSchema = successEnvelopeSchema(RunSummaryDataSchema);
 export const RunResultEnvelopeSchema = successEnvelopeSchema(RunResultDataSchema);
 export const CancelRunEnvelopeSchema = successEnvelopeSchema(CancelRunDataSchema);
+export const TargetProfileEnvelopeSchema = successEnvelopeSchema(
+  TargetProfileDataSchema,
+);
+export const TargetProfilesEnvelopeSchema = successEnvelopeSchema(
+  TargetProfilesDataSchema,
+);
+export const DeleteTargetProfileEnvelopeSchema = successEnvelopeSchema(
+  DeleteTargetProfileDataSchema,
+);
 export const ErrorEnvelopeSchema = errorEnvelopeSchema(z.string());
 
 export interface NormalizedCreateRunRequest {

@@ -137,6 +137,8 @@ export function createSseResponse(context: Context, input: SseResponseOptions): 
       });
       abortListenerRegistered = true;
 
+      // The request can abort between listener registration and first emits, so
+      // re-check immediately to avoid emitting connect/replay events after abort.
       if (abortSignal.aborted) {
         closeStream("client-disconnect");
         return;

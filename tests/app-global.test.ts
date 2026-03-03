@@ -35,6 +35,7 @@ describe("global routes", () => {
     const payload = await response.json();
     expect(payload.openapi).toBe("3.1.0");
     expect(payload.paths["/global/health"]).toBeDefined();
+    expect(payload.paths["/targets"]).toBeDefined();
     expect(payload.paths["/runs"]).toBeDefined();
   });
 });

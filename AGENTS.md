@@ -35,8 +35,9 @@ Prefer `just` wrappers for common tasks; use `bun` directly for targeted runs.
 ### Lint / Typecheck
 - `just lint`
 - Equivalent: `bun run lint`
-- Lint script today is typecheck: `bun run typecheck`
+- Lint script includes typecheck + source quality gate: `bun run lint`
 - Direct typecheck: `tsc --noEmit`
+- Direct source quality gate: `bun run quality:check`
 
 ### Tests (full suite)
 - `just test`
@@ -90,7 +91,9 @@ Follow the style already present in `src/` and `tests/`.
 - Double-quoted strings by default
 - Trailing commas in multiline literals/calls
 - Keep functions concise; extract helper functions for parsing/validation
-- Add comments only when behavior is non-obvious
+- When splitting one module into multiple files, create a feature subfolder with a single public `index.ts` entrypoint
+- For larger modules, add a leading `/** ... */` module doc describing purpose and key invariants
+- Use inline comments for non-obvious behavior, constraints, and trade-offs
 
 ### Type Safety
 - Keep TypeScript `strict` clean

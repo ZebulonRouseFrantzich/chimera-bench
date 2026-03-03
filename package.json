@@ -10,7 +10,8 @@
     "serve": "bun run ./bin/chimera-bench serve",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "lint": "bun run typecheck",
+    "quality:check": "bun run ./scripts/check-source-quality.ts",
+    "lint": "bun run typecheck && bun run quality:check",
     "openapi:generate": "bun run ./scripts/generate-openapi.ts",
     "sdk:generate": "bun run ./scripts/generate-sdk.ts",
     "openapi:check": "bun run ./scripts/check-openapi-drift.ts"

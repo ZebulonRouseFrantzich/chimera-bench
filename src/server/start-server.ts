@@ -76,6 +76,8 @@ async function stopServer(input: {
 }): Promise<void> {
   input.runtime.stopAcceptingNewRuns();
 
+  // Run shutdown phases in parallel to reduce total shutdown latency; each
+  // phase is best-effort and aggregated via allSettled below.
   const shutdownSteps: Array<Promise<unknown>> = [
     Promise.resolve().then(() => input.runtime.cancelActiveRun(input.reason)),
     Promise.resolve().then(() => input.runtime.cleanupEngineSubprocesses(input.reason)),
@@ -92,6 +94,7 @@ async function stopServer(input: {
   try {
     results = await Promise.allSettled(shutdownSteps);
   } finally {
+    // Always stop accepting new connections even if one shutdown phase fails.
     input.server.stop();
   }
 

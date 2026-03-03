@@ -1,29 +1,42 @@
-import type { EngineCatalog } from "../engines/engine-catalog.ts";
+/**
+ * Run orchestration pipeline across engine lifecycle phases.
+ *
+ * This module translates engine interactions into stable run-store state,
+ * applies timeout/cancellation policy, and persists terminal artifacts.
+ */
+import { toError } from "../../error-utils.ts";
+import type { EngineCatalog } from "../../engines/engine-catalog.ts";
 import type {
-  EngineCaseConfig,
-  EngineDiagnostic,
   EngineRunConfig,
   EngineRuntimeContext,
-} from "../engines/engine-plugin.ts";
-import {
-  sanitizeControlCharacters,
-  sanitizeErrorCode,
-} from "../http/sanitize.ts";
-import type { RuntimeControl } from "../runtime-control.ts";
-import {
-  InMemoryRunStore,
-  type RunFailureDetails,
-} from "./in-memory-run-store.ts";
+} from "../../engines/engine-plugin.ts";
+import { sanitizeControlCharacters } from "../../http/sanitize.ts";
+import type { RuntimeControl } from "../../runtime-control.ts";
+import { InMemoryRunStore } from "../in-memory-run-store/index.ts";
 import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
-} from "./defaults.ts";
+} from "../defaults.ts";
+import { persistRunArtifact } from "../persist-run-artifact.ts";
+import type { RunArtifactStore } from "../run-artifact-store.ts";
 import {
-  type RunArtifactStore,
-  RunArtifactWriteError,
-} from "./run-artifact-store.ts";
-import type { StarterWorkload } from "./starter-workload.ts";
-import { estimateTokenCount } from "./token-estimation.ts";
+  buildEngineCaseConfig,
+  failRunWithRemainingCases,
+  logDiagnostic,
+} from "./support.ts";
+import {
+  CaseExecutionTimeoutError,
+  FatalRunExecutionError,
+  RunCancelledError,
+  RunTimeoutExceededError,
+  isAbortError,
+  isFatalEngineFailure,
+  linkAbortSignal,
+  toRunFailure,
+  withTimeout,
+} from "./runtime.ts";
+import type { StarterWorkload } from "../starter-workload.ts";
+import { estimateTokenCount } from "../token-estimation.ts";
 
 interface RunOrchestratorOptions {
   runtime: RuntimeControl;
@@ -40,35 +53,6 @@ interface StartRunInput {
 }
 
 const ENGINE_STOP_TIMEOUT_MS = 10_000;
-const MAX_DIAGNOSTIC_LINE_CHARS = 4_096;
-
-class RunCancelledError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RunCancelledError";
-  }
-}
-
-class RunTimeoutExceededError extends Error {
-  constructor(timeoutMs: number) {
-    super(`Run exceeded timeout of ${timeoutMs}ms.`);
-    this.name = "RunTimeoutExceededError";
-  }
-}
-
-class CaseExecutionTimeoutError extends Error {
-  constructor(caseId: string, timeoutMs: number) {
-    super(`Case '${caseId}' exceeded timeout of ${timeoutMs}ms.`);
-    this.name = "CaseExecutionTimeoutError";
-  }
-}
-
-class FatalRunExecutionError extends Error {
-  constructor(readonly failure: RunFailureDetails) {
-    super(failure.message);
-    this.name = "FatalRunExecutionError";
-  }
-}
 
 export class RunOrchestrator {
   private readonly now: () => number;
@@ -94,9 +78,17 @@ export class RunOrchestrator {
 
     const plugin = this.options.engines.getById(input.runConfig.engineId);
     if (!plugin) {
-      this.failRunWithRemainingCases(input, 0, {
-        code: "ENGINE_NOT_SUPPORTED",
-        message: `Engine '${input.runConfig.engineId}' is not available in this build.`,
+      failRunWithRemainingCases({
+        runStore: this.options.runStore,
+        runId: input.runId,
+        workload: input.workload,
+        requestParams: input.runConfig.engine.requestParams,
+        startIndex: 0,
+        failure: {
+          code: "ENGINE_NOT_SUPPORTED",
+          message: `Engine '${input.runConfig.engineId}' is not available in this build.`,
+        },
+        nowIso: this.nowIso(),
       });
       return;
     }
@@ -125,6 +117,8 @@ export class RunOrchestrator {
 
       const activeEngineContext = engineContext;
 
+      // Timeout, cancel, and final cleanup paths can converge here; share one
+      // stop promise so plugin.stop() runs at most once per run.
       if (engineStopInFlight) {
         await engineStopInFlight;
         return;
@@ -137,7 +131,7 @@ export class RunOrchestrator {
           () => new Error(`Engine stop timed out after ${ENGINE_STOP_TIMEOUT_MS}ms.`),
         );
         engineStopCompleted = true;
-        this.logDiagnostic(input.runId, {
+        logDiagnostic(input.runId, {
           level: "info",
           message: "Engine subprocess stop requested.",
           data: {
@@ -187,7 +181,7 @@ export class RunOrchestrator {
         abortSignal: abortController.signal,
         launchConfig,
         emitDiagnostic: (diagnostic) => {
-          this.logDiagnostic(input.runId, diagnostic);
+          logDiagnostic(input.runId, diagnostic);
         },
       };
 
@@ -254,6 +248,8 @@ export class RunOrchestrator {
         const contextTokens = estimateTokenCount(workloadCase.prompt);
         const caseStartMs = this.now();
         const remainingRunMs = getRemainingRunTimeMs();
+        // A case timeout cannot outlive the run budget; cap per-case timeout to
+        // remaining run time so run-level timeout semantics stay authoritative.
         const effectiveCaseTimeoutMs = Math.max(1, Math.min(caseTimeoutMs, remainingRunMs));
         const caseAbortController = new AbortController();
         const unlinkCaseAbort = linkAbortSignal(abortController.signal, caseAbortController);
@@ -273,7 +269,10 @@ export class RunOrchestrator {
                 return new RunTimeoutExceededError(runTimeoutMs);
               }
 
-              return new CaseExecutionTimeoutError(workloadCase.caseId, effectiveCaseTimeoutMs);
+              return new CaseExecutionTimeoutError(
+                workloadCase.caseId,
+                effectiveCaseTimeoutMs,
+              );
             },
             () => {
               caseAbortController.abort();
@@ -315,6 +314,8 @@ export class RunOrchestrator {
           });
 
           if (isFatalEngineFailure(error)) {
+            // The current case has already been recorded as failed; advance so
+            // remaining-case failure synthesis starts at the next workload case.
             nextCaseIndex += 1;
             throw new FatalRunExecutionError(failure);
           }
@@ -346,7 +347,7 @@ export class RunOrchestrator {
           throw error;
         }
 
-        this.logDiagnostic(input.runId, {
+        logDiagnostic(input.runId, {
           level: "warn",
           message: "Engine metrics collection failed; continuing with empty metrics.",
           data: {
@@ -356,7 +357,11 @@ export class RunOrchestrator {
       }
 
       this.options.runStore.completeRun(input.runId, this.nowIso(), metrics);
-      await this.persistRunArtifact(input.runId);
+      await persistRunArtifact({
+        runId: input.runId,
+        runStore: this.options.runStore,
+        runArtifacts: this.options.runArtifacts,
+      });
     } catch (error) {
       if (
         error instanceof RunCancelledError ||
@@ -368,28 +373,53 @@ export class RunOrchestrator {
           this.nowIso(),
           sanitizeControlCharacters(cancellationReason),
         );
-        await this.persistRunArtifact(input.runId);
+        await persistRunArtifact({
+          runId: input.runId,
+          runStore: this.options.runStore,
+          runArtifacts: this.options.runArtifacts,
+        });
         return;
       }
 
       if (error instanceof FatalRunExecutionError) {
-        this.failRunWithRemainingCases(input, nextCaseIndex, error.failure);
-        await this.persistRunArtifact(input.runId);
+        failRunWithRemainingCases({
+          runStore: this.options.runStore,
+          runId: input.runId,
+          workload: input.workload,
+          requestParams: input.runConfig.engine.requestParams,
+          startIndex: nextCaseIndex,
+          failure: error.failure,
+          nowIso: this.nowIso(),
+        });
+        await persistRunArtifact({
+          runId: input.runId,
+          runStore: this.options.runStore,
+          runArtifacts: this.options.runArtifacts,
+        });
         return;
       }
 
-      this.failRunWithRemainingCases(input, nextCaseIndex, toRunFailure(error));
-      await this.persistRunArtifact(input.runId);
+      failRunWithRemainingCases({
+        runStore: this.options.runStore,
+        runId: input.runId,
+        workload: input.workload,
+        requestParams: input.runConfig.engine.requestParams,
+        startIndex: nextCaseIndex,
+        failure: toRunFailure(error),
+        nowIso: this.nowIso(),
+      });
+      await persistRunArtifact({
+        runId: input.runId,
+        runStore: this.options.runStore,
+        runArtifacts: this.options.runArtifacts,
+      });
     } finally {
       unregisterActiveRunCanceller();
-
-      let shouldUnregisterEngineProcess = true;
 
       if (engineContext) {
         try {
           await stopEngine("run-finished");
         } catch (error) {
-          shouldUnregisterEngineProcess = false;
           const stopReason = sanitizeControlCharacters(toError(error).message);
           console.error(
             `[chimera-bench] runId=${input.runId} finalEngineStopError=${stopReason}`,
@@ -397,257 +427,13 @@ export class RunOrchestrator {
         }
       }
 
-      if (unregisterEngineProcess && shouldUnregisterEngineProcess) {
+      if (unregisterEngineProcess) {
         unregisterEngineProcess();
       }
     }
   }
 
-  private failRunWithRemainingCases(
-    input: StartRunInput,
-    startIndex: number,
-    failure: RunFailureDetails,
-  ): void {
-    // Startup failures happen before the normal running transition. This ensures
-    // queued runs still emit a consistent terminal result shape.
-    this.options.runStore.markRunRunning(input.runId, this.nowIso());
-
-    for (let index = startIndex; index < input.workload.cases.length; index += 1) {
-      const workloadCase = input.workload.cases[index];
-      if (!workloadCase) {
-        continue;
-      }
-
-      this.options.runStore.recordCaseFailed(input.runId, {
-        caseId: workloadCase.caseId,
-        promptId: workloadCase.promptId,
-        index,
-        contextTokens: estimateTokenCount(workloadCase.prompt),
-        latencyMs: 0,
-        requestParams: input.runConfig.engine.requestParams,
-        error: failure,
-      });
-    }
-
-    this.options.runStore.failRun(input.runId, this.nowIso(), failure);
-  }
-
   private nowIso(): string {
     return new Date(this.now()).toISOString();
   }
-
-  private async persistRunArtifact(runId: string): Promise<void> {
-    const result = this.options.runStore.getRunResult(runId);
-    if (!result) {
-      return;
-    }
-
-    try {
-      await this.options.runArtifacts.writeResult(runId, result);
-    } catch (error) {
-      const reason =
-        error instanceof RunArtifactWriteError ? error.logReason : toError(error).message;
-      console.error(
-        `[chimera-bench] runId=${runId} runResultPersistError=${sanitizeControlCharacters(reason)}`,
-      );
-    }
-  }
-
-  private logDiagnostic(runId: string, diagnostic: EngineDiagnostic): void {
-    const message = truncateForLog(
-      sanitizeControlCharacters(diagnostic.message),
-      MAX_DIAGNOSTIC_LINE_CHARS,
-    );
-    const data = diagnostic.data
-      ? truncateForLog(safeJson(diagnostic.data), MAX_DIAGNOSTIC_LINE_CHARS)
-      : "";
-    const line =
-      `[chimera-bench] runId=${runId} level=${diagnostic.level} message=${message}` +
-      (data.length > 0 ? ` data=${data}` : "");
-
-    if (diagnostic.level === "error") {
-      console.error(line);
-      return;
-    }
-
-    if (diagnostic.level === "warn") {
-      console.warn(line);
-      return;
-    }
-
-    console.log(line);
-  }
-}
-
-function buildEngineCaseConfig(
-  workloadCase: StarterWorkload["cases"][number],
-  index: number,
-  runConfig: EngineRunConfig,
-): EngineCaseConfig {
-  return {
-    caseId: workloadCase.caseId,
-    promptId: workloadCase.promptId,
-    index,
-    prompt: workloadCase.prompt,
-    messages: [
-      {
-        role: "user",
-        content: workloadCase.prompt,
-      },
-    ],
-    requestParams: {
-      ...runConfig.engine.requestParams,
-    },
-  };
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
-}
-
-function isFatalEngineFailure(error: unknown): boolean {
-  if (!isCodeError(error)) {
-    return false;
-  }
-
-  return error.code.startsWith("ENGINE_");
-}
-
-function toRunFailure(error: unknown): RunFailureDetails {
-  if (error instanceof RunTimeoutExceededError) {
-    return {
-      code: "RUN_TIMEOUT_EXCEEDED",
-      message: sanitizeControlCharacters(error.message),
-    };
-  }
-
-  if (error instanceof CaseExecutionTimeoutError) {
-    return {
-      code: "RUN_CASE_TIMEOUT",
-      message: sanitizeControlCharacters(error.message),
-    };
-  }
-
-  if (isCodeError(error)) {
-    return {
-      code: sanitizeErrorCode(error.code, "RUN_CASE_FAILED"),
-      message: sanitizeControlCharacters(error.message),
-      ...(error.details
-        ? {
-            details: {
-              ...error.details,
-            },
-          }
-        : {}),
-    };
-  }
-
-  if (error instanceof Error) {
-    return {
-      code: "RUN_CASE_FAILED",
-      message: sanitizeControlCharacters(error.message),
-    };
-  }
-
-  return {
-    code: "RUN_CASE_FAILED",
-    message: "Run execution failed with an unknown error.",
-  };
-}
-
-function isCodeError(
-  value: unknown,
-): value is {
-  code: string;
-  message: string;
-  details?: Record<string, unknown>;
-} {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const maybeError = value as {
-    code?: unknown;
-    message?: unknown;
-    details?: unknown;
-  };
-
-  return typeof maybeError.code === "string" && typeof maybeError.message === "string";
-}
-
-function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "[unserializable]";
-  }
-}
-
-function toError(value: unknown): Error {
-  if (value instanceof Error) {
-    return value;
-  }
-
-  return new Error(`Unexpected non-error value: ${String(value)}`);
-}
-
-async function withTimeout<T>(
-  work: Promise<T>,
-  timeoutMs: number,
-  timeoutFactory: () => Error,
-  onTimeout?: () => void,
-): Promise<T> {
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-
-  try {
-    return await Promise.race([
-      work,
-      new Promise<T>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          try {
-            onTimeout?.();
-          } catch {
-            // Best-effort timeout side effects should not mask timeout errors.
-          }
-          reject(timeoutFactory());
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
-  }
-}
-
-function linkAbortSignal(
-  parentSignal: AbortSignal,
-  childController: AbortController,
-): () => void {
-  if (parentSignal.aborted) {
-    childController.abort();
-    return () => {
-      return;
-    };
-  }
-
-  const onAbort = () => {
-    childController.abort();
-  };
-
-  parentSignal.addEventListener("abort", onAbort, {
-    once: true,
-  });
-
-  return () => {
-    parentSignal.removeEventListener("abort", onAbort);
-  };
-}
-
-function truncateForLog(value: string, maxChars: number): string {
-  if (value.length <= maxChars) {
-    return value;
-  }
-
-  return `${value.slice(0, maxChars)}...`;
 }

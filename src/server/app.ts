@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { getOrCreateRequestId, jsonError, setRequestId } from "./api/envelope.ts";
-import { createOpenApiDocument } from "./api/openapi.ts";
+import { createOpenApiDocument } from "./api/openapi/index.ts";
 import { createEngineCatalog } from "./engines/engine-catalog.ts";
 import type { EngineCatalog } from "./engines/engine-catalog.ts";
-import { createStarterLlamaCppPlugin } from "./engines/starter-engine.ts";
+import { createStarterLlamaCppPlugin } from "./engines/starter-engine/index.ts";
 import { sanitizeControlCharacters } from "./http/sanitize.ts";
 import {
   DEFAULT_SERVER_LOGGER,
@@ -15,12 +15,14 @@ import { basicAuthMiddleware } from "./middleware/basic-auth.ts";
 import { registerEngineRoutes } from "./routes/engine-routes.ts";
 import type { EngineEnvironmentValidationSettings } from "./routes/engine-routes.ts";
 import { registerGlobalRoutes } from "./routes/global-routes.ts";
-import { registerRunRoutes } from "./routes/run-routes.ts";
+import { registerRunRoutes } from "./routes/run-routes/index.ts";
+import { registerTargetRoutes } from "./routes/target-routes.ts";
 import {
   DEFAULT_RUN_ARTIFACTS_ROOT_DIR,
   RunArtifactStore,
 } from "./runs/run-artifact-store.ts";
-import { InMemoryRunStore } from "./runs/in-memory-run-store.ts";
+import { InMemoryRunStore } from "./runs/in-memory-run-store/index.ts";
+import { TargetProfileStore } from "./targets/target-profile-store.ts";
 import type { RuntimeControl } from "./runtime-control.ts";
 import type { BasicAuthSettings } from "./types.ts";
 
@@ -35,6 +37,7 @@ interface AppOptions {
   engines?: EngineCatalog;
   engineEnvironmentValidation?: EngineEnvironmentValidationSettings;
   runArtifactsRootDir?: string;
+  targetProfilesRootDir?: string;
 }
 
 export function createApp(options: AppOptions): Hono {
@@ -43,7 +46,9 @@ export function createApp(options: AppOptions): Hono {
   const openApiDocument = createOpenApiDocument({
     version: options.version,
   });
-  const engines = options.engines ?? createDefaultEngineCatalog(options.modelRoots ?? []);
+  const targetProfiles = new TargetProfileStore(options.targetProfilesRootDir);
+  const engines =
+    options.engines ?? createDefaultEngineCatalog(options.modelRoots ?? [], targetProfiles);
   const runStore = new InMemoryRunStore();
   const runArtifacts = new RunArtifactStore(
     options.runArtifactsRootDir ?? DEFAULT_RUN_ARTIFACTS_ROOT_DIR,
@@ -97,11 +102,16 @@ export function createApp(options: AppOptions): Hono {
         }
       : {}),
   });
+  registerTargetRoutes(app, {
+    targetProfiles,
+    logger,
+  });
   registerRunRoutes(app, {
     version: options.version,
     runtime: options.runtime,
     runStore,
     runArtifacts,
+    targetProfiles,
     engines,
     logger,
   });
@@ -131,10 +141,16 @@ export function createApp(options: AppOptions): Hono {
   return app;
 }
 
-function createDefaultEngineCatalog(modelRoots: string[]): EngineCatalog {
+function createDefaultEngineCatalog(
+  modelRoots: string[],
+  targetProfiles: TargetProfileStore,
+): EngineCatalog {
   return createEngineCatalog([
     createStarterLlamaCppPlugin({
       modelRoots,
+      getTargetProfile: async (profileId: string) => {
+        return await targetProfiles.getProfile(profileId);
+      },
     }),
   ]);
 }

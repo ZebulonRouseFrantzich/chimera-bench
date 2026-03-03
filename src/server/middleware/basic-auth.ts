@@ -1,3 +1,9 @@
+/**
+ * Basic auth middleware with bounded per-client rate limiting.
+ *
+ * This module performs constant-time credential checks, optional proxy-aware
+ * client keying, and conservative 401/429 response behavior.
+ */
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import { jsonError } from "../api/envelope.ts";

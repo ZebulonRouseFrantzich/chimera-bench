@@ -51,6 +51,26 @@ export const operations = {
     path: "/runs/{runId}/result",
     summary: "Read persisted run result",
   },
+  "getTargets": {
+    method: "GET",
+    path: "/targets",
+    summary: "List SSH target profiles",
+  },
+  "postTargets": {
+    method: "POST",
+    path: "/targets",
+    summary: "Create or update an SSH target profile",
+  },
+  "getTargetsById": {
+    method: "GET",
+    path: "/targets/{id}",
+    summary: "Read an SSH target profile",
+  },
+  "deleteTargetsById": {
+    method: "DELETE",
+    path: "/targets/{id}",
+    summary: "Delete an SSH target profile",
+  },
 } as const;
 
 export type OperationId = keyof typeof operations;

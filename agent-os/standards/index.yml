@@ -11,6 +11,8 @@ cli:
 global:
   sanitization-and-safe-errors:
     description: Shared sanitization and safe API error exposure conventions.
+  source-code-size-and-documentation:
+    description: Source file SLOC budgets, ratcheted legacy caps, and module-level documentation requirements.
   time-based-testing:
     description: Deterministic testing conventions for TTL and timeout logic.
 
@@ -39,6 +41,8 @@ runs:
     description: Benchmark run manifest and result row schema for JSON, CSV, and markdown exports.
   run-events:
     description: Run event names, payload rules, and replay policy
+  ssh-target-model-identifier-validation:
+    description: SSH target model.identifier lexical validation and allowlist root checks
 
 server:
   api-conventions:
@@ -59,6 +63,12 @@ server:
     description: Serve-mode security gates for non-loopback binds
   sse-streams:
     description: SSE lifecycle events, payload shape, and shutdown behavior
+  ssh-command-execution:
+    description: System ssh execution defaults, quoting boundary, timeout/cancellation, and redaction
+  ssh-port-forwarding:
+    description: Loopback-only SSH forwarding startup, retry, timeout, and teardown semantics
+  ssh-target-profiles:
+    description: SSH target profile schema, persistence permissions, and safety constraints
 
 testing:
   app-fixtures:
@@ -69,3 +79,5 @@ testing:
     description: Token-based log assertions with injected logger
   sse-testing:
     description: SSE route testing via raw stream reads
+  ssh-gated-integration-tests:
+    description: Opt-in SSH integration test gating, skip behavior, and cleanup guarantees
