@@ -16,18 +16,18 @@
 - Engine isolation: start a dedicated `llama-server` per run bound to `127.0.0.1`, with Web UI disabled and a per-run API key.
 - Validation: the plugin owns `engine.serverArgs` and `engine.requestParams` validation; strict by default with explicit permissive opt-in.
 - Model paths: `model.identifier` is a local `.gguf` file path; canonicalize it and (when configured) confine it to allowlisted model roots.
-- Concurrency: Spec 1 supports a single active run at a time per server process.
+- Concurrency: this spec supports a single active run at a time per server process.
 - Visuals: none.
 
-## Assumptions (must hold for Spec 1)
+## Assumptions (must hold for this spec)
 
 - `llama-server` exposes `GET /health` and `POST /v1/chat/completions` in the installed build.
 - `llama-server --help` is parseable enough to extract supported flags for strict validation.
 
 ## Deferred / Out of Scope (selected)
 
-- Workload packs and exports (`cases.csv`, `summary.md`) are deferred to Spec 3.
-- Multi-engine sweeps, remote SSH execution, and client UI are not part of Spec 1.
+- Workload packs and exports (`cases.csv`, `summary.md`) are deferred to `workload-packs-and-exports`.
+- Multi-engine sweeps, remote SSH execution, and client UI are not part of this spec.
 
 ## Success Criteria
 

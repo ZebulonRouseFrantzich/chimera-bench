@@ -18,8 +18,8 @@
 
 ## Assumptions
 
-- Spec 1 provides a run state machine, run SSE, and artifact persistence.
-- Spec 3 provides workload packs and export generation.
+- `server-plugin-llama-cpp-foundation` provides a run state machine, run SSE, and artifact persistence.
+- `workload-packs-and-exports` provides workload packs and export generation.
 
 ## Risks
 

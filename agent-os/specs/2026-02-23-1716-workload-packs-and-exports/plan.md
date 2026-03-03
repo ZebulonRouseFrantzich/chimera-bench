@@ -1,4 +1,4 @@
-# Spec 3 - Workload Packs and Exports
+# Workload Packs and Exports
 
 ## Objective
 

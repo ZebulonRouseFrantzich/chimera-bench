@@ -1,4 +1,4 @@
-# Spec 8 - Client Dashboard and Dual Run Mode
+# Client Dashboard and Dual Run Mode
 
 ## Objective
 
@@ -39,7 +39,7 @@ Build the benchmark client UI and enable running server and client together or s
 ## Implementation tasks
 
 1. Implement client shell and navigation.
-   - Use the chosen frontend stack from Spec 7.
+    - Use the chosen frontend stack from `frontend-stack-decision-vue-vs-solid`.
    - Pages (initial):
      - Connect (server selection + auth)
      - Engines (capabilities + environment validation summary)

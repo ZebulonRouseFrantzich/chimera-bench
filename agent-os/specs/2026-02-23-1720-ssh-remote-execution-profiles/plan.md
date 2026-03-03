@@ -1,4 +1,4 @@
-# Spec 2 - SSH Remote Execution Profiles
+# SSH Remote Execution Profiles
 
 ## Objective
 
@@ -34,7 +34,7 @@ This project intentionally supports multiple deployment models. This spec focuse
 - Prefer approaches that avoid opening remote ports. Use SSH port-forwarding to a remote loopback-only `llama-server` in this phase.
 - Avoid storing secret material at rest in early phases: do not store private key contents; prefer `ssh-agent`.
 - SSH-based remote commands are executed via the remote user's shell; treat remote command construction as a security boundary and apply strict quoting and input validation.
-- This phase inherits the current single-active-run constraint from Spec 1, which simplifies SSH tunnel/process lifecycle management.
+- This phase inherits the current single-active-run constraint from `server-plugin-llama-cpp-foundation`, which simplifies SSH tunnel/process lifecycle management.
 
 ## Deliverables
 
@@ -69,7 +69,7 @@ This project intentionally supports multiple deployment models. This spec focuse
   - Fail fast (`ExitOnForwardFailure=yes`) when forwarding cannot be established.
   - Lifecycle tied to the run (cancel/shutdown tears down forwarding).
 - Extend run config to support SSH targets:
-  - `target: { "type": "ssh", "profileId": "..." }` (extends Spec 1's `{ "type": "local" }`).
+  - `target: { "type": "ssh", "profileId": "..." }` (extends `server-plugin-llama-cpp-foundation`'s `{ "type": "local" }`).
   - For SSH targets, interpret `model.identifier` as a remote absolute `.gguf` path validated against the profile's `remoteModelRoots`.
 - Remote mode for the existing `llama-cpp` plugin:
   - Validate engine flags against the remote `llama-server --help` output when `validationMode=strict`.

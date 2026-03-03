@@ -17,7 +17,7 @@
 
 ## Assumptions
 
-- Spec 1 produces `runs/{runId}/result.json` with required fields per `runs/result-schema`.
+- `server-plugin-llama-cpp-foundation` produces `runs/{runId}/result.json` with required fields per `runs/result-schema`.
 - The server already has a stable run state machine and can expose read APIs for run artifacts.
 
 ## Risks

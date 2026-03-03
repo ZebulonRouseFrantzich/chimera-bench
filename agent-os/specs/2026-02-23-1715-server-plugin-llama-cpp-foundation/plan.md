@@ -1,4 +1,4 @@
-# Spec 1 - Server Plugin llama.cpp Foundation
+# Server Plugin llama.cpp Foundation
 
 ## Objective
 
@@ -10,15 +10,15 @@ Deliver the first usable backend server with a stable engine plugin boundary and
 - Follow OpenCode backend direction for this phase (Bun + TypeScript + Hono style patterns).
 - Start with a small set of high-quality benchmark prompts; expand methodology later.
 - Keep engine options flexible via pass-through fields so new flags do not require core code changes.
-- Spec 1 supports `llama-server` only (no `llama-cli` / `llama-bench` execution paths yet).
-- Spec 1 uses OpenAI-compatible chat completions only (`POST /v1/chat/completions`) for case execution.
+- This spec supports `llama-server` only (no `llama-cli` / `llama-bench` execution paths yet).
+- This spec uses OpenAI-compatible chat completions only (`POST /v1/chat/completions`) for case execution.
 - Do not manage installation or upgrades of `llama.cpp`; only detect + validate + error with actionable messages.
 - Prefer capability/parameter validation over version caps (i.e. verify the options we will call are supported).
-- Model selection is core-owned; Spec 1 accepts local GGUF file paths only.
+- Model selection is core-owned; this spec accepts local GGUF file paths only.
 - Threat model: server may be reachable on a LAN. Treat API clients as untrusted unless authenticated.
 - Server exposure defaults: bind to loopback by default; require basic auth for non-loopback binds; no CORS headers unless explicitly allowlisted.
 - Engine runtime isolation defaults: bind `llama-server` to loopback, disable Web UI, and avoid any preflight inference request.
-- Store benchmark outputs as files (`result.json` first; CSV/MD exports deferred to Spec 3); no DB requirement.
+- Store benchmark outputs as files (`result.json` first; CSV/MD exports deferred to `workload-packs-and-exports`); no DB requirement.
 - Product docs (`agent-os/product/`) are baseline guidance and can evolve as implementation decisions mature.
 - Visual context: none provided; no internal reference implementation exists yet in this repo.
 - Expose a documented OpenAPI 3.1 surface so future clients and SDKs can integrate without reverse-engineering routes.
@@ -53,18 +53,21 @@ Deliver the first usable backend server with a stable engine plugin boundary and
 
 - See `references.md`.
 
-## Related specs and execution sequence
+## Related specs
 
-1. `server-plugin-llama-cpp-foundation` (this spec)
-2. `ssh-remote-execution-profiles`
-3. `workload-packs-and-exports`
-4. `sweep-engine-run-orchestration`
-5. `log-metrics-efficiency-analysis`
-6. `server-auth-and-ssh-secret-hardening`
-7. `frontend-stack-decision-vue-vs-solid`
-8. `client-dashboard-dual-run-mode`
-9. `engine-expansion-vllm-exo`
-10. `engine-enhancements-llama-cpp-tools` (`llama-cli`, `llama-bench`, HF model acquisition, host/port overrides)
+Implementation order lives in `agent-os/product/roadmap.md`.
+
+Related specs:
+
+- `ssh-remote-execution-profiles`
+- `workload-packs-and-exports`
+- `sweep-engine-run-orchestration`
+- `log-metrics-efficiency-analysis`
+- `server-auth-and-ssh-secret-hardening`
+- `frontend-stack-decision-vue-vs-solid`
+- `client-dashboard-dual-run-mode`
+- `engine-expansion-vllm-exo`
+- `engine-enhancements-llama-cpp-tools` (`llama-cli`, `llama-bench`, HF model acquisition, host/port overrides)
 
 ## Non-goals
 
@@ -75,11 +78,11 @@ Deliver the first usable backend server with a stable engine plugin boundary and
 - Deep speculative metric extraction.
 - Full parity with all benchmark inspiration methods in this first phase.
 - Multi-user auth and billing features.
-- Supporting `llama-cli` / `llama-bench` execution paths in Spec 1.
-- Hugging Face shorthand model acquisition in Spec 1 (no `-hf` flag usage); future spec will use the `hf` CLI to download to a local GGUF path.
-- User overrides for `llama-server` network binding (host/port) in Spec 1.
+- Supporting `llama-cli` / `llama-bench` execution paths in this phase.
+- Hugging Face shorthand model acquisition in this phase (no `-hf` flag usage); a later spec will use the `hf` CLI to download to a local GGUF path.
+- User overrides for `llama-server` network binding (host/port) in this phase.
 - Optional "preflight inference request" validation mode.
-- Generating `cases.csv` and `summary.md` artifacts in Spec 1 (deferred to Spec 3).
+- Generating `cases.csv` and `summary.md` artifacts in this phase (deferred to `workload-packs-and-exports`).
 
 ## Implementation tasks
 
@@ -139,7 +142,7 @@ Deliver the first usable backend server with a stable engine plugin boundary and
     - Define request/response schemas for all routes (zod) and generate OpenAPI from those schemas.
     - Define `POST /runs` request schema (initial):
       - `engineId` (string, required; example: `llama-cpp`)
-      - `target` (object, required; Spec 1 supports `{ "type": "local" }` only)
+      - `target` (object, required; this phase supports `{ "type": "local" }` only)
       - `model.identifier` (string, required; local `.gguf` path for local runs)
       - `workloadId` (string, optional; default to the built-in starter workload)
       - `engine.serverArgs` (string[], optional; default `[]`)
@@ -173,7 +176,7 @@ Deliver the first usable backend server with a stable engine plugin boundary and
    - Execute subprocesses without a shell (argv array only).
    - Start `llama-server` in its own process group/session so stop/cancel can reliably terminate the entire group.
    - Choose a free local port; retry on bind/start failures to reduce TOCTOU issues.
-   - Force bind to `127.0.0.1` (no user override in Spec 1).
+    - Force bind to `127.0.0.1` (no user override in this spec).
    - Force-disable Web UI (`--no-webui`).
    - Generate a per-run `llama-server` API key:
      - Cryptographically random, >= 32 bytes entropy, hex or base64url.
@@ -223,7 +226,7 @@ Deliver the first usable backend server with a stable engine plugin boundary and
 
 8. Implement single benchmark run orchestration, event streaming, and cancellation:
    - Concurrency: allow a single active run at a time; `POST /runs` returns `409` with code `RUN_CONCURRENCY_LIMIT` if another run is active.
-   - Workload source for Spec 1: embed a tiny built-in starter workload (3-10 prompts) with stable `workloadId` and `promptId`s; treat as a placeholder until Spec 3.
+    - Workload source for this phase: embed a tiny built-in starter workload (3-10 prompts) with stable `workloadId` and `promptId`s; treat as a placeholder until `workload-packs-and-exports`.
    - State machine: `queued` -> `running` -> terminal (`completed` | `failed` | `cancelled`).
     - Case execution:
       - Build chat messages (core-owned) and merge validated `engine.requestParams`.
@@ -247,9 +250,9 @@ Deliver the first usable backend server with a stable engine plugin boundary and
      - Test cancellation: `curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD -X POST http://127.0.0.1:4096/runs/RUN_ID/cancel`
      - Test concurrency limit: create a second run while one is `running` and expect `409 RUN_CONCURRENCY_LIMIT`.
 
-9. Persist run artifacts and expose read APIs; TTFT is best-effort and may be nullable until Spec 4:
+9. Persist run artifacts and expose read APIs; TTFT is best-effort and may be nullable until `log-metrics-efficiency-analysis`:
    - Persist `runs/{runId}/result.json` using required fields from `runs/result-schema`.
-   - Explicitly defer `cases.csv` and `summary.md` to Spec 3.
+    - Explicitly defer `cases.csv` and `summary.md` to `workload-packs-and-exports`.
     - Write files atomically (temp + rename) and surface actionable disk errors.
    - Manual testing steps (after a run completes):
      - Verify file exists: `ls runs/RUN_ID/result.json`

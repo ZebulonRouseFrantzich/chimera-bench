@@ -9,15 +9,15 @@
 
 ## Decisions
 
-- Basic auth is the baseline (already introduced in Spec 1). This spec tightens it and adds safer operational options.
+- Basic auth is the baseline (introduced in `server-plugin-llama-cpp-foundation`). This spec tightens it and adds safer operational options.
 - Prefer env vars and file references over storing secrets in JSON config.
 - Default to strict SSH host key checking.
 - Visuals: none.
 
 ## Assumptions
 
-- Spec 1 already enforces loopback defaults and requires auth for non-loopback binds.
-- Spec 2 introduces SSH target profiles without storing private key contents.
+- `server-plugin-llama-cpp-foundation` already enforces loopback defaults and requires auth for non-loopback binds.
+- `ssh-remote-execution-profiles` introduces SSH target profiles without storing private key contents.
 
 ## Risks
 

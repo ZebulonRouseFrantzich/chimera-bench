@@ -1,4 +1,4 @@
-# Spec 10 - Engine Enhancements: llama.cpp Tools
+# Engine Enhancements: llama.cpp Tools
 
 ## Objective
 
@@ -6,7 +6,7 @@ Expand `llama.cpp` engine support beyond `llama-server` while keeping the core r
 
 ## Why this spec exists
 
-Spec 1 intentionally starts narrow (`llama-server`, chat-only). This follow-on spec captures enhancements to an existing engine family:
+`server-plugin-llama-cpp-foundation` intentionally starts narrow (`llama-server`, chat-only). This follow-on spec captures enhancements to an existing engine family:
 
 - Add a `llama-cli` execution path as a separate engine id (`llama-cpp-cli`).
 - Optionally integrate `llama-bench` for throughput microbench workloads.

@@ -1,4 +1,4 @@
-# Spec 6 - Server Auth and SSH Secret Hardening
+# Server Auth and SSH Secret Hardening
 
 ## Objective
 
@@ -16,7 +16,7 @@ The project explicitly supports SSH execution on local networks or over the inte
 
 ## Deliverables
 
-- Server auth hardening beyond Spec 1:
+- Server auth hardening beyond `server-plugin-llama-cpp-foundation`:
   - Support password-from-file (`CHIMERA_SERVER_PASSWORD_FILE`) in addition to `CHIMERA_SERVER_PASSWORD`.
   - Enforce minimum password length and emit explicit warnings for unsafe configurations.
   - Add basic brute-force mitigation (rate-limit repeated auth failures).
@@ -66,7 +66,7 @@ The project explicitly supports SSH execution on local networks or over the inte
        - `export CHIMERA_SERVER_PASSWORD_FILE=/tmp/chimera-pass`
 
 2. Define startup behavior for insecure mode.
-   - Maintain Spec 1 guardrails:
+    - Maintain `server-plugin-llama-cpp-foundation` guardrails:
      - Warn when auth is unset.
      - Refuse non-loopback binding when auth is unset.
    - Add tightening:
