@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createOpenApiDocument } from "../src/server/api/openapi.ts";
+import { createOpenApiDocument } from "../src/server/api/openapi/index.ts";
 
 type HttpMethod =
   | "GET"

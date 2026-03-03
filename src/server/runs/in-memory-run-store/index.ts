@@ -8,12 +8,12 @@ import { randomUUID } from "node:crypto";
 import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
-} from "./defaults.ts";
+} from "../defaults.ts";
 import {
   recordCompletedCaseOutcome,
   recordFailedCaseOutcome,
-} from "./run-store-case-outcomes.ts";
-import { RunStoreEvents } from "./run-store-events.ts";
+} from "./case-outcomes.ts";
+import { RunStoreEvents } from "./events.ts";
 import {
   buildProgress,
   cloneRunFailure,
@@ -22,11 +22,11 @@ import {
   normalizeNonNegativeInteger,
   normalizePositiveInteger,
   transitionRunStatus,
-} from "./run-store-record-utils.ts";
+} from "./record-utils.ts";
 import {
   buildRunResult,
   buildRunSummary,
-} from "./run-store-results.ts";
+} from "./results.ts";
 import {
   DEFAULT_MAX_TRACKED_RUNS,
   DEFAULT_TERMINAL_RUN_RETENTION_MS,
@@ -42,12 +42,13 @@ import {
   type RunStatus,
   type RunSummaryData,
   type StoredRunResult,
-} from "./run-store-types.ts";
+} from "./types.ts";
 
 export {
   DEFAULT_MAX_TRACKED_RUNS,
   DEFAULT_TERMINAL_RUN_RETENTION_MS,
 };
+export { isRunStatusTerminal } from "./record-utils.ts";
 export type {
   CreateQueuedRunResult,
   RunEventName,

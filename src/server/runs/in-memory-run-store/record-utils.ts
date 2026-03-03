@@ -3,7 +3,7 @@ import type {
   RunProgressSnapshot,
   RunRecord,
   RunStatus,
-} from "./run-store-types.ts";
+} from "./types.ts";
 
 export function cloneRunFailure(failure: RunFailureDetails): RunFailureDetails {
   return {
@@ -86,8 +86,12 @@ function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
   try {
     return structuredClone(value);
   } catch {
-    return {
-      ...value,
-    };
+    try {
+      return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    } catch {
+      return {
+        ...value,
+      };
+    }
   }
 }

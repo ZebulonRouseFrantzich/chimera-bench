@@ -7,8 +7,14 @@
 import {
   sanitizeControlCharacters,
   sanitizeErrorCode,
-} from "../http/sanitize.ts";
-import type { RunFailureDetails } from "./in-memory-run-store.ts";
+} from "../../http/sanitize.ts";
+import type { RunFailureDetails } from "../in-memory-run-store/index.ts";
+
+const MAX_DETAIL_DEPTH = 4;
+const MAX_DETAIL_ITEMS = 32;
+const MAX_DETAIL_STRING_CHARS = 1_024;
+const SENSITIVE_DETAIL_KEY_PATTERN =
+  /(password|secret|token|api[_-]?key|authorization|cookie)/i;
 
 export class RunCancelledError extends Error {
   constructor(message: string) {
@@ -71,9 +77,7 @@ export function toRunFailure(error: unknown): RunFailureDetails {
       message: sanitizeControlCharacters(error.message),
       ...(error.details
         ? {
-            details: {
-              ...error.details,
-            },
+            details: sanitizeFailureDetails(error.details),
           }
         : {}),
     };
@@ -90,14 +94,6 @@ export function toRunFailure(error: unknown): RunFailureDetails {
     code: "RUN_CASE_FAILED",
     message: "Run execution failed with an unknown error.",
   };
-}
-
-export function toError(value: unknown): Error {
-  if (value instanceof Error) {
-    return value;
-  }
-
-  return new Error(`Unexpected non-error value: ${String(value)}`);
 }
 
 export async function withTimeout<T>(
@@ -171,4 +167,89 @@ function isCodeError(
   };
 
   return typeof maybeError.code === "string" && typeof maybeError.message === "string";
+}
+
+function sanitizeFailureDetails(
+  details: Record<string, unknown>,
+): Record<string, unknown> {
+  return sanitizeDetailRecord(details, 0);
+}
+
+function sanitizeDetailRecord(
+  details: Record<string, unknown>,
+  depth: number,
+): Record<string, unknown> {
+  if (depth >= MAX_DETAIL_DEPTH) {
+    return {
+      truncated: true,
+    };
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  const entries = Object.entries(details);
+  const limitedEntries = entries.slice(0, MAX_DETAIL_ITEMS);
+
+  for (const [rawKey, value] of limitedEntries) {
+    const key = sanitizeDetailString(rawKey);
+    if (key.length === 0) {
+      continue;
+    }
+
+    if (SENSITIVE_DETAIL_KEY_PATTERN.test(key)) {
+      sanitized[key] = "[REDACTED]";
+      continue;
+    }
+
+    sanitized[key] = sanitizeDetailValue(value, depth);
+  }
+
+  if (entries.length > MAX_DETAIL_ITEMS) {
+    sanitized.truncated = true;
+  }
+
+  return sanitized;
+}
+
+function sanitizeDetailValue(value: unknown, depth: number): unknown {
+  if (depth >= MAX_DETAIL_DEPTH) {
+    return "[TRUNCATED]";
+  }
+
+  if (typeof value === "string") {
+    return sanitizeDetailString(value);
+  }
+
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    value === null
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const limitedValues = value.slice(0, MAX_DETAIL_ITEMS);
+    const sanitizedValues = limitedValues.map((entry) => {
+      return sanitizeDetailValue(entry, depth + 1);
+    });
+    if (value.length > MAX_DETAIL_ITEMS) {
+      sanitizedValues.push("[TRUNCATED]");
+    }
+    return sanitizedValues;
+  }
+
+  if (value && typeof value === "object") {
+    return sanitizeDetailRecord(value as Record<string, unknown>, depth + 1);
+  }
+
+  return sanitizeDetailString(String(value));
+}
+
+function sanitizeDetailString(value: string): string {
+  const sanitized = sanitizeControlCharacters(value);
+  if (sanitized.length <= MAX_DETAIL_STRING_CHARS) {
+    return sanitized;
+  }
+
+  return `${sanitized.slice(0, MAX_DETAIL_STRING_CHARS)}...`;
 }

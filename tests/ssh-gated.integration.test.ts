@@ -4,7 +4,7 @@ import { executeSshCommand } from "../src/server/ssh/ssh-exec.ts";
 import {
   SshPortForwardExecutionError,
   startSshPortForward,
-} from "../src/server/ssh/ssh-port-forward.ts";
+} from "../src/server/ssh/ssh-port-forward/index.ts";
 
 const SSH_GATED_TEST_ENABLED = process.env.CHIMERA_SSH_TEST === "1";
 const SSH_BANNER_TIMEOUT_MS = 5_000;

@@ -9,7 +9,7 @@ import {
   buildSshPortForwardArgv,
   SshPortForwardExecutionError,
   startSshPortForward,
-} from "../src/server/ssh/ssh-port-forward.ts";
+} from "../src/server/ssh/ssh-port-forward/index.ts";
 
 describe("buildSshPortForwardArgv", () => {
   test("builds argv with loopback-only forwarding and fail-fast option", () => {

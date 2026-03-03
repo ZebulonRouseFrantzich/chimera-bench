@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { getOrCreateRequestId, jsonError, setRequestId } from "./api/envelope.ts";
-import { createOpenApiDocument } from "./api/openapi.ts";
+import { createOpenApiDocument } from "./api/openapi/index.ts";
 import { createEngineCatalog } from "./engines/engine-catalog.ts";
 import type { EngineCatalog } from "./engines/engine-catalog.ts";
 import { createStarterLlamaCppPlugin } from "./engines/starter-engine.ts";
@@ -15,13 +15,13 @@ import { basicAuthMiddleware } from "./middleware/basic-auth.ts";
 import { registerEngineRoutes } from "./routes/engine-routes.ts";
 import type { EngineEnvironmentValidationSettings } from "./routes/engine-routes.ts";
 import { registerGlobalRoutes } from "./routes/global-routes.ts";
-import { registerRunRoutes } from "./routes/run-routes.ts";
+import { registerRunRoutes } from "./routes/run-routes/index.ts";
 import { registerTargetRoutes } from "./routes/target-routes.ts";
 import {
   DEFAULT_RUN_ARTIFACTS_ROOT_DIR,
   RunArtifactStore,
 } from "./runs/run-artifact-store.ts";
-import { InMemoryRunStore } from "./runs/in-memory-run-store.ts";
+import { InMemoryRunStore } from "./runs/in-memory-run-store/index.ts";
 import { TargetProfileStore } from "./targets/target-profile-store.ts";
 import type { RuntimeControl } from "./runtime-control.ts";
 import type { BasicAuthSettings } from "./types.ts";

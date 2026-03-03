@@ -28,6 +28,13 @@ Keep implementation files small enough to reason about and document complex modu
 - Split orchestration modules by lifecycle phase (validation, startup, execution, teardown) when complexity grows.
 - Keep behavior and tests in sync as files are split; avoid changing external contracts during pure refactors.
 
+## Multi-file feature organization
+
+- When a module is split into multiple files, place them in a dedicated feature folder.
+- Use a single public entrypoint at `<feature>/index.ts`.
+- Import from the entrypoint outside the feature folder; avoid importing internal helper files directly.
+- Avoid flat sibling families like `<feature>-*.ts` in shared directories after a split.
+
 ## Verification
 
 - Run `bun run quality:check` locally before review.

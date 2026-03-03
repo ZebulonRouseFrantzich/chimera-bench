@@ -3,7 +3,7 @@ import {
   RunResultDataSchema,
   RunStatusSchema,
   RunSummaryDataSchema,
-} from "../api/schemas.ts";
+} from "../../api/schemas.ts";
 
 export const DEFAULT_MAX_TRACKED_RUNS = 1000;
 export const DEFAULT_TERMINAL_RUN_RETENTION_MS = 6 * 60 * 60 * 1000;

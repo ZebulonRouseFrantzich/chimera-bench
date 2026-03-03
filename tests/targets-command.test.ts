@@ -7,7 +7,7 @@ import {
   TargetsCommandUsageError,
 } from "../src/cli/targets-command.ts";
 import type { SshCommandSuccess } from "../src/server/ssh/ssh-exec.ts";
-import type { SshPortForwardRequest } from "../src/server/ssh/ssh-port-forward.ts";
+import type { SshPortForwardRequest } from "../src/server/ssh/ssh-port-forward/index.ts";
 import { TargetProfileStore } from "../src/server/targets/target-profile-store.ts";
 
 describe("targets command", () => {

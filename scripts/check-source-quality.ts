@@ -35,11 +35,14 @@ interface QualityIssue {
 
 async function main(): Promise<void> {
   const files = await listProjectTypeScriptFiles();
+  const fileSet = new Set(files);
+  const slocByPath = new Map<string, number>();
   const issues: QualityIssue[] = [];
 
   for (const path of files) {
     const sourceText = await readFile(path, "utf8");
     const sloc = countSloc(path, sourceText);
+    slocByPath.set(path, sloc);
 
     const defaultBudget = getDefaultSlocBudget(path);
     if (defaultBudget !== null) {
@@ -62,6 +65,9 @@ async function main(): Promise<void> {
       }
     }
   }
+
+  issues.push(...collectLegacyCapMaintenanceIssues(fileSet, slocByPath));
+  issues.push(...collectFlatSplitModuleIssues(fileSet));
 
   if (issues.length > 0) {
     console.error("[chimera-bench] Source quality checks failed:");
@@ -134,6 +140,115 @@ function getDefaultSlocBudget(path: string): number | null {
   }
 
   return null;
+}
+
+function collectLegacyCapMaintenanceIssues(
+  fileSet: ReadonlySet<string>,
+  slocByPath: ReadonlyMap<string, number>,
+): QualityIssue[] {
+  const issues: QualityIssue[] = [];
+
+  for (const [path, legacyCap] of Object.entries(LEGACY_MAX_SLOC)) {
+    if (!fileSet.has(path)) {
+      issues.push({
+        path,
+        message: "Legacy cap entry references a missing file; remove stale LEGACY_MAX_SLOC entry.",
+      });
+      continue;
+    }
+
+    const defaultBudget = getDefaultSlocBudget(path);
+    if (defaultBudget === null) {
+      issues.push({
+        path,
+        message:
+          "Legacy cap entry is outside default budget scope; remove stale LEGACY_MAX_SLOC entry.",
+      });
+      continue;
+    }
+
+    if (legacyCap <= defaultBudget) {
+      issues.push({
+        path,
+        message:
+          `Legacy cap ${legacyCap} is not higher than default budget ${defaultBudget}; ` +
+          "remove LEGACY_MAX_SLOC entry.",
+      });
+      continue;
+    }
+
+    const sloc = slocByPath.get(path);
+    if (sloc === undefined) {
+      continue;
+    }
+
+    if (sloc <= defaultBudget) {
+      issues.push({
+        path,
+        message:
+          `Legacy cap ${legacyCap} is stale because file SLOC ${sloc} is within ` +
+          `default budget ${defaultBudget}; remove LEGACY_MAX_SLOC entry.`,
+      });
+    }
+  }
+
+  return issues;
+}
+
+function collectFlatSplitModuleIssues(fileSet: ReadonlySet<string>): QualityIssue[] {
+  const issues: QualityIssue[] = [];
+  const fileNamesByDir = new Map<string, Set<string>>();
+
+  for (const path of fileSet) {
+    if (!path.startsWith("src/") || !path.endsWith(".ts")) {
+      continue;
+    }
+
+    const slashIndex = path.lastIndexOf("/");
+    if (slashIndex < 0) {
+      continue;
+    }
+
+    const dir = path.slice(0, slashIndex);
+    const fileName = path.slice(slashIndex + 1);
+    if (fileName === "index.ts" || fileName.endsWith(".d.ts")) {
+      continue;
+    }
+
+    const names = fileNamesByDir.get(dir) ?? new Set<string>();
+    names.add(fileName.slice(0, -3));
+    fileNamesByDir.set(dir, names);
+  }
+
+  for (const [dir, fileNames] of fileNamesByDir) {
+    for (const fileName of fileNames) {
+      const splitSiblings = [...fileNames].filter((candidate) => {
+        return candidate.startsWith(`${fileName}-`);
+      });
+
+      if (splitSiblings.length === 0) {
+        continue;
+      }
+
+      if (splitSiblings.length < 2) {
+        continue;
+      }
+
+      const expectedEntrypoint = `${dir}/${fileName}/index.ts`;
+      if (fileSet.has(expectedEntrypoint)) {
+        continue;
+      }
+
+      issues.push({
+        path: `${dir}/${fileName}.ts`,
+        message:
+          "Detected flat split module family. Move these files into a dedicated " +
+          `subfolder with a single public entrypoint at '${expectedEntrypoint}'.`,
+      });
+    }
+  }
+
+  return issues;
 }
 
 async function listProjectTypeScriptFiles(): Promise<string[]> {

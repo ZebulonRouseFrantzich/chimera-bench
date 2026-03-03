@@ -91,6 +91,7 @@ Follow the style already present in `src/` and `tests/`.
 - Double-quoted strings by default
 - Trailing commas in multiline literals/calls
 - Keep functions concise; extract helper functions for parsing/validation
+- When splitting one module into multiple files, create a feature subfolder with a single public `index.ts` entrypoint
 - For larger modules, add a leading `/** ... */` module doc describing purpose and key invariants
 - Use inline comments for non-obvious behavior, constraints, and trade-offs
 

@@ -1,10 +1,8 @@
-import type { EngineRunConfigValidationFailure } from "../engines/engine-plugin.ts";
+import type { EngineRunConfigValidationFailure } from "../../engines/engine-plugin.ts";
 import {
   sanitizeControlCharacters,
   sanitizeErrorCode,
-} from "../http/sanitize.ts";
-import type { InMemoryRunStore } from "../runs/in-memory-run-store.ts";
-import type { RunArtifactStore } from "../runs/run-artifact-store.ts";
+} from "../../http/sanitize.ts";
 
 export function buildValidationFailurePayload(
   failure: EngineRunConfigValidationFailure,
@@ -39,23 +37,6 @@ export function buildValidationFailurePayload(
         }
       : {}),
   };
-}
-
-export function isTerminalRunStatus(status: string): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
-}
-
-export async function persistRunArtifact(
-  runId: string,
-  runStore: InMemoryRunStore,
-  runArtifacts: RunArtifactStore,
-): Promise<void> {
-  const result = runStore.getRunResult(runId);
-  if (!result) {
-    return;
-  }
-
-  await runArtifacts.writeResult(runId, result);
 }
 
 function sanitizeIssuePath(path: string | undefined): string {

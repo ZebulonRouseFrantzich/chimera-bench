@@ -8,25 +8,23 @@ import type { Hono } from "hono";
 import {
   jsonError,
   jsonSuccess,
-} from "../api/envelope.ts";
-import { parseRunIdParam } from "../http/request-validation.ts";
-import { sanitizeControlCharacters } from "../http/sanitize.ts";
+} from "../../api/envelope.ts";
+import { parseRunIdParam } from "../../http/request-validation.ts";
 import {
   DEFAULT_SERVER_LOGGER,
   type ServerLogger,
-} from "../logging.ts";
-import type { RuntimeControl } from "../runtime-control.ts";
-import type { InMemoryRunStore } from "../runs/in-memory-run-store.ts";
+} from "../../logging.ts";
+import type { RuntimeControl } from "../../runtime-control.ts";
+import {
+  type InMemoryRunStore,
+  isRunStatusTerminal,
+} from "../../runs/in-memory-run-store/index.ts";
+import { persistRunArtifact } from "../../runs/persist-run-artifact.ts";
 import {
   RunArtifactReadError,
-  RunArtifactWriteError,
   type RunArtifactStore,
-} from "../runs/run-artifact-store.ts";
-import { createSseResponse } from "../sse/sse-response.ts";
-import {
-  isTerminalRunStatus,
-  persistRunArtifact,
-} from "./run-routes-shared.ts";
+} from "../../runs/run-artifact-store.ts";
+import { createSseResponse } from "../../sse/sse-response.ts";
 
 interface RegisterRunSupplementalRoutesInput {
   app: Hono;
@@ -73,7 +71,7 @@ export function registerRunSupplementalRoutes(
       });
     }
 
-    if (!isTerminalRunStatus(status)) {
+    if (!isRunStatusTerminal(status)) {
       return jsonError(context, 409, {
         code: "RUN_RESULT_NOT_READY",
         message: `Run '${runId}' has not persisted a result yet.`,
@@ -175,16 +173,12 @@ export function registerRunSupplementalRoutes(
       ) ?? runStatus;
 
     if (cancelledStatus === "cancelled") {
-      void persistRunArtifact(runId, runStore, runArtifacts).catch((error) => {
-        const reason =
-          error instanceof RunArtifactWriteError
-            ? error.logReason
-            : error instanceof Error
-              ? error.message
-              : "Unknown artifact persistence error.";
-        logger.error(
-          `[chimera-bench] runId=${runId} cancelResultPersistError=${sanitizeControlCharacters(reason)}`,
-        );
+      void persistRunArtifact({
+        runId,
+        runStore,
+        runArtifacts,
+        logger,
+        errorField: "cancelResultPersistError",
       });
     }
 

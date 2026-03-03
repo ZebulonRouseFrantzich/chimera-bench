@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { InMemoryRunStore } from "../src/server/runs/in-memory-run-store.ts";
+import { InMemoryRunStore } from "../src/server/runs/in-memory-run-store/index.ts";
 
 const RUN_INPUT = {
   engineId: "llama-cpp",

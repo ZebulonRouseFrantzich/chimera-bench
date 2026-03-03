@@ -4,15 +4,15 @@
  * This module classifies startup failures, performs readiness polling against
  * process lifecycle events, and maps failures into stable execution errors.
  */
-import { toError } from "../error-utils.ts";
-import { classifySshFailureGuidance } from "./ssh-exec.ts";
-import { redactText, type SubprocessTermination } from "./ssh-process-utils.ts";
+import { toError } from "../../error-utils.ts";
+import { classifySshFailureGuidance } from "../ssh-exec.ts";
+import { redactText, type SubprocessTermination } from "../ssh-process-utils.ts";
 import type {
   SshPortForwardDependencies,
   SshPortForwardErrorDetails,
   WaitForForwardReadyRequest,
-} from "./ssh-port-forward-types.ts";
-import { SshPortForwardExecutionError } from "./ssh-port-forward-types.ts";
+} from "./types.ts";
+import { SshPortForwardExecutionError } from "./types.ts";
 
 const RETRYABLE_LOCAL_FORWARD_FAILURE_PATTERN =
   /address already in use|cannot assign requested address|could not request local forwarding/i;

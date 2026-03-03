@@ -131,7 +131,7 @@ describe("run routes", () => {
     expect(cancelCalls).toBe(1);
   });
 
-  test("retains engine cleanup handle when final stop fails", async () => {
+  test("unregisters engine cleanup handle even when final stop fails", async () => {
     let stopAttempts = 0;
 
     const { app, runtime } = buildApp({
@@ -160,7 +160,7 @@ describe("run routes", () => {
     });
 
     await runtime.cleanupEngineSubprocesses("shutdown");
-    expect(stopAttempts).toBe(2);
+    expect(stopAttempts).toBe(1);
   });
 
   test("rejects invalid run creation payloads", async () => {

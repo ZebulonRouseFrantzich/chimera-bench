@@ -2,25 +2,20 @@
  * Shared helper routines used by `RunOrchestrator`.
  *
  * This module handles case payload construction, terminal-run fan-out
- * transitions, artifact persistence, and diagnostic logging formatting.
+ * transitions, and diagnostic logging formatting.
  */
 import type {
   EngineCaseConfig,
   EngineDiagnostic,
   EngineRunConfig,
-} from "../engines/engine-plugin.ts";
-import { sanitizeControlCharacters } from "../http/sanitize.ts";
-import {
+} from "../../engines/engine-plugin.ts";
+import { sanitizeControlCharacters } from "../../http/sanitize.ts";
+import type {
   InMemoryRunStore,
-  type RunFailureDetails,
-} from "./in-memory-run-store.ts";
-import {
-  type RunArtifactStore,
-  RunArtifactWriteError,
-} from "./run-artifact-store.ts";
-import type { StarterWorkload } from "./starter-workload.ts";
-import { estimateTokenCount } from "./token-estimation.ts";
-import { toError } from "./run-orchestrator-runtime.ts";
+  RunFailureDetails,
+} from "../in-memory-run-store/index.ts";
+import type { StarterWorkload } from "../starter-workload.ts";
+import { estimateTokenCount } from "../token-estimation.ts";
 
 const MAX_DIAGNOSTIC_LINE_CHARS = 4_096;
 
@@ -32,12 +27,6 @@ interface FailRunWithRemainingCasesInput {
   startIndex: number;
   failure: RunFailureDetails;
   nowIso: string;
-}
-
-interface PersistRunArtifactInput {
-  runId: string;
-  runStore: InMemoryRunStore;
-  runArtifacts: RunArtifactStore;
 }
 
 export function failRunWithRemainingCases(input: FailRunWithRemainingCasesInput): void {
@@ -63,23 +52,6 @@ export function failRunWithRemainingCases(input: FailRunWithRemainingCasesInput)
   }
 
   input.runStore.failRun(input.runId, input.nowIso, input.failure);
-}
-
-export async function persistRunArtifact(input: PersistRunArtifactInput): Promise<void> {
-  const result = input.runStore.getRunResult(input.runId);
-  if (!result) {
-    return;
-  }
-
-  try {
-    await input.runArtifacts.writeResult(input.runId, result);
-  } catch (error) {
-    const reason =
-      error instanceof RunArtifactWriteError ? error.logReason : toError(error).message;
-    console.error(
-      `[chimera-bench] runId=${input.runId} runResultPersistError=${sanitizeControlCharacters(reason)}`,
-    );
-  }
 }
 
 export function logDiagnostic(runId: string, diagnostic: EngineDiagnostic): void {

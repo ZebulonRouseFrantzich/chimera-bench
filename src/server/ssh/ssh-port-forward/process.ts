@@ -5,8 +5,8 @@
  * construction of stable execution errors with redacted diagnostics.
  */
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { toError } from "../error-utils.ts";
-import { classifySshFailureGuidance } from "./ssh-exec.ts";
+import { toError } from "../../error-utils.ts";
+import { classifySshFailureGuidance } from "../ssh-exec.ts";
 import {
   attachOutputStream,
   cancelSubprocess,
@@ -15,23 +15,23 @@ import {
   redactText,
   RollingTextBuffer,
   type SubprocessTermination,
-} from "./ssh-process-utils.ts";
-import { buildSshPortForwardArgv } from "./ssh-port-forward-argv.ts";
+} from "../ssh-process-utils.ts";
+import { buildSshPortForwardArgv } from "./argv.ts";
 import {
   buildStartupError,
   hasRemoteLoopbackConnectFailure,
   waitForForwardReady,
-} from "./ssh-port-forward-startup.ts";
+} from "./startup.ts";
 import type {
   SshPortForwardDependencies,
   SshPortForwardErrorDetails,
   SshPortForwardHandle,
   SshPortForwardRequest,
-} from "./ssh-port-forward-types.ts";
+} from "./types.ts";
 import {
   SshPortForwardExecutionError,
   SshPortForwardValidationError,
-} from "./ssh-port-forward-types.ts";
+} from "./types.ts";
 
 const CANCEL_KILL_GRACE_PERIOD_MS = 500;
 const STARTUP_POLL_INTERVAL_MS = 75;

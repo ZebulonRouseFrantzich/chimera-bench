@@ -5,27 +5,27 @@
  * local ports, and delegates subprocess lifecycle handling to focused helpers.
  */
 import { spawn } from "node:child_process";
-import { normalizeRedactions } from "./ssh-process-utils.ts";
-import { buildSshPortForwardArgv } from "./ssh-port-forward-argv.ts";
+import { normalizeRedactions } from "../ssh-process-utils.ts";
+import { buildSshPortForwardArgv } from "./argv.ts";
 import {
   probeLocalForwardReady,
   reserveLoopbackPort,
-} from "./ssh-port-forward-network.ts";
-import { startSshPortForwardOnce } from "./ssh-port-forward-process.ts";
+} from "./network.ts";
+import { startSshPortForwardOnce } from "./process.ts";
 import {
   createCancelledBeforeStartError,
   isRetryableAutoLocalPortFailure,
   reserveLocalPortWithErrors,
-} from "./ssh-port-forward-startup.ts";
+} from "./startup.ts";
 import type {
   SshPortForwardDependencies,
   SshPortForwardHandle,
   SshPortForwardRequest,
-} from "./ssh-port-forward-types.ts";
+} from "./types.ts";
 import {
   SshPortForwardExecutionError,
   SshPortForwardValidationError,
-} from "./ssh-port-forward-types.ts";
+} from "./types.ts";
 
 const DEFAULT_MAX_BUFFERED_CHARS = 64 * 1024;
 const DEFAULT_DIAGNOSTIC_EXCERPT_CHARS = 4 * 1024;

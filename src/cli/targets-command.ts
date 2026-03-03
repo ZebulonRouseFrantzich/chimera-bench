@@ -26,7 +26,7 @@ import {
   SshPortForwardExecutionError,
   SshPortForwardValidationError,
   startSshPortForward,
-} from "../server/ssh/ssh-port-forward.ts";
+} from "../server/ssh/ssh-port-forward/index.ts";
 import { toError } from "../server/error-utils.ts";
 
 const TARGETS_EXEC_ENABLEMENT_ENV_KEY = "CHIMERA_ENABLE_TARGETS_EXEC";

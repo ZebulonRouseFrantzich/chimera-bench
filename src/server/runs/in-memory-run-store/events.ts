@@ -3,7 +3,7 @@ import {
   type RunEventListener,
   type RunEventName,
   type RunEventRecord,
-} from "./run-store-types.ts";
+} from "./types.ts";
 
 export class RunStoreEvents {
   private readonly runEvents = new Map<string, RunEventRecord[]>();

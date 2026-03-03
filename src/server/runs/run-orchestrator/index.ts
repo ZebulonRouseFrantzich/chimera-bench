@@ -4,25 +4,26 @@
  * This module translates engine interactions into stable run-store state,
  * applies timeout/cancellation policy, and persists terminal artifacts.
  */
-import type { EngineCatalog } from "../engines/engine-catalog.ts";
+import { toError } from "../../error-utils.ts";
+import type { EngineCatalog } from "../../engines/engine-catalog.ts";
 import type {
   EngineRunConfig,
   EngineRuntimeContext,
-} from "../engines/engine-plugin.ts";
-import { sanitizeControlCharacters } from "../http/sanitize.ts";
-import type { RuntimeControl } from "../runtime-control.ts";
-import { InMemoryRunStore } from "./in-memory-run-store.ts";
+} from "../../engines/engine-plugin.ts";
+import { sanitizeControlCharacters } from "../../http/sanitize.ts";
+import type { RuntimeControl } from "../../runtime-control.ts";
+import { InMemoryRunStore } from "../in-memory-run-store/index.ts";
 import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
-} from "./defaults.ts";
-import type { RunArtifactStore } from "./run-artifact-store.ts";
+} from "../defaults.ts";
+import { persistRunArtifact } from "../persist-run-artifact.ts";
+import type { RunArtifactStore } from "../run-artifact-store.ts";
 import {
   buildEngineCaseConfig,
   failRunWithRemainingCases,
   logDiagnostic,
-  persistRunArtifact,
-} from "./run-orchestrator-support.ts";
+} from "./support.ts";
 import {
   CaseExecutionTimeoutError,
   FatalRunExecutionError,
@@ -31,12 +32,11 @@ import {
   isAbortError,
   isFatalEngineFailure,
   linkAbortSignal,
-  toError,
   toRunFailure,
   withTimeout,
-} from "./run-orchestrator-runtime.ts";
-import type { StarterWorkload } from "./starter-workload.ts";
-import { estimateTokenCount } from "./token-estimation.ts";
+} from "./runtime.ts";
+import type { StarterWorkload } from "../starter-workload.ts";
+import { estimateTokenCount } from "../token-estimation.ts";
 
 interface RunOrchestratorOptions {
   runtime: RuntimeControl;
@@ -410,13 +410,10 @@ export class RunOrchestrator {
     } finally {
       unregisterActiveRunCanceller();
 
-      let shouldUnregisterEngineProcess = true;
-
       if (engineContext) {
         try {
           await stopEngine("run-finished");
         } catch (error) {
-          shouldUnregisterEngineProcess = false;
           const stopReason = sanitizeControlCharacters(toError(error).message);
           console.error(
             `[chimera-bench] runId=${input.runId} finalEngineStopError=${stopReason}`,
@@ -424,7 +421,7 @@ export class RunOrchestrator {
         }
       }
 
-      if (unregisterEngineProcess && shouldUnregisterEngineProcess) {
+      if (unregisterEngineProcess) {
         unregisterEngineProcess();
       }
     }

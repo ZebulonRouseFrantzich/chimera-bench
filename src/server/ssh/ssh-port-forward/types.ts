@@ -2,11 +2,11 @@ import type {
   ChildProcessWithoutNullStreams,
   SpawnOptionsWithoutStdio,
 } from "node:child_process";
-import type { SshTargetConnection } from "./ssh-exec.ts";
+import type { SshTargetConnection } from "../ssh-exec.ts";
 import type {
   ProcessTimerControls,
   SubprocessTermination,
-} from "./ssh-process-utils.ts";
+} from "../ssh-process-utils.ts";
 
 export interface SshPortForwardErrorDetails {
   readonly argv: string[];
@@ -36,7 +36,7 @@ export interface SshPortForwardRequest {
 export interface SshPortForwardHandle {
   readonly localPort: number;
   readonly argv: string[];
-  waitForExit: () => Promise<void>;
+  readonly waitForExit: () => Promise<void>;
 }
 
 export class SshPortForwardValidationError extends Error {

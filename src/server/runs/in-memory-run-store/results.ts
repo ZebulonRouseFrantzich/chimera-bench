@@ -4,16 +4,16 @@
  * These helpers normalize run record fields into API schema shapes while
  * ensuring mutable data is copied before publication.
  */
-import { RUN_RESULT_SCHEMA_VERSION } from "./defaults.ts";
+import { RUN_RESULT_SCHEMA_VERSION } from "../defaults.ts";
 import {
   buildProgress,
   cloneRunFailure,
-} from "./run-store-record-utils.ts";
+} from "./record-utils.ts";
 import type {
   RunRecord,
   RunSummaryData,
   StoredRunResult,
-} from "./run-store-types.ts";
+} from "./types.ts";
 
 export function buildRunSummary(run: RunRecord): RunSummaryData {
   return {

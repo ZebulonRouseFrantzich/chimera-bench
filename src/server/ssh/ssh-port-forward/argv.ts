@@ -1,8 +1,8 @@
 import {
   buildSshBaseConnectionParts,
   type SshTargetConnection,
-} from "./ssh-exec.ts";
-import { SshPortForwardValidationError } from "./ssh-port-forward-types.ts";
+} from "../ssh-exec.ts";
+import { SshPortForwardValidationError } from "./types.ts";
 
 export function buildSshPortForwardArgv(input: {
   profile: SshTargetConnection;

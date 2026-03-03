@@ -8,6 +8,7 @@ import {
   OpenAPIRegistry,
   OpenApiGeneratorV31,
 } from "@asteasolutions/zod-to-openapi";
+import { z } from "zod";
 import {
   DeleteTargetProfileEnvelopeSchema,
   CancelRunEnvelopeSchema,
@@ -23,11 +24,11 @@ import {
   RunIdParamsSchema,
   RunResultEnvelopeSchema,
   RunSummaryEnvelopeSchema,
-} from "./schemas.ts";
-import type { OpenApiRouteParamsSchema } from "./openapi/path-registration-types.ts";
-import { registerGlobalAndEnginePaths } from "./openapi/register-global-engine-paths.ts";
-import { registerRunPaths } from "./openapi/register-run-paths.ts";
-import { registerTargetPaths } from "./openapi/register-target-paths.ts";
+} from "../schemas.ts";
+import type { OpenApiRouteParamsSchema } from "./path-registration-types.ts";
+import { registerGlobalAndEnginePaths } from "./register-global-engine-paths.ts";
+import { registerRunPaths } from "./register-run-paths.ts";
+import { registerTargetPaths } from "./register-target-paths.ts";
 
 interface OpenApiInput {
   version: string;
@@ -62,10 +63,13 @@ export function createOpenApiDocument(input: OpenApiInput): object {
     "UpsertTargetProfileRequest",
     UpsertTargetProfileRequestSchema,
   );
-  const runIdParams = registry.register("RunIdParams", RunIdParamsSchema);
-  const targetProfileIdParams = registry.register(
+  const runIdParams = asOpenApiRouteParamsSchema(
+    registry.register("RunIdParams", RunIdParamsSchema),
+    "RunIdParams",
+  );
+  const targetProfileIdParams = asOpenApiRouteParamsSchema(
+    registry.register("TargetProfileIdParams", TargetProfileIdParamsSchema),
     "TargetProfileIdParams",
-    TargetProfileIdParamsSchema,
   );
   const errorResponse = registry.register("ErrorResponse", ErrorEnvelopeSchema);
 
@@ -81,8 +85,8 @@ export function createOpenApiDocument(input: OpenApiInput): object {
     targetProfilesResponse,
     deleteTargetProfileResponse,
     upsertTargetProfileRequest,
-    runIdParams: runIdParams as OpenApiRouteParamsSchema,
-    targetProfileIdParams: targetProfileIdParams as OpenApiRouteParamsSchema,
+    runIdParams,
+    targetProfileIdParams,
     errorResponse,
   };
 
@@ -159,4 +163,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   }
 
   return value as Record<string, unknown>;
+}
+
+function asOpenApiRouteParamsSchema(
+  schema: z.ZodTypeAny,
+  schemaName: string,
+): OpenApiRouteParamsSchema {
+  if (!(schema instanceof z.ZodObject)) {
+    throw new Error(`OpenAPI params schema '${schemaName}' must be a zod object.`);
+  }
+
+  return schema;
 }
