@@ -20,7 +20,7 @@ import type {
   EngineRunConfig,
   EngineRuntimeContext,
 } from "../src/server/engines/engine-plugin.ts";
-import { createStarterLlamaCppPlugin } from "../src/server/engines/starter-engine.ts";
+import { createStarterLlamaCppPlugin } from "../src/server/engines/starter-engine/index.ts";
 import type { TargetProfile } from "../src/server/targets/target-profile.ts";
 
 const TEST_API_KEY = "k".repeat(43);

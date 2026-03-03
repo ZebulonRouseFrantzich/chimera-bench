@@ -4,7 +4,7 @@ import { getOrCreateRequestId, jsonError, setRequestId } from "./api/envelope.ts
 import { createOpenApiDocument } from "./api/openapi/index.ts";
 import { createEngineCatalog } from "./engines/engine-catalog.ts";
 import type { EngineCatalog } from "./engines/engine-catalog.ts";
-import { createStarterLlamaCppPlugin } from "./engines/starter-engine.ts";
+import { createStarterLlamaCppPlugin } from "./engines/starter-engine/index.ts";
 import { sanitizeControlCharacters } from "./http/sanitize.ts";
 import {
   DEFAULT_SERVER_LOGGER,
