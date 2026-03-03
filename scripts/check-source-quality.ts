@@ -14,7 +14,6 @@ const MODULE_DOC_MIN_SLOC = 200;
 
 const LEGACY_MAX_SLOC: Readonly<Record<string, number>> = {
   "src/cli/targets-command.ts": 781,
-  "tests/starter-engine.test.ts": 1184,
 };
 
 const TRIVIA_TOKEN_KINDS = new Set<ts.SyntaxKind>([
