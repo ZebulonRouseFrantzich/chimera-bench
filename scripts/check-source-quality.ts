@@ -17,7 +17,6 @@ const LEGACY_MAX_SLOC: Readonly<Record<string, number>> = {
   "src/cli/targets-command.ts": 781,
   "src/server/runs/in-memory-run-store.ts": 762,
   "src/server/ssh/ssh-port-forward.ts": 756,
-  "src/server/runs/run-orchestrator.ts": 648,
   "tests/app-runs.test.ts": 1795,
   "tests/starter-engine.test.ts": 1184,
 };
