@@ -15,7 +15,6 @@ const MODULE_DOC_MIN_SLOC = 200;
 const LEGACY_MAX_SLOC: Readonly<Record<string, number>> = {
   "src/server/engines/starter-engine.ts": 2687,
   "src/cli/targets-command.ts": 781,
-  "src/server/runs/in-memory-run-store.ts": 762,
   "tests/app-runs.test.ts": 1795,
   "tests/starter-engine.test.ts": 1184,
 };
