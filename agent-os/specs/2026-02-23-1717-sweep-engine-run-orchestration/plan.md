@@ -1,4 +1,4 @@
-# Spec 4 - Sweep Engine Run Orchestration
+# Sweep Engine Run Orchestration
 
 ## Objective
 

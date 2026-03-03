@@ -5,7 +5,7 @@ This project is intended to follow a split server/client architecture inspired b
 ## Frontend
 
 - Vue.js is preferred.
-- Final frontend choice is decided in Spec 7 (Vue vs Solid) before client implementation.
+- Final frontend choice is decided in `agent-os/specs/2026-02-23-1721-frontend-stack-decision-vue-vs-solid/` before client implementation.
 - Client integrations should be generated from OpenAPI and consume server event streams.
 
 ## Backend

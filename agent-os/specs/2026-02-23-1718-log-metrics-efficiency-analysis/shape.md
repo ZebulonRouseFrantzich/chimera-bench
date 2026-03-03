@@ -16,8 +16,8 @@
 
 ## Assumptions
 
-- Spec 1 captures engine stdout/stderr and can persist additional run artifacts.
-- Spec 3 generates CSV/MD exports derived from `result.json`.
+- `server-plugin-llama-cpp-foundation` captures engine stdout/stderr and can persist additional run artifacts.
+- `workload-packs-and-exports` generates CSV/MD exports derived from `result.json`.
 
 ## Risks
 

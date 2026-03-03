@@ -1,4 +1,4 @@
-# Spec 5 - Log Metrics Efficiency Analysis
+# Log Metrics Efficiency Analysis
 
 ## Objective
 

@@ -15,8 +15,8 @@
 
 ## Assumptions
 
-- Spec 1 engine plugin contract is stable.
-- Spec 3 exports and Spec 5 deep metrics parsing exist (or metrics remain partially null).
+- `server-plugin-llama-cpp-foundation` engine plugin contract is stable.
+- `workload-packs-and-exports` exports and `log-metrics-efficiency-analysis` deep metrics parsing exist (or metrics remain partially null).
 
 ## Risks
 

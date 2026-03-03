@@ -10,4 +10,4 @@
 
 - Applied standards (embedded for offline review): `agent-os/specs/2026-02-23-1722-client-dashboard-dual-run-mode/standards.md`
 - Server API conventions: `agent-os/standards/server/api-conventions.md`
-- Spec 1 server API surfaces: `agent-os/specs/2026-02-23-1715-server-plugin-llama-cpp-foundation/plan.md`
+- Server API surfaces: `agent-os/specs/2026-02-23-1715-server-plugin-llama-cpp-foundation/plan.md`

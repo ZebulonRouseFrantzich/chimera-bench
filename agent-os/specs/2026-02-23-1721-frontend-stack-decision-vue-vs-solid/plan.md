@@ -1,4 +1,4 @@
-# Spec 7 - Frontend Stack Decision (Vue vs Solid)
+# Frontend Stack Decision (Vue vs Solid)
 
 ## Objective
 

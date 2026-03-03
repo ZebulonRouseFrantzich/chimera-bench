@@ -1,4 +1,4 @@
-# Spec 0 - Local Development Environment (Nix Flake)
+# Local Development Environment (Nix Flake)
 
 ## Objective
 
@@ -8,7 +8,7 @@ Make local development reproducible and low-friction via a Nix flake `devShell`,
 
 - Product direction: Bun + TypeScript server-first; frontend later.
 - This spec is a prerequisite for the other specs in `agent-os/specs/`.
-- The product roadmap in `agent-os/product/roadmap.md` starts at Spec 1; this "Spec 0" is intentionally a foundational dev-tooling spec.
+- The implementation order lives in `agent-os/product/roadmap.md`; this spec is intentionally foundational dev-tooling.
 - `just` is for developers only; end users run `chimera-bench ...` directly.
 
 ## Deliverables
@@ -33,7 +33,7 @@ Make local development reproducible and low-friction via a Nix flake `devShell`,
 
 - Changing end-user UX or requiring `just`/Nix for end users.
 - CI/CD integration for Nix (can be added later).
-- Locking in frontend tooling before Spec 7.
+- Locking in frontend tooling before `frontend-stack-decision-vue-vs-solid`.
 
 ## Implementation tasks
 

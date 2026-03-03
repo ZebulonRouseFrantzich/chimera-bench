@@ -1,4 +1,4 @@
-# Spec 9 - Engine Expansion (vLLM and exo)
+# Engine Expansion (vLLM and exo)
 
 ## Objective
 

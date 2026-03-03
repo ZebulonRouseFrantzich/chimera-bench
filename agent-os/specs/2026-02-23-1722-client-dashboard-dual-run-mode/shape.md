@@ -10,7 +10,7 @@
 
 ## Decisions
 
-- Frontend stack is chosen in Spec 7; this spec implements the client using that stack.
+- Frontend stack is chosen in `frontend-stack-decision-vue-vs-solid`; this spec implements the client using that stack.
 - Treat the server OpenAPI `/doc` and SSE endpoints as first-class integration surfaces.
 - Keep client initially single-user/power-user focused.
 - Visuals: none.
