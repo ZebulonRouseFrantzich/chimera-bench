@@ -31,7 +31,7 @@ Provide a single built-in benchmark workload suitable for `llama-server` sweep t
 ### Prompt Shape
 
 - Implemented as a deterministic generator in `src/server/runs/starter-workload.ts` (`buildTuningPrompt()`).
-- Approximate size (current implementation): ~84k chars and ~8k tokens via `estimateTokenCount()` (rough whitespace estimate).
+- Approximate size (current implementation): ~70k chars and ~8k tokens via `estimateTokenCount()` (rough whitespace estimate).
 - Structure:
   - `BEGIN_DATASET` / `END_DATASET` sentinel lines.
   - 256 synthetic records with stable ordering and stable token payloads.

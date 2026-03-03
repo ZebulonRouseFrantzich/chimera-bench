@@ -52,6 +52,78 @@ describe("run routes", () => {
     expect(resultPayload.data.result.cases).toHaveLength(3);
   });
 
+  test("persists tuning workload identifiers in result.json", async () => {
+    const runArtifactsRootDir = mkdtempSync(join(tmpdir(), "chimera-run-artifacts-"));
+
+    try {
+      const { app } = buildApp({
+        auth: {
+          enabled: false,
+          username: "chimera",
+        },
+        runArtifactsRootDir,
+        engines: createEngineCatalog([
+          createTestPlugin({
+            executeCase: async (_context, caseConfig) => ({
+              outputText: `output:${caseConfig.caseId}`,
+            }),
+          }),
+        ]),
+      });
+
+      const createResponse = await app.request("http://localhost/runs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          engineId: "llama-cpp",
+          target: {
+            type: "local",
+          },
+          model: {
+            identifier: "/tmp/model.gguf",
+          },
+          workloadId: "tuning.v0_0_1",
+        }),
+      });
+      expect(createResponse.status).toBe(202);
+
+      const createPayload = await createResponse.json();
+      const runId = createPayload.data?.runId;
+      expect(typeof runId).toBe("string");
+      if (typeof runId !== "string") {
+        throw new Error("Expected run creation response to include runId.");
+      }
+
+      const status = await waitForTerminalRunStatus(app, runId);
+      expect(status).toBe("completed");
+
+      const artifactPath = join(runArtifactsRootDir, runId, "result.json");
+      await waitForCondition(() => {
+        return existsSync(artifactPath);
+      });
+
+      const artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as {
+        workloadId?: string;
+        cases?: Array<{
+          caseId?: string;
+          promptId?: string;
+        }>;
+      };
+
+      expect(artifact.workloadId).toBe("tuning.v0_0_1");
+      expect(artifact.cases).toHaveLength(1);
+      expect(artifact.cases?.[0]?.caseId).toBe("tuning.v0_0_1.case-1");
+      expect(artifact.cases?.[0]?.promptId).toBe("tuning.v0_0_1.prompt-1");
+    } finally {
+      rmSync(runArtifactsRootDir, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
   test("persists result.json with required schema fields", async () => {
     const runArtifactsRootDir = mkdtempSync(join(tmpdir(), "chimera-run-artifacts-"));
 

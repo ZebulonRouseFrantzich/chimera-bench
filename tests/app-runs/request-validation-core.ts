@@ -65,6 +65,66 @@ describe("run routes", () => {
     expect(payload.error.code).toBe("ENGINE_NOT_SUPPORTED");
   });
 
+  test("accepts run creation for the tuning workload", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: TEST_MODEL_IDENTIFIER,
+        },
+        workloadId: "tuning.v0_0_1",
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    const payload = await response.json();
+    expect(typeof payload.data?.runId).toBe("string");
+  });
+
+  test("rejects unknown workload IDs", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: TEST_MODEL_IDENTIFIER,
+        },
+        workloadId: "missing.workload",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_WORKLOAD_INVALID");
+  });
+
   test("rejects local targets for engines without local capability", async () => {
     const { app } = buildApp({
       auth: {
