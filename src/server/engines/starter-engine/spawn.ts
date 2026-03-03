@@ -44,6 +44,8 @@ export async function spawnLlamaServerAttempt(
   subprocess.unref();
 
   const terminationPromise = createTerminationPromise(subprocess);
+  // This window only detects immediate launch failures; readiness is checked
+  // separately by waitUntilReady() against the health endpoint.
   const startupTermination = await waitForTermination(
     terminationPromise,
     input.dependencies.startupProbeWindowMs,

@@ -215,6 +215,8 @@ export async function runForwardCommand(
 
     await forwardHandle.waitForExit();
 
+    // A clean exit is only expected after a user/system signal-triggered
+    // shutdown; otherwise the tunnel died unexpectedly.
     if (!cancelledBySignal) {
       throw new TargetsCommandRuntimeError(
         `Target forward for profile '${sanitizeControlCharacters(parsed.profileId)}' stopped unexpectedly.`,

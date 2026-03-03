@@ -171,6 +171,8 @@ export async function startSshLlamaServerWithRetries(
         },
       });
     } finally {
+      // Failed attempts must release the reservation here; successful attempts
+      // transfer reservation ownership to run-state cleanup.
       if (!reservationOwnedByRunState) {
         input.dependencies.releaseRemoteSshPort(destinationKey, remotePort);
       }

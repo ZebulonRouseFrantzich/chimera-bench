@@ -117,6 +117,8 @@ export class RunOrchestrator {
 
       const activeEngineContext = engineContext;
 
+      // Timeout, cancel, and final cleanup paths can converge here; share one
+      // stop promise so plugin.stop() runs at most once per run.
       if (engineStopInFlight) {
         await engineStopInFlight;
         return;
@@ -246,6 +248,8 @@ export class RunOrchestrator {
         const contextTokens = estimateTokenCount(workloadCase.prompt);
         const caseStartMs = this.now();
         const remainingRunMs = getRemainingRunTimeMs();
+        // A case timeout cannot outlive the run budget; cap per-case timeout to
+        // remaining run time so run-level timeout semantics stay authoritative.
         const effectiveCaseTimeoutMs = Math.max(1, Math.min(caseTimeoutMs, remainingRunMs));
         const caseAbortController = new AbortController();
         const unlinkCaseAbort = linkAbortSignal(abortController.signal, caseAbortController);
@@ -310,6 +314,8 @@ export class RunOrchestrator {
           });
 
           if (isFatalEngineFailure(error)) {
+            // The current case has already been recorded as failed; advance so
+            // remaining-case failure synthesis starts at the next workload case.
             nextCaseIndex += 1;
             throw new FatalRunExecutionError(failure);
           }

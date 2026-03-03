@@ -71,6 +71,8 @@ export function normalizeRedactions(
     new Set(
       redactions
         .filter((candidate) => candidate.length > 0)
+        // Longest-first replacement avoids partial masking when one secret is a
+        // substring of another secret.
         .sort((left, right) => right.length - left.length),
     ),
   );

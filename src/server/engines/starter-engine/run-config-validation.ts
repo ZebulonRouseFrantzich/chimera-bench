@@ -76,6 +76,8 @@ export async function validateServerArgs(
     }
 
     const nextArgument = serverArgs[index + 1];
+    // Treat negative numeric values (for example "-0.5") as flag values, not
+    // new flags, so validators parse two-token flag forms correctly.
     if (
       !argument.includes("=") &&
       typeof nextArgument === "string" &&

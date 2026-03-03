@@ -41,6 +41,8 @@ export async function validateModelIdentifier(
     });
   }
 
+  // Canonicalize before root checks so symlinks cannot bypass model root
+  // confinement (for example, a symlink inside roots pointing outside).
   const absolutePath = resolve(normalized);
   let canonicalModelPath: string;
 

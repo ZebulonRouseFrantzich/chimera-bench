@@ -178,6 +178,8 @@ export function containsHelpToken(args: readonly string[]): boolean {
 }
 
 export function containsHelpTokenBeforeExecSeparator(args: readonly string[]): boolean {
+  // `targets exec` treats everything after `--` as remote argv, so help tokens
+  // there belong to the remote command, not to local CLI parsing.
   for (const argument of args) {
     if (argument === "--") {
       return false;
