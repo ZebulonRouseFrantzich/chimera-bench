@@ -12,9 +12,7 @@ const SOURCE_MAX_SLOC = 450;
 const TEST_MAX_SLOC = 700;
 const MODULE_DOC_MIN_SLOC = 200;
 
-const LEGACY_MAX_SLOC: Readonly<Record<string, number>> = {
-  "src/cli/targets-command.ts": 781,
-};
+const LEGACY_MAX_SLOC: Readonly<Record<string, number>> = {};
 
 const TRIVIA_TOKEN_KINDS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.SingleLineCommentTrivia,

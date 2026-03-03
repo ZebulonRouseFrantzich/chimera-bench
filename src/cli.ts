@@ -7,7 +7,7 @@ import {
   getTargetsCommandHelp,
   runTargetsCommand,
   TargetsCommandUsageError,
-} from "./cli/targets-command.ts";
+} from "./cli/targets-command/index.ts";
 import { ServeConfigurationError } from "./server/config.ts";
 import { sanitizeControlCharacters } from "./server/http/sanitize.ts";
 

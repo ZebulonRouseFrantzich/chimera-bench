@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
   runTargetsCommand,
   TargetsCommandUsageError,
-} from "../src/cli/targets-command.ts";
+} from "../src/cli/targets-command/index.ts";
 import type { SshCommandSuccess } from "../src/server/ssh/ssh-exec.ts";
 import type { SshPortForwardRequest } from "../src/server/ssh/ssh-port-forward/index.ts";
 import { TargetProfileStore } from "../src/server/targets/target-profile-store.ts";

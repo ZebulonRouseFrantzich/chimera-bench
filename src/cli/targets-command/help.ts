@@ -1,0 +1,27 @@
+export function getTargetsCommandHelp(): string {
+  return [
+    "Usage: chimera-bench targets <subcommand> [options]",
+    "",
+    "Subcommands:",
+    "  list                                List stored SSH target profiles",
+    "  show <profileId>                    Print one stored target profile JSON",
+    "  rm <profileId>                      Remove one stored target profile",
+    "  check <profileId>                   Run a remote SSH smoke check (echo ok)",
+    "  forward <profileId> --remote-port <port> [--print-local-port]",
+    "                                      Open SSH local port-forward and print local port",
+    "  exec <profileId> [--dry-run] -- <argv...>",
+    "                                      Run explicit remote argv over SSH",
+    "",
+    "Options:",
+    "  -h, --help                          Show this help",
+    "",
+    "Security:",
+    "  `targets exec` only runs when CHIMERA_ENABLE_TARGETS_EXEC=1 is set.",
+    "  `--dry-run` always works and prints the constructed ssh argv JSON.",
+    "  `targets forward` is intentionally ungated; it only opens a loopback-to-loopback tunnel.",
+    "  `--print-local-port` prints only the local port to stdout for scripts.",
+    "",
+    "Remote shell requirement:",
+    "  The remote SSH user must use a POSIX-compatible login shell (for example bash or dash).",
+  ].join("\n");
+}
