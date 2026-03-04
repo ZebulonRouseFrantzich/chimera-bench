@@ -30,3 +30,7 @@
 
 - Full sweep orchestration (post-v0.0.1): `agent-os/specs/2026-02-23-1717-sweep-engine-run-orchestration/`
 - Engine + server foundation: `agent-os/specs/2026-02-23-1715-server-plugin-llama-cpp-foundation/`
+
+## Review notes
+
+- Tasks 1-2 review findings and decisions: `agent-os/specs/2026-03-03-1210-sweep-mvp/review-findings.md`

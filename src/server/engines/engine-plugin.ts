@@ -56,6 +56,14 @@ export interface EngineRunConfig {
     serverArgs: string[];
     requestParams: Record<string, unknown>;
   };
+  sweep?: {
+    axes: {
+      serverArgs: Record<string, string[][]>;
+      requestParams: Record<string, unknown[]>;
+    };
+    repetitions: number;
+    maxCases: number;
+  };
   timeouts?: {
     caseMs?: number | undefined;
     runMs?: number | undefined;
