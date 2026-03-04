@@ -23,16 +23,23 @@
   - reject reserved/core-owned and denylisted server flags inside sweep axis fragments
   - reject reserved request param keys (`messages`, `model`, `stream`)
   - apply the same request-param node/depth/string-length budget validation used for `engine.requestParams` to each axis value
+  - enforce merged argv ceiling: `engine.serverArgs + sweep-selected args <= 64`
+  - enforce schema-level sweep axis/value list ceilings for early oversized payload rejection
+- Temporary rollout safety gate (post PR #21 review):
+  - after sweep validation passes, return `VALIDATION_SWEEP_NOT_SUPPORTED` until Task 3 + Task 4 land
+  - Task 3/4 implementation must remove this gate
 - Workload constraint for v0.0.1: sweep execution supports workloads with exactly 1 workload case.
+  - enforce this at run creation time when the temporary gate is removed
 - Keep execution single-threaded (one active run) to reduce resource risk.
 - Reuse existing `run.*` SSE events; defer sweep-specific event taxonomy.
 - SSE payloads must not include full per-case `engineArgs` / `requestParams` for v0.0.1.
 
 - Progress semantics:
-  - when `sweep` is present, `totalCases` must equal `plannedCases` (not workload case count)
+  - post-gate, when `sweep` is present, `totalCases` must equal `plannedCases` (not workload case count)
 
 - Hard safety cap:
   - `MAX_SWEEP_CASES = 256` server-enforced regardless of caller-provided `maxCases`
+  - for `maxCases > MAX_SWEEP_CASES`, return immediate `VALIDATION_SWEEP_TOO_LARGE`
 
 - Reliability stop condition:
   - `MAX_CONSECUTIVE_ENGINE_LIFECYCLE_FAILURES = 3` triggers failing the run and marking remaining cases failed
@@ -57,3 +64,7 @@
 
 - Operators can sweep `llama-server` args/params against an SSH target and quickly see rough best configs.
 - Re-running the same sweep config yields identical expansion order, stable `caseId`s, and deterministic ranking.
+
+## Review Follow-Up
+
+- Review triage and implementation decisions for Tasks 1-2 are documented in `review-findings.md`.

@@ -29,6 +29,9 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../../runs/defaults.ts";
+import {
+  validateAndPlanSweepConfig,
+} from "../../runs/sweep-validation.ts";
 import { validateSshModelIdentifier } from "../../runs/ssh-model-identifier-validation.ts";
 import type { RunArtifactStore } from "../../runs/run-artifact-store.ts";
 import { RunOrchestrator } from "../../runs/run-orchestrator/index.ts";
@@ -180,6 +183,27 @@ export function registerRunRoutes(
       });
     }
 
+    const workload = getBuiltInWorkload(request.workloadId);
+    if (!workload) {
+      return jsonError(context, 400, {
+        code: "VALIDATION_WORKLOAD_INVALID",
+        message: `Workload '${sanitizeControlCharacters(request.workloadId)}' is not available in this build.`,
+      });
+    }
+
+    if (request.sweep) {
+      const sweepValidation = validateAndPlanSweepConfig(request.sweep);
+      if (!sweepValidation.ok) {
+        return jsonError(context, 400, sweepValidation.payload);
+      }
+
+      return jsonError(context, 400, {
+        code: "VALIDATION_SWEEP_NOT_SUPPORTED",
+        message:
+          "Sweep runs are temporarily disabled until deterministic expansion and execution are implemented.",
+      });
+    }
+
     let validationResult: EngineRunConfigValidationResult;
     try {
       validationResult = await plugin.validateRunConfig(request);
@@ -218,14 +242,6 @@ export function registerRunRoutes(
     request.engine.serverArgs = validationResult.normalized.serverArgs;
     request.engine.requestParams = validationResult.normalized.requestParams;
     request.model.identifier = validationResult.normalized.modelIdentifier;
-
-    const workload = getBuiltInWorkload(request.workloadId);
-    if (!workload) {
-      return jsonError(context, 400, {
-        code: "VALIDATION_WORKLOAD_INVALID",
-        message: `Workload '${sanitizeControlCharacters(request.workloadId)}' is not available in this build.`,
-      });
-    }
 
     const caseTimeoutMs = request.timeouts.caseMs ?? DEFAULT_CASE_TIMEOUT_MS;
     const runTimeoutMs = request.timeouts.runMs ?? DEFAULT_RUN_TIMEOUT_MS;
