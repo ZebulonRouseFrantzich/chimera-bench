@@ -1,8 +1,35 @@
 import { describe, expect, test } from "bun:test";
 import { buildApp, TEST_MODEL_IDENTIFIER } from "./helpers.ts";
 
+function createSweepRequestBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    engineId: "llama-cpp",
+    target: {
+      type: "local",
+    },
+    model: {
+      identifier: TEST_MODEL_IDENTIFIER,
+    },
+    workloadId: "tuning.v0_0_1",
+    validationMode: "permissive",
+    sweep: {
+      axes: {
+        serverArgs: {
+          ctxSize: [["--ctx-size", "4096"], ["--ctx-size", "8192"]],
+        },
+        requestParams: {
+          max_tokens: [128, 256],
+        },
+      },
+      maxCases: 8,
+      repetitions: 1,
+    },
+    ...overrides,
+  };
+}
+
 describe("run routes", () => {
-  test("accepts sweep run creation and stores planned sweep totalCases", async () => {
+  test("temporarily rejects valid sweep requests until tasks 3/4 are implemented", async () => {
     const { app } = buildApp({
       auth: {
         enabled: false,
@@ -15,80 +42,15 @@ describe("run routes", () => {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        workloadId: "tuning.v0_0_1",
-        sweep: {
-          axes: {
-            serverArgs: {
-              ctxSize: [["--ctx-size", "4096"], ["--ctx-size", "8192"]],
-            },
-            requestParams: {
-              max_tokens: [128, 256],
-            },
-          },
-          maxCases: 8,
-          repetitions: 2,
-        },
-      }),
-    });
-
-    expect(response.status).toBe(202);
-    const payload = await response.json();
-    const runId = payload.data?.runId;
-    expect(typeof runId).toBe("string");
-    if (typeof runId !== "string") {
-      throw new Error("Expected create-run response to include runId.");
-    }
-
-    const summaryResponse = await app.request(`http://localhost/runs/${runId}`);
-    expect(summaryResponse.status).toBe(200);
-    const summaryPayload = await summaryResponse.json();
-    expect(summaryPayload.data.summary.totalCases).toBe(8);
-  });
-
-  test("rejects sweep payloads with empty axes", async () => {
-    const { app } = buildApp({
-      auth: {
-        enabled: false,
-        username: "chimera",
-      },
-    });
-
-    const response = await app.request("http://localhost/runs", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        workloadId: "tuning.v0_0_1",
-        sweep: {
-          axes: {},
-          maxCases: 1,
-          repetitions: 1,
-        },
-      }),
+      body: JSON.stringify(createSweepRequestBody()),
     });
 
     expect(response.status).toBe(400);
     const payload = await response.json();
-    expect(payload.error.code).toBe("VALIDATION_SWEEP_EMPTY");
+    expect(payload.error.code).toBe("VALIDATION_SWEEP_NOT_SUPPORTED");
   });
 
-  test("rejects sweep payloads where sweep.maxCases exceeds server ceiling", async () => {
+  test("still returns sweep validation failures before temporary rejection", async () => {
     const { app } = buildApp({
       auth: {
         enabled: false,
@@ -101,25 +63,19 @@ describe("run routes", () => {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        workloadId: "tuning.v0_0_1",
-        sweep: {
-          axes: {
-            requestParams: {
-              max_tokens: [64],
+      body: JSON.stringify(
+        createSweepRequestBody({
+          sweep: {
+            axes: {
+              requestParams: {
+                max_tokens: [1, 2, 3, 4],
+              },
             },
+            maxCases: 2,
+            repetitions: 1,
           },
-          maxCases: 257,
-          repetitions: 1,
-        },
-      }),
+        }),
+      ),
     });
 
     expect(response.status).toBe(400);
@@ -127,7 +83,7 @@ describe("run routes", () => {
     expect(payload.error.code).toBe("VALIDATION_SWEEP_TOO_LARGE");
   });
 
-  test("rejects sweep payloads where planned cases exceed maxCases", async () => {
+  test("returns reserved sweep axis key/flag failures before temporary rejection", async () => {
     const { app } = buildApp({
       auth: {
         enabled: false,
@@ -140,73 +96,31 @@ describe("run routes", () => {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        workloadId: "tuning.v0_0_1",
-        sweep: {
-          axes: {
-            requestParams: {
-              max_tokens: [64, 128, 256],
+      body: JSON.stringify(
+        createSweepRequestBody({
+          sweep: {
+            axes: {
+              serverArgs: {
+                bad: [["--port", "1234"]],
+              },
+              requestParams: {
+                messages: [[{ role: "user", content: "x" }]],
+              },
             },
+            maxCases: 8,
+            repetitions: 1,
           },
-          maxCases: 2,
-          repetitions: 1,
-        },
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    const payload = await response.json();
-    expect(payload.error.code).toBe("VALIDATION_SWEEP_TOO_LARGE");
-  });
-
-  test("rejects sweep payloads with reserved server flags", async () => {
-    const { app } = buildApp({
-      auth: {
-        enabled: false,
-        username: "chimera",
-      },
-    });
-
-    const response = await app.request("http://localhost/runs", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        workloadId: "tuning.v0_0_1",
-        sweep: {
-          axes: {
-            serverArgs: {
-              bad: [["--port", "1234"]],
-            },
-          },
-          maxCases: 8,
-          repetitions: 1,
-        },
-      }),
+        }),
+      ),
     });
 
     expect(response.status).toBe(400);
     const payload = await response.json();
     expect(payload.error.code).toBe("VALIDATION_SWEEP_INVALID");
-    expect(payload.error.details.issues[0].code).toBe("SERVER_ARG_RESERVED");
+    expect(payload.error.details.issues).toHaveLength(2);
   });
 
-  test("rejects sweep payloads with reserved request param keys", async () => {
+  test("rewrites request-param budget messages to sweep path context", async () => {
     const { app } = buildApp({
       auth: {
         enabled: false,
@@ -219,296 +133,31 @@ describe("run routes", () => {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        workloadId: "tuning.v0_0_1",
-        sweep: {
-          axes: {
-            requestParams: {
-              messages: [[{ role: "user", content: "x" }]],
+      body: JSON.stringify(
+        createSweepRequestBody({
+          sweep: {
+            axes: {
+              requestParams: {
+                max_tokens: ["x".repeat(9_000)],
+              },
             },
+            maxCases: 8,
+            repetitions: 1,
           },
-          maxCases: 8,
-          repetitions: 1,
-        },
-      }),
+        }),
+      ),
     });
 
     expect(response.status).toBe(400);
     const payload = await response.json();
     expect(payload.error.code).toBe("VALIDATION_SWEEP_INVALID");
-    expect(payload.error.details.issues[0].code).toBe("REQUEST_PARAM_RESERVED");
-  });
-
-  test("rejects sweep payloads with non-integer repetitions", async () => {
-    const { app } = buildApp({
-      auth: {
-        enabled: false,
-        username: "chimera",
-      },
-    });
-
-    const response = await app.request("http://localhost/runs", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        workloadId: "tuning.v0_0_1",
-        sweep: {
-          axes: {
-            requestParams: {
-              max_tokens: [64],
-            },
-          },
-          maxCases: 8,
-          repetitions: 1.5,
-        },
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    const payload = await response.json();
-    expect(payload.error.code).toBe("VALIDATION_BODY_INVALID");
-    expect(payload.error.details.issues[0].path).toBe("sweep.repetitions");
-  });
-
-  test("accepts sweep payloads when planned cases exactly match maxCases at boundary", async () => {
-    const { app } = buildApp({
-      auth: {
-        enabled: false,
-        username: "chimera",
-      },
-    });
-
-    const maxTokensAxisValues = Array.from({ length: 256 }, (_, index) => {
-      return index + 1;
-    });
-
-    const response = await app.request("http://localhost/runs", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        workloadId: "tuning.v0_0_1",
-        sweep: {
-          axes: {
-            requestParams: {
-              max_tokens: maxTokensAxisValues,
-            },
-          },
-          maxCases: 256,
-          repetitions: 1,
-        },
-      }),
-    });
-
-    expect(response.status).toBe(202);
-  });
-
-  test("rejects sweep payloads for workloads with more than one case", async () => {
-    const { app } = buildApp({
-      auth: {
-        enabled: false,
-        username: "chimera",
-      },
-    });
-
-    const response = await app.request("http://localhost/runs", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        workloadId: "starter.v1",
-        sweep: {
-          axes: {
-            requestParams: {
-              max_tokens: [64],
-            },
-          },
-          maxCases: 8,
-          repetitions: 1,
-        },
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    const payload = await response.json();
-    expect(payload.error.code).toBe("VALIDATION_SWEEP_INVALID");
-    expect(payload.error.details.issues[0].code).toBe("SWEEP_WORKLOAD_CASE_COUNT_INVALID");
-  });
-
-  test("rejects sweep payloads when combined base and sweep serverArgs exceed cap", async () => {
-    const { app } = buildApp({
-      auth: {
-        enabled: false,
-        username: "chimera",
-      },
-    });
-
-    const baseServerArgs = Array.from({ length: 63 }, (_, index) => {
-      return `--base-flag-${index}`;
-    });
-
-    const response = await app.request("http://localhost/runs", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        validationMode: "permissive",
-        workloadId: "tuning.v0_0_1",
-        engine: {
-          serverArgs: baseServerArgs,
-          requestParams: {},
-        },
-        sweep: {
-          axes: {
-            serverArgs: {
-              extraFlags: [["--sweep-flag-a", "--sweep-flag-b"]],
-            },
-          },
-          maxCases: 8,
-          repetitions: 1,
-        },
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    const payload = await response.json();
-    expect(payload.error.code).toBe("VALIDATION_SWEEP_INVALID");
-    expect(payload.error.details.issues[0].code).toBe("SERVER_ARG_LIMIT_EXCEEDED");
-  });
-
-  test("rejects sweep payloads with deeply nested requestParams values", async () => {
-    const { app } = buildApp({
-      auth: {
-        enabled: false,
-        username: "chimera",
-      },
-    });
-
-    let deeplyNestedValue: Record<string, unknown> = {
-      leaf: 1,
-    };
-    for (let level = 0; level < 10; level += 1) {
-      deeplyNestedValue = {
-        nested: deeplyNestedValue,
-      };
-    }
-
-    const response = await app.request("http://localhost/runs", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        workloadId: "tuning.v0_0_1",
-        sweep: {
-          axes: {
-            requestParams: {
-              max_tokens: [deeplyNestedValue],
-            },
-          },
-          maxCases: 8,
-          repetitions: 1,
-        },
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    const payload = await response.json();
-    expect(payload.error.code).toBe("VALIDATION_SWEEP_INVALID");
-    expect(payload.error.details.issues[0].message).toContain("nested depth exceeds");
-  });
-
-  test("rejects sweep payloads with too many axis keys at schema layer", async () => {
-    const { app } = buildApp({
-      auth: {
-        enabled: false,
-        username: "chimera",
-      },
-    });
-
-    const requestParamAxes = Object.fromEntries(
-      Array.from({ length: 33 }, (_, index) => {
-        return [`axis_${index}`, [index + 1]];
-      }),
+    expect(payload.error.details.issues[0].message).toContain(
+      "sweep.axes.requestParams.max_tokens[0]",
     );
-
-    const response = await app.request("http://localhost/runs", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        engineId: "llama-cpp",
-        target: {
-          type: "local",
-        },
-        model: {
-          identifier: TEST_MODEL_IDENTIFIER,
-        },
-        workloadId: "tuning.v0_0_1",
-        sweep: {
-          axes: {
-            requestParams: requestParamAxes,
-          },
-          maxCases: 8,
-          repetitions: 1,
-        },
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    const payload = await response.json();
-    expect(payload.error.code).toBe("VALIDATION_BODY_INVALID");
+    expect(payload.error.details.issues[0].message).not.toContain("engine.requestParams");
   });
 
-  test("rejects sweep payloads with serverArg fragments larger than cap", async () => {
+  test("rejects sweep request body when repetitions is not an integer", async () => {
     const { app } = buildApp({
       auth: {
         enabled: false,
@@ -516,8 +165,37 @@ describe("run routes", () => {
       },
     });
 
-    const oversizedFragment = Array.from({ length: 65 }, (_, index) => {
-      return `--fragment-flag-${index}`;
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        createSweepRequestBody({
+          sweep: {
+            axes: {
+              requestParams: {
+                max_tokens: [64],
+              },
+            },
+            maxCases: 8,
+            repetitions: 1.5,
+          },
+        }),
+      ),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_BODY_INVALID");
+  });
+
+  test("still accepts non-sweep run creation", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
     });
 
     const response = await app.request("http://localhost/runs", {
@@ -533,21 +211,9 @@ describe("run routes", () => {
         model: {
           identifier: TEST_MODEL_IDENTIFIER,
         },
-        workloadId: "tuning.v0_0_1",
-        sweep: {
-          axes: {
-            serverArgs: {
-              oversized: [oversizedFragment],
-            },
-          },
-          maxCases: 8,
-          repetitions: 1,
-        },
       }),
     });
 
-    expect(response.status).toBe(400);
-    const payload = await response.json();
-    expect(payload.error.code).toBe("VALIDATION_BODY_INVALID");
+    expect(response.status).toBe(202);
   });
 });

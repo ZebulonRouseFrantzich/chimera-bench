@@ -138,7 +138,10 @@ Perform validations in an order that avoids expensive work and prevents surprisi
 
 - If any of the above validations fail, reject with `400` and code `VALIDATION_SWEEP_INVALID`.
 
-- Progress accounting:
+- Temporary rollout gate (post-PR review safety decision):
+  - If sweep validation passes, reject with `400` and code `VALIDATION_SWEEP_NOT_SUPPORTED` until Task 3 + Task 4 are implemented.
+
+- Post-gate progress accounting (required once Tasks 3/4 remove the temporary rejection):
   - When `sweep` is present, create the run with `totalCases = plannedCases` (not workload case count) so status + SSE progress are correct.
 
 #### Post-Review Notes (2026-03-04)
@@ -153,11 +156,11 @@ Run validation-focused tests (to be added in the implementation for this task):
 bun test tests/app-runs.test.ts -t "sweep"
 ```
 
-Manual server smoke (tiny sweep is accepted, oversized sweep is rejected):
+Manual server smoke (valid sweep is currently rejected by temporary gate, invalid sweeps still return validation errors):
 
 1) Start the server.
 
-2) Create a sweep run:
+2) Create a syntactically valid sweep run (expect `400 VALIDATION_SWEEP_NOT_SUPPORTED`):
 
 ```bash
 curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
@@ -165,7 +168,7 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
   http://127.0.0.1:4096/runs \
   -d '{
     "engineId": "llama-cpp",
-    "target": { "type": "ssh", "profileId": "lab" },
+    "target": { "type": "local" },
     "model": { "identifier": "/models/model.gguf" },
     "workloadId": "tuning.v0_0_1",
     "engine": { "serverArgs": [], "requestParams": {} },
@@ -200,7 +203,7 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
   http://127.0.0.1:4096/runs \
   -d '{
     "engineId": "llama-cpp",
-    "target": { "type": "ssh", "profileId": "lab" },
+    "target": { "type": "local" },
     "model": { "identifier": "/models/model.gguf" },
     "workloadId": "tuning.v0_0_1",
     "validationMode": "permissive",
@@ -224,7 +227,7 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
   http://127.0.0.1:4096/runs \
   -d '{
     "engineId": "llama-cpp",
-    "target": { "type": "ssh", "profileId": "lab" },
+    "target": { "type": "local" },
     "model": { "identifier": "/models/model.gguf" },
     "workloadId": "tuning.v0_0_1",
     "validationMode": "permissive",
@@ -244,7 +247,7 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
   http://127.0.0.1:4096/runs \
   -d '{
     "engineId": "llama-cpp",
-    "target": { "type": "ssh", "profileId": "lab" },
+    "target": { "type": "local" },
     "model": { "identifier": "/models/model.gguf" },
     "workloadId": "tuning.v0_0_1",
     "validationMode": "permissive",
@@ -260,6 +263,13 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
 ```
 
 ### Task 3: Implement Deterministic Expansion And Stable Case Identities
+
+#### Temporary Gate Removal Coupling (Required)
+
+- Task 3 must be coordinated with Task 4 to remove the temporary
+  `VALIDATION_SWEEP_NOT_SUPPORTED` gate introduced after PR #21 review.
+- Do not leave the temporary gate in place once deterministic expansion and
+  execution wiring are complete.
 
 #### Deterministic Expansion
 
@@ -327,6 +337,9 @@ bun test tests/app-runs.test.ts -t "caseId"
 ### Task 4: Implement Sweep Execution With Restart-Per-Case
 
 When `sweep` is present, execute expanded cases sequentially and restart the engine between cases.
+
+- As part of Task 4 completion, remove the temporary
+  `VALIDATION_SWEEP_NOT_SUPPORTED` gate from `POST /runs`.
 
 #### Workload Constraint (v0.0.1)
 

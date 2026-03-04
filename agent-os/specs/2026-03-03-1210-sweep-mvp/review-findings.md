@@ -6,9 +6,14 @@ the decision taken for each finding, and where implementation landed.
 ## Decisions
 
 1. **`totalCases` semantics with sweep**
-   - Decision: keep `totalCases = plannedCases` for sweep runs, and enforce
-     the v0.0.1 workload constraint (`exactly 1` workload case) at creation
-     time to avoid progress mismatch.
+   - Decision (updated after PR comment triage): temporarily reject all valid
+     sweep run creation requests with `VALIDATION_SWEEP_NOT_SUPPORTED` until
+     Task 3 (deterministic expansion/case IDs) and Task 4 (sweep execution)
+     are implemented.
+   - Rationale: avoid claiming `totalCases = plannedCases` before orchestrator
+     execution actually iterates expanded sweep cases.
+   - Removal requirement: Tasks 3/4 must explicitly remove this temporary gate
+     and re-enable sweep acceptance only once execution parity is complete.
    - Implemented in: `src/server/routes/run-routes/index.ts`
 
 2. **`requestParam` vs `requestParams` typo claim**
@@ -19,7 +24,7 @@ the decision taken for each finding, and where implementation landed.
 3. **JSON-only recursion guardrails**
    - Decision: add explicit depth and node-budget guards to sweep JSON-only
      validation to prevent stack/CPU abuse.
-   - Implemented in: `src/server/runs/sweep-validation.ts`
+   - Implemented in: `src/server/runs/sweep-validation/json-only.ts`
 
 4. **Schema-level sweep size limits**
    - Decision: add schema caps for axis count and axis value list sizes to fail
@@ -31,7 +36,7 @@ the decision taken for each finding, and where implementation landed.
      level. Keep the server ceiling (`MAX_SWEEP_CASES`) enforced in sweep
      validation so `VALIDATION_SWEEP_TOO_LARGE` behavior remains explicit.
    - Implemented in: `src/server/api/schemas.ts`,
-     `src/server/runs/sweep-validation.ts`
+     `src/server/runs/sweep-validation/index.ts`
 
 6. **`cloneUnknown` fallback aliasing risk**
    - Decision: replace silent alias fallback with JSON clone fallback and a
@@ -42,7 +47,7 @@ the decision taken for each finding, and where implementation landed.
    - Decision: validate the maximum possible merged argv length
      (`engine.serverArgs` + longest fragment per sweep axis) against server
      limits.
-   - Implemented in: `src/server/runs/sweep-validation.ts`,
+   - Implemented in: `src/server/runs/sweep-validation/index.ts`,
      `src/server/routes/run-routes/index.ts`
 
 8. **Fast-fail on `sweep.maxCases > MAX_SWEEP_CASES`**
@@ -53,18 +58,24 @@ the decision taken for each finding, and where implementation landed.
 9. **Planned-case overflow hardening**
    - Decision: use bounded multiplication with early limit checks to avoid
      overflow while computing planned cases.
-   - Implemented in: `src/server/runs/sweep-validation.ts`
+   - Implemented in: `src/server/runs/sweep-validation/index.ts`
 
 10. **Redundant safe-integer check claim**
-    - Decision: no change; false positive after verification.
-    - Verified in: `src/server/runs/sweep-validation.ts`
+     - Decision: no change; false positive after verification.
+     - Verified in: `src/server/runs/sweep-validation/index.ts`
 
 11. **Sweep test coverage gaps**
-    - Decision: add tests for boundary and policy cases (exact max boundary,
-      multi-case workload rejection, argv-merge cap, deep nesting).
+    - Decision (updated): align tests with temporary sweep rejection while
+      preserving pre-gate sweep validation assertions.
     - Implemented in: `tests/app-runs/sweep-validation.ts`
 
 12. **Sweep fragment token count cap**
     - Decision: cap per-fragment token count to the same ceiling as base
       `engine.serverArgs` for consistency.
     - Implemented in: `src/server/api/schemas.ts`
+
+13. **PR #21 comment: sweep/error message context**
+    - Decision: rewrite request-param budget validation messages when surfaced
+      through sweep validation so they reference
+      `sweep.axes.requestParams.<key>[<index>]` instead of `engine.requestParams`.
+    - Implemented in: `src/server/runs/sweep-validation/index.ts`

@@ -178,7 +178,11 @@ export function validateAndPlanSweepConfig(
           issues.push(
             createSweepIssue({
               code: "REQUEST_PARAM_VALUE_INVALID",
-              message: budgetIssue.message,
+              message: rewriteRequestParamBudgetMessage(
+                budgetIssue.message,
+                requestParamKey,
+                valueIndex,
+              ),
               path: buildSweepRequestValuePath(
                 requestParamKey,
                 valueIndex,
@@ -293,6 +297,15 @@ function buildSweepRequestValuePath(
   }
 
   return basePath;
+}
+
+function rewriteRequestParamBudgetMessage(
+  message: string,
+  requestParamKey: string,
+  valueIndex: number,
+): string {
+  const sweepPath = `sweep.axes.requestParams.${requestParamKey}[${valueIndex}]`;
+  return message.replaceAll("engine.requestParams", sweepPath);
 }
 
 function computePlannedCases(input: {

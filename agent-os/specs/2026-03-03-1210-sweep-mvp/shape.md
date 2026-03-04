@@ -25,14 +25,17 @@
   - apply the same request-param node/depth/string-length budget validation used for `engine.requestParams` to each axis value
   - enforce merged argv ceiling: `engine.serverArgs + sweep-selected args <= 64`
   - enforce schema-level sweep axis/value list ceilings for early oversized payload rejection
+- Temporary rollout safety gate (post PR #21 review):
+  - after sweep validation passes, return `VALIDATION_SWEEP_NOT_SUPPORTED` until Task 3 + Task 4 land
+  - Task 3/4 implementation must remove this gate
 - Workload constraint for v0.0.1: sweep execution supports workloads with exactly 1 workload case.
-  - enforce this constraint at run creation time when `sweep` is present
+  - enforce this at run creation time when the temporary gate is removed
 - Keep execution single-threaded (one active run) to reduce resource risk.
 - Reuse existing `run.*` SSE events; defer sweep-specific event taxonomy.
 - SSE payloads must not include full per-case `engineArgs` / `requestParams` for v0.0.1.
 
 - Progress semantics:
-  - when `sweep` is present, `totalCases` must equal `plannedCases` (not workload case count)
+  - post-gate, when `sweep` is present, `totalCases` must equal `plannedCases` (not workload case count)
 
 - Hard safety cap:
   - `MAX_SWEEP_CASES = 256` server-enforced regardless of caller-provided `maxCases`
