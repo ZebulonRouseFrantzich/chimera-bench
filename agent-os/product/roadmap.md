@@ -20,7 +20,7 @@ Rules:
   - Headless `serve` command + baseline server APIs (`/global/health`, `/event`, `/doc`), plugin registry, and first `llama.cpp` (`llama-server`) engine.
 - [x] SSH Remote Execution Profiles (`agent-os/specs/2026-02-23-1720-ssh-remote-execution-profiles/`)
   - Run `llama-server` on a remote machine over SSH with safe defaults while persisting artifacts on the orchestrator host.
-- [ ] Tuning Workload MVP (`agent-os/specs/2026-03-03-1200-tuning-workload-mvp/`)
+- [x] Tuning Workload MVP (`agent-os/specs/2026-03-03-1200-tuning-workload-mvp/`)
   - Single built-in, long/stress prompt workload for v0.0.1 sweep tuning (KV-cache and OOM sensitivity).
 - [ ] Sweep MVP (`agent-os/specs/2026-03-03-1210-sweep-mvp/`)
   - Minimal deterministic sweep expansion (explicit lists), restart-per-case execution, and best-to-worst ranking in `result.json`.

@@ -2,11 +2,25 @@
 
 ## Internal repo references
 
-- Run orchestration: `src/server/runs/run-orchestrator/`
-- Run artifact schema: `agent-os/standards/runs/result-schema.md`
+- Run creation route wiring: `src/server/routes/run-routes/index.ts`
+- Create-run request schema (zod + OpenAPI): `src/server/api/schemas.ts`
+- Run OpenAPI path registration: `src/server/api/openapi/register-run-paths.ts`
+
+- Run orchestration (single-run baseline): `src/server/runs/run-orchestrator/`
+- Run store + per-case outcomes: `src/server/runs/in-memory-run-store/`
+  - Case outcome recording: `src/server/runs/in-memory-run-store/case-outcomes.ts`
+  - Result builder (persisted `result.json` shape): `src/server/runs/in-memory-run-store/results.ts`
+- Run artifact persistence: `src/server/runs/run-artifact-store.ts`
+
+- Run result schema standard: `agent-os/standards/runs/result-schema.md`
 - Engine interface: `agent-os/standards/plugins/engine-interface.md`
 - Roadmap (implementation order): `agent-os/product/roadmap.md`
 
+- Existing run-route tests to extend:
+  - `tests/app-runs/`
+  - `tests/app-runs/results-persistence.ts`
+
 ## Related specs
 
-- Full sweep orchestration: `agent-os/specs/2026-02-23-1717-sweep-engine-run-orchestration/`
+- Full sweep orchestration (post-v0.0.1): `agent-os/specs/2026-02-23-1717-sweep-engine-run-orchestration/`
+- Engine + server foundation: `agent-os/specs/2026-02-23-1715-server-plugin-llama-cpp-foundation/`
