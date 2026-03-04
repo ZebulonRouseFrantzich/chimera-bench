@@ -7,6 +7,7 @@ import type {
   RemoteGpuSelectionHints,
   StarterLlamaCppPluginDependencies,
 } from "./types.ts";
+import { sanitizeControlCharacters } from "../../http/sanitize.ts";
 import {
   extractFlagToken,
   normalizeIssueMessage,
@@ -51,10 +52,12 @@ export async function enforceMixedGpuSafetyForSshTarget(
     );
   } catch (error) {
     const reason = normalizeIssueMessage(toError(error).message);
+    const sanitizedTargetProfileId = sanitizeControlCharacters(input.sshProfile.id);
+    const sanitizedReason = sanitizeControlCharacters(reason);
     input.dependencies.logInfo(
       `[chimera-bench] event=run.validation.gpu_selection_discovery_skipped` +
-        ` targetProfileId=${input.sshProfile.id}` +
-        ` reason=${reason}`,
+        ` targetProfileId=${sanitizedTargetProfileId}` +
+        ` reason=${sanitizedReason}`,
     );
     return;
   }
@@ -110,7 +113,12 @@ function hasExplicitGpuSelection(serverArgs: readonly string[]): boolean {
 
     const rawFlag = extractFlagToken(argument).toLowerCase();
     if (EXPLICIT_GPU_SELECTION_FLAGS.has(rawFlag)) {
-      return true;
+      const selectionValue = extractServerArgValue(serverArgs, index);
+      if (typeof selectionValue === "string" && selectionValue.trim().length > 0) {
+        return true;
+      }
+
+      continue;
     }
 
     if (SPLIT_MODE_FLAGS.has(rawFlag)) {

@@ -95,7 +95,8 @@ export async function captureCommandOutput(
 
 export function parseSupportedServerFlags(helpOutput: string): ReadonlySet<string> {
   const supportedFlags = new Set<string>();
-  const flagPattern = /(?:^|\s)(--[a-z0-9][a-z0-9-]*|-[a-z0-9])(?=\s|=|,|\]|$)/gi;
+  const flagPattern =
+    /(?:^|\s)(--[a-z0-9][a-z0-9-]*|-(?!\d+(?:\s|=|,|\]|$))[a-z0-9][a-z0-9-]*)(?=\s|=|,|\]|$)/gi;
 
   for (const match of helpOutput.matchAll(flagPattern)) {
     const flag = match[1]?.trim().toLowerCase();

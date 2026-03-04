@@ -96,10 +96,17 @@ If you omit GPU selection on a mixed-GPU SSH target, `POST /runs` fails validati
 
 If `--split-mode` is provided with a value other than `none`, the mixed-GPU guard still rejects the run unless `--device` or `--main-gpu` is also set.
 
+`--device` and `--main-gpu` must include non-empty values to satisfy this guard.
+
 When available, the validation issue and server console logs include detected options for both forms, for example:
 
 - `Detected --device identifiers: ROCm0, ROCm1`
 - `Detected --main-gpu values: 0, 1`
+
+Scope note for v0.0.1:
+
+- The guard validates selector presence + basic value shape (non-empty values; `--split-mode none` only).
+- Selector membership validation against discovered candidates (for example rejecting `--device ROCm` while allowing `--device ROCm0`) is deferred to post-v0.0.1 follow-up work in `agent-os/specs/2026-02-23-1716-workload-packs-and-exports/plan.md`.
 
 ### Recommended Sweep Strategy
 
@@ -251,6 +258,7 @@ cat runs/<runId>/result.json
 
 - Detect remote mixed-GPU environments via remote `llama-server --help` discovery.
 - Reject SSH run configs that omit explicit GPU selection when multiple GPU devices are detected.
+- Reject SSH run configs that provide `--device` / `--main-gpu` flags without non-empty values.
 - Suggest both selector styles (`--device` and `--main-gpu`) when mixed-GPU is detected.
 - Include detected selector candidates (when available) in validation guidance shown to users.
 - Treat `--split-mode` as satisfying mixed-GPU safety only when value is `none`.

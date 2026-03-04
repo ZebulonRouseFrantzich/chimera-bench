@@ -16,9 +16,11 @@
 - SSH mixed-GPU safety: if a remote target exposes multiple GPU devices, require explicit GPU selection flags in `engine.serverArgs` (for example `--device ROCm0`, `--main-gpu 0`, or `--split-mode none`).
 - Mixed-GPU guidance should suggest both `--device` and `--main-gpu`; when help output exposes concrete candidates, include them in user-visible validation guidance and server console logs.
 - `--split-mode` only counts as mixed-GPU guard compliance when value is `none`; other split-mode values still require explicit `--device` or `--main-gpu`.
+- `--device` and `--main-gpu` must include non-empty values to satisfy mixed-GPU guard compliance.
 - Remote `llama-server --help` discovery is shared/cached across strict flag validation and mixed-GPU hints so one cold-path probe serves both.
 - Remote help cache uses TTL plus a fixed max-entry bound to avoid unbounded growth in long-running servers.
 - Keep cache timing on `Date.now()` (short-lived TTL freshness checks); no monotonic-clock migration required for this MVP.
+- Full selector-value membership validation against discovered candidates is deferred to post-v0.0.1 follow-up work.
 
 ## Context
 

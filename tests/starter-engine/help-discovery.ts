@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { parseGpuSelectionHints } from "../../src/server/engines/starter-engine/help-discovery.ts";
+import {
+  parseGpuSelectionHints,
+  parseSupportedServerFlags,
+} from "../../src/server/engines/starter-engine/help-discovery.ts";
 
 describe("starter-engine help discovery", () => {
   test("parses mixed-GPU selector candidates from llama-server help output", () => {
@@ -48,5 +51,35 @@ GPU #1: gfx1030
     expect(hints.gpuDeviceCount).toBe(0);
     expect(hints.mainGpuIndices).toEqual([]);
     expect(hints.deviceIdentifiers).toEqual([]);
+  });
+
+  test("parses multi-character short flags from help output", () => {
+    const supportedFlags = parseSupportedServerFlags(`
+usage:
+  -sm, --split-mode <none|layer>
+  -mg, --main-gpu <index>
+  -dev, --device <dev1,dev2>
+  --ctx-size <tokens>
+`);
+
+    expect(supportedFlags.has("-sm")).toBe(true);
+    expect(supportedFlags.has("-mg")).toBe(true);
+    expect(supportedFlags.has("-dev")).toBe(true);
+    expect(supportedFlags.has("--split-mode")).toBe(true);
+    expect(supportedFlags.has("--main-gpu")).toBe(true);
+    expect(supportedFlags.has("--device")).toBe(true);
+    expect(supportedFlags.has("--ctx-size")).toBe(true);
+  });
+
+  test("does not treat negative numeric tokens as short flags", () => {
+    const supportedFlags = parseSupportedServerFlags(
+      "args: --temp -0.5 --presence-penalty=-1 --seed -1",
+    );
+
+    expect(supportedFlags.has("-0")).toBe(false);
+    expect(supportedFlags.has("-1")).toBe(false);
+    expect(supportedFlags.has("--temp")).toBe(true);
+    expect(supportedFlags.has("--presence-penalty")).toBe(true);
+    expect(supportedFlags.has("--seed")).toBe(true);
   });
 });

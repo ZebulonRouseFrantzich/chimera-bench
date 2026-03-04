@@ -16,6 +16,7 @@
 - Run validation error envelope + console guidance logging: `src/server/routes/run-routes/index.ts`
 - Starter engine tests (SSH + validation): `tests/starter-engine/`
 - Starter dependency cache behavior tests: `tests/starter-engine/dependencies.ts`
+- Post-v0.0.1 selector-value validation follow-up: `agent-os/specs/2026-02-23-1716-workload-packs-and-exports/plan.md`
 - Roadmap (implementation order): `agent-os/product/roadmap.md`
 
 ## External references
