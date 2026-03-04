@@ -6,6 +6,10 @@
 - Create-run request schema (zod + OpenAPI): `src/server/api/schemas.ts`
 - Run OpenAPI path registration: `src/server/api/openapi/register-run-paths.ts`
 
+- Request param budget validation (node/depth/string limits): `src/server/api/schemas.ts`
+- Reserved/denylisted server args + reserved request param keys (llama.cpp plugin): `src/server/engines/starter-engine/run-config-validation.ts`
+- Reserved/denylisted flag sets: `src/server/engines/starter-engine/constants.ts`
+
 - Run orchestration (single-run baseline): `src/server/runs/run-orchestrator/`
 - Run store + per-case outcomes: `src/server/runs/in-memory-run-store/`
   - Case outcome recording: `src/server/runs/in-memory-run-store/case-outcomes.ts`
@@ -18,6 +22,8 @@
 
 - Existing run-route tests to extend:
   - `tests/app-runs/`
+  - `tests/app-runs/request-validation-core.ts`
+  - `tests/app-runs/engine-validation.ts`
   - `tests/app-runs/results-persistence.ts`
 
 ## Related specs

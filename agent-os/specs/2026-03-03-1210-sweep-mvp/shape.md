@@ -19,9 +19,23 @@
 - Merge semantics are simple and deterministic:
   - `engine.serverArgs` is the base argv list; sweep axis argv fragments are appended in sorted axis-key order
   - `engine.requestParams` is the base object; sweep-selected keys override base values
+- Security hardening at creation time:
+  - reject reserved/core-owned and denylisted server flags inside sweep axis fragments
+  - reject reserved request param keys (`messages`, `model`, `stream`)
+  - apply the same request-param node/depth/string-length budget validation used for `engine.requestParams` to each axis value
 - Workload constraint for v0.0.1: sweep execution supports workloads with exactly 1 workload case.
 - Keep execution single-threaded (one active run) to reduce resource risk.
 - Reuse existing `run.*` SSE events; defer sweep-specific event taxonomy.
+- SSE payloads must not include full per-case `engineArgs` / `requestParams` for v0.0.1.
+
+- Progress semantics:
+  - when `sweep` is present, `totalCases` must equal `plannedCases` (not workload case count)
+
+- Hard safety cap:
+  - `MAX_SWEEP_CASES = 256` server-enforced regardless of caller-provided `maxCases`
+
+- Reliability stop condition:
+  - `MAX_CONSECUTIVE_ENGINE_LIFECYCLE_FAILURES = 3` triggers failing the run and marking remaining cases failed
 
 ## Context
 
@@ -35,6 +49,7 @@
 - Combinatorial explosion: mitigate with `maxCases` caps.
 - Restart-per-case increases runtime; acceptable for tuning MVP.
 - Hash-based identities require canonical JSON + JSON-serializable axis values.
+- Hash stability drift: mitigate with golden hash fixtures.
 - Persisting many cases can produce large artifacts; keep `maxCases` conservative.
 - Existing run storage/orchestration must record per-case `engineArgs` + `requestParams` for sweeps.
 

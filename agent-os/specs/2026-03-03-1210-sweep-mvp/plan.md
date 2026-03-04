@@ -78,15 +78,55 @@ Add an optional `sweep` object to `POST /runs` request bodies.
     - Start with `{ ...engine.requestParams }`.
     - For each `sweep.axes.requestParams` key selected, set/override that key on the object.
 
+#### Server-Side Hard Limits (v0.0.1)
+
+- The server must enforce a hard upper bound on sweep size regardless of what the client requests:
+  - `MAX_SWEEP_CASES = 256`
+- `sweep.maxCases` must be `<= MAX_SWEEP_CASES`.
+- `plannedCases` must be `<= MAX_SWEEP_CASES`.
+
+Rationale: avoid accidental or malicious long-running sweeps (SSH restarts per case) and overly large `result.json` artifacts.
+
+#### Validation Ordering (POST /runs)
+
+Perform validations in an order that avoids expensive work and prevents surprising partial acceptance:
+
+1) Parse and validate the request body shape (zod).
+2) Resolve the workload (to enforce sweep workload constraints before accepting a run).
+3) Validate sweep config (axes shape, JSON-only values, caps) and compute `plannedCases` without expanding the full matrix.
+4) Accept the run.
+
 #### Validation Rules
 
 - If `sweep` is present, it must expand to at least 1 case.
 - All axis lists must be non-empty.
 - `sweep.maxCases` must be enforced against the planned total cases.
   - `plannedCases = (product of axis lengths across both namespaces) * repetitions`
-- If `plannedCases > maxCases`, reject with `400` and code `VALIDATION_SWEEP_TOO_LARGE`.
+- Reject any request where `sweep.maxCases > MAX_SWEEP_CASES` with `400` and code `VALIDATION_SWEEP_TOO_LARGE`.
+- If `plannedCases > maxCases` or `plannedCases > MAX_SWEEP_CASES`, reject with `400` and code `VALIDATION_SWEEP_TOO_LARGE`.
 - If `sweep` is present but axes are empty (no `serverArgs` and no `requestParams` axes), reject with `400` and code `VALIDATION_SWEEP_EMPTY`.
-- If any axis contains a non-JSON-serializable value (for example `NaN`, circular objects), reject with `400` and code `VALIDATION_SWEEP_INVALID`.
+- `sweep.repetitions` must be an integer `>= 1`.
+- Axis values must be JSON-only. Reject values containing:
+  - `undefined`
+  - non-finite numbers (`NaN`, `Infinity`, `-Infinity`)
+  - non-plain-JSON objects (for example `Date`, `Map`, `Set`, class instances)
+  - circular references
+  - `BigInt`
+  - symbols
+
+- `sweep.axes.serverArgs` validation (creation-time, lightweight):
+  - Reject reserved/core-owned flags (model/host/port/api-key/webui and any other flags owned by core/plugin) in any axis argv fragment.
+  - Reject denylisted flags/values that can write files or expand network exposure.
+  - This validation must not require repeated remote `llama-server --help` probes.
+
+- `sweep.axes.requestParams` validation (creation-time):
+  - Reject reserved request param keys owned by the orchestrator (at minimum: `messages`, `model`, `stream`).
+  - Each axis value must pass the same request-param node/depth/string-length budget validation used for `engine.requestParams`.
+
+- If any of the above validations fail, reject with `400` and code `VALIDATION_SWEEP_INVALID`.
+
+- Progress accounting:
+  - When `sweep` is present, create the run with `totalCases = plannedCases` (not workload case count) so status + SSE progress are correct.
 
 #### Manual Testing Steps
 
@@ -159,6 +199,49 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
   }'
 ```
 
+4) Verify server-wide ceiling is enforced (expect `400 VALIDATION_SWEEP_TOO_LARGE`):
+
+```bash
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:4096/runs \
+  -d '{
+    "engineId": "llama-cpp",
+    "target": { "type": "ssh", "profileId": "lab" },
+    "model": { "identifier": "/models/model.gguf" },
+    "workloadId": "tuning.v0_0_1",
+    "validationMode": "permissive",
+    "sweep": {
+      "axes": { "requestParams": { "max_tokens": [1] } },
+      "maxCases": 1000,
+      "repetitions": 1
+    }
+  }'
+```
+
+5) Verify reserved keys/flags are rejected (expect `400 VALIDATION_SWEEP_INVALID`):
+
+```bash
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:4096/runs \
+  -d '{
+    "engineId": "llama-cpp",
+    "target": { "type": "ssh", "profileId": "lab" },
+    "model": { "identifier": "/models/model.gguf" },
+    "workloadId": "tuning.v0_0_1",
+    "validationMode": "permissive",
+    "sweep": {
+      "axes": {
+        "serverArgs": { "bad": [["--port", "1234"]] },
+        "requestParams": { "messages": [[{"role":"user","content":"x"}]] }
+      },
+      "maxCases": 32,
+      "repetitions": 1
+    }
+  }'
+```
+
 ### Task 3: Implement Deterministic Expansion And Stable Case Identities
 
 #### Deterministic Expansion
@@ -183,9 +266,22 @@ Each expanded case must have a stable identity derived from the inference-affect
   - `requestParams` (final request params object for this case)
 
 - Canonicalization rules:
+  - Only JSON values are allowed:
+    - `null`, booleans, strings, finite numbers, arrays, plain objects
+  - Reject any case config value containing:
+    - `undefined`
+    - non-finite numbers (`NaN`, `Infinity`, `-Infinity`)
+    - `BigInt`
+    - symbols
+    - functions
+    - circular references
+    - non-plain objects (for example `Date`, `Map`, `Set`, class instances)
   - All object keys are sorted lexicographically at every object level.
   - Arrays preserve order.
-  - Values must be JSON-serializable.
+
+- Canonical JSON algorithm (must be stable across runs and refactors):
+  - Normalize the case-config object by recursively sorting keys and validating JSON-only values.
+  - Produce canonical JSON with `JSON.stringify(normalizedValue)`.
 
 - Compute:
   - `caseConfigId = "sweep_" + sha256Hex(canonicalJson(caseConfigWithoutRepetition))`
@@ -197,6 +293,12 @@ Run deterministic expansion tests (to be added in the implementation for this ta
 
 ```bash
 bun test tests/app-runs.test.ts -t "deterministic"
+```
+
+Run golden fixture tests that lock hash stability (to be added in the implementation for this task):
+
+```bash
+bun test tests/app-runs.test.ts -t "hash"
 ```
 
 Optional local check after implementation:
@@ -238,17 +340,40 @@ For each expanded case:
   - Validate each expanded case config just-in-time before starting the engine for that case.
     - If validation fails, do not start the engine; record the case as failed with a stable validation error code/message.
 
+#### Infrastructure Failure Threshold (v0.0.1)
+
+- Define an explicit stop condition to avoid spending hours retrying a broken environment:
+  - `MAX_CONSECUTIVE_ENGINE_LIFECYCLE_FAILURES = 3`
+
+- Count an engine lifecycle failure when:
+  - engine `start()` fails, or
+  - engine `waitUntilReady()` fails, or
+  - an SSH transport/probe required for engine lifecycle fails.
+
+- Do not count pure per-case validation failures (bad args/params) toward the consecutive-infra-failure threshold.
+- When the threshold is exceeded, fail the run and mark remaining cases as failed.
+
 #### State, Events, And Cancellation
 
 - Reuse existing run events (`run.case.started`, `run.case.completed`, `run.case.failed`, terminal run events). Do not introduce a new sweep-specific event taxonomy for v0.0.1.
+- Event payload guidance:
+  - Include `runId`, `caseId`, `index`, and progress counts.
+  - Do not emit full per-case `engineArgs` / `requestParams` in SSE payloads for v0.0.1 (can be large and may contain sensitive values).
 - Cancellation uses existing `POST /runs/:runId/cancel`:
   - Stop the currently-running engine.
   - Transition run to `cancelled`.
   - Persist a terminal `result.json` that includes completed/failed cases so far.
+  - If cancellation happens between cases (engine already stopped), transition immediately without attempting a new engine start.
 
 #### Storage Constraint To Call Out (Required For Correct Artifacts)
 
-Because sweep cases vary `engineArgs` and `requestParams` per case, run storage must record these per case outcome (not only at the run level). Ensure the persisted `cases[*].engineArgs` and `cases[*].requestParams` reflect the per-case values used.
+Because sweep cases vary `engineArgs` and `requestParams` per case, run storage must record these per case outcome (not only at the run level).
+
+- Required implementation approach:
+  - Pass per-case `engineArgs` into the case outcome recorder (do not rely on a single run-level `engineArgs`).
+  - Do not implement this by mutating `run.engineArgs` between cases.
+
+Ensure the persisted `cases[*].engineArgs` and `cases[*].requestParams` reflect the per-case values used.
 
 #### Manual Testing Steps
 
@@ -256,6 +381,12 @@ Run the sweep execution tests (to be added in the implementation for this task):
 
 ```bash
 bun test tests/app-runs.test.ts -t "sweep execution"
+```
+
+Cancellation boundary tests (to be added in the implementation for this task):
+
+```bash
+bun test tests/app-runs.test.ts -t "sweep cancel"
 ```
 
 End-to-end smoke over SSH:
@@ -301,6 +432,8 @@ Persist a single `runs/{runId}/result.json` containing all sweep cases plus a de
 ```
 
 #### Ranking Rules (Deterministic)
+
+- Repetitions are ranked independently (no aggregation/averaging across `.rep-*` cases in v0.0.1).
 
 - Completed cases first:
   - sort by `tokensPerSecond` descending
