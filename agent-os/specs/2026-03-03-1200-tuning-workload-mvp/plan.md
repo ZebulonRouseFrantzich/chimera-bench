@@ -19,6 +19,14 @@ Provide a single built-in benchmark workload suitable for `llama-server` sweep t
   - includes enough structured context to be sensitive to context size / KV-cache allocations
   - is robust to temperature/seed variations (recommended default: deterministic params)
 - Operator notes in this spec describing intended use (what it measures, what it does not).
+- Prompt stability hardening:
+  - deterministic prompt generator with a built-in size cap (<= 128KiB)
+  - unit tests that lock prompt shape + size and catch accidental drift
+- SSH mixed-GPU safety:
+  - on remote targets that expose multiple GPU devices, runs must include an explicit GPU selector in `engine.serverArgs` (for example `--device`, `--main-gpu`, or `--split-mode none`)
+  - the server rejects mixed-GPU SSH runs without explicit GPU selection to avoid unstable auto multi-GPU startup behavior
+  - when remote help output exposes concrete GPU choices, validation guidance surfaces detected `--device` identifiers and `--main-gpu` indexes
+  - `--split-mode` satisfies this guard only when set to `none`; other split-mode values do not bypass mixed-GPU safety checks
 
 ## Workload Definition
 
@@ -32,6 +40,7 @@ Provide a single built-in benchmark workload suitable for `llama-server` sweep t
 
 - Implemented as a deterministic generator in `src/server/runs/starter-workload.ts` (`buildTuningPrompt()`).
 - Approximate size (current implementation): ~70k chars and ~8k tokens via `estimateTokenCount()` (rough whitespace estimate).
+- The prompt content does not embed a token estimate line; `contextTokens` in `result.json` is computed separately via `estimateTokenCount()`.
 - Structure:
   - `BEGIN_DATASET` / `END_DATASET` sentinel lines.
   - 256 synthetic records with stable ordering and stable token payloads.
@@ -72,6 +81,25 @@ Notes:
 
 - Increase `max_tokens` for longer decode windows.
 - Set `timeouts.caseMs` higher than the default 2 minutes when running large-context or slow targets.
+
+### SSH Mixed-GPU Note
+
+Some remote hosts expose multiple GPU devices (for example a dGPU + iGPU). In those environments, `llama-server` auto-selection can be unstable.
+
+For SSH targets with multiple GPUs, the server requires an explicit GPU selector in `engine.serverArgs`:
+
+- `--device <identifier>` (example: `ROCm0`, `CUDA0`)
+- `--main-gpu <index>` (example: `0`)
+- `--split-mode none`
+
+If you omit GPU selection on a mixed-GPU SSH target, `POST /runs` fails validation with `VALIDATION_ENGINE_OPTIONS_INVALID` and an issue code `SERVER_ARG_GPU_SELECTION_REQUIRED`.
+
+If `--split-mode` is provided with a value other than `none`, the mixed-GPU guard still rejects the run unless `--device` or `--main-gpu` is also set.
+
+When available, the validation issue and server console logs include detected options for both forms, for example:
+
+- `Detected --device identifiers: ROCm0, ROCm1`
+- `Detected --main-gpu values: 0, 1`
 
 ### Recommended Sweep Strategy
 
@@ -123,6 +151,7 @@ ls -la agent-os/specs/2026-03-03-1200-tuning-workload-mvp/
   - Define exactly one case with stable IDs.
   - Generate prompt text deterministically (embedded text or deterministic generator).
   - Enforce a maximum built-in prompt size (hard cap) so prompt edits cannot silently balloon.
+  - Fail fast on duplicate built-in `workloadId` registration.
 - Keep default behavior unchanged:
   - `DEFAULT_WORKLOAD_ID` remains `starter.v1`.
 
@@ -138,6 +167,7 @@ bun -e "import { getBuiltInWorkload } from './src/server/runs/starter-workload.t
   - `POST /runs` accepts `workloadId: "tuning.v0_0_1"`.
   - `runs/{runId}/result.json` contains `workloadId`, `caseId`, and `promptId` for the tuning workload.
   - Unknown `workloadId` returns `VALIDATION_WORKLOAD_INVALID`.
+  - Prompt hardening tests cover determinism, shape (256-record dataset), and the 128KiB size limit.
 - Update this spec with a manual curl example that:
   - uses deterministic request params
   - sets a higher `timeouts.caseMs` than the 2-minute default when appropriate
@@ -165,7 +195,7 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
     "model": { "identifier": "/models/model.gguf" },
     "workloadId": "tuning.v0_0_1",
     "engine": {
-      "serverArgs": ["--ctx-size", "16384"],
+      "serverArgs": ["--ctx-size", "16384", "--device", "ROCm0"],
       "requestParams": {
         "temperature": 0,
         "top_p": 1,
@@ -191,7 +221,7 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
     "model": { "identifier": "/models/model.gguf" },
     "workloadId": "tuning.v0_0_1",
     "engine": {
-      "serverArgs": ["--ctx-size", "16384"],
+      "serverArgs": ["--ctx-size", "16384", "--device", "ROCm0"],
       "requestParams": { "temperature": 0, "top_p": 1, "seed": 1, "max_tokens": 64 }
     },
     "timeouts": { "caseMs": 300000 },
@@ -217,9 +247,32 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/runs/<runId>/
 cat runs/<runId>/result.json
 ```
 
+### Task 4: SSH Mixed-GPU Hardening
+
+- Detect remote mixed-GPU environments via remote `llama-server --help` discovery.
+- Reject SSH run configs that omit explicit GPU selection when multiple GPU devices are detected.
+- Suggest both selector styles (`--device` and `--main-gpu`) when mixed-GPU is detected.
+- Include detected selector candidates (when available) in validation guidance shown to users.
+- Treat `--split-mode` as satisfying mixed-GPU safety only when value is `none`.
+- Share remote help discovery results (flags + GPU hints) through one cache/in-flight path so strict validation + mixed-GPU guard do not perform duplicate SSH probes.
+- Bound remote help cache growth (TTL sweep + max entries) to keep long-lived server memory usage stable.
+- If GPU-hint discovery fails, keep validation fail-open but log explicit console guidance (`event=run.validation.gpu_selection_discovery_skipped`).
+- Do not inject defaults; GPU selection belongs in per-target configuration or the caller's `engine.serverArgs`.
+
+#### Manual testing
+
+```bash
+bun test tests/starter-engine.test.ts -t "requires explicit GPU selection on mixed-GPU SSH targets"
+bun test tests/starter-engine.test.ts -t "does not treat non-none split-mode as sufficient mixed-GPU selection"
+bun test tests/starter-engine.test.ts -t "shares one remote help probe between flags and GPU hint discovery"
+```
+
+Check server console output for `event=run.validation.gpu_selection_required` guidance when a mixed-GPU validation failure is triggered.
+
 ## Exit criteria
 
 - A run can be created selecting the tuning workload and produces a normal `result.json` with the tuning workload identifiers.
+- On mixed-GPU SSH targets, run creation is rejected unless `engine.serverArgs` includes an explicit GPU selector.
 
 ## Dependencies
 

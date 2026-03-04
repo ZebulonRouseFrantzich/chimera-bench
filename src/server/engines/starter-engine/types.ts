@@ -86,6 +86,14 @@ export interface StartSshLlamaServerInput {
   dependencies: StarterLlamaCppPluginDependencies;
 }
 
+export interface RemoteGpuSelectionHints {
+  gpuDeviceCount: number;
+  mainGpuIndices: readonly number[];
+  // Parsed from constrained backend+index tokens (for example ROCm0/CUDA1)
+  // from llama-server help output; these are safe to surface in guidance.
+  deviceIdentifiers: readonly string[];
+}
+
 export interface StarterLlamaCppPluginDependencies {
   spawnProcess: (
     command: string,
@@ -101,14 +109,19 @@ export interface StarterLlamaCppPluginDependencies {
   discoverRemoteSupportedServerFlags: (
     profile: TargetProfile,
   ) => Promise<ReadonlySet<string>>;
+  discoverRemoteGpuSelectionHints: (
+    profile: TargetProfile,
+  ) => Promise<RemoteGpuSelectionHints>;
   executeSshCommand: typeof executeSshCommand;
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
   wait: (ms: number) => Promise<void>;
   now: () => number;
+  logInfo: (message: string) => void;
   startupProbeWindowMs: number;
   startupRetryAttempts: number;
   sshStartupRetryAttempts: number;
   remoteHelpCacheTtlMs: number;
+  remoteHelpCacheMaxEntries: number;
   allocateRemoteSshPort: () => number;
   reserveRemoteSshPort: (destinationKey: string, remotePort: number) => boolean;
   releaseRemoteSshPort: (destinationKey: string, remotePort: number) => void;

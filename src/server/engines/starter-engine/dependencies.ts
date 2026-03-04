@@ -5,10 +5,6 @@
  * probes used for local and remote llama-server flag discovery.
  */
 import { spawn } from "node:child_process";
-import type {
-  ChildProcess,
-  ChildProcessWithoutNullStreams,
-} from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import {
@@ -30,6 +26,7 @@ import {
   DEFAULT_READINESS_POLL_INTERVAL_MS,
   DEFAULT_READINESS_REQUEST_TIMEOUT_MS,
   DEFAULT_READINESS_TIMEOUT_MS,
+  DEFAULT_REMOTE_HELP_CACHE_MAX_ENTRIES,
   DEFAULT_REMOTE_HELP_CACHE_TTL_MS,
   DEFAULT_SERVER_HELP_TIMEOUT_MS,
   DEFAULT_SSH_STARTUP_RETRY_ATTEMPTS,
@@ -39,16 +36,36 @@ import {
   LLAMA_SERVER_COMMAND,
   LOOPBACK_HOST,
 } from "./constants.ts";
-import type { StarterLlamaCppPluginDependencies } from "./types.ts";
-import { delay, toError } from "./utils.ts";
+import {
+  captureCommandOutput,
+  parseGpuSelectionHints,
+  parseSupportedServerFlags,
+} from "./help-discovery.ts";
+import {
+  sweepExpiredCacheEntries,
+  trimCacheEntries,
+} from "./cache-utils.ts";
+import type {
+  RemoteGpuSelectionHints,
+  StarterLlamaCppPluginDependencies,
+} from "./types.ts";
+import { delay } from "./utils.ts";
+
+interface RemoteLlamaServerHelpSummary {
+  supportedFlags: ReadonlySet<string>;
+  gpuSelectionHints: RemoteGpuSelectionHints;
+}
 
 export function createDependencies(
   overrides: Partial<StarterLlamaCppPluginDependencies>,
 ): StarterLlamaCppPluginDependencies {
+  // Date.now() is sufficient for short-lived TTL cache freshness checks.
   const now = overrides.now ?? Date.now;
   const executeSshCommandImpl = overrides.executeSshCommand ?? executeSshCommand;
   const remoteHelpCacheTtlMs =
     overrides.remoteHelpCacheTtlMs ?? DEFAULT_REMOTE_HELP_CACHE_TTL_MS;
+  const remoteHelpCacheMaxEntries =
+    overrides.remoteHelpCacheMaxEntries ?? DEFAULT_REMOTE_HELP_CACHE_MAX_ENTRIES;
 
   const discoverSupportedServerFlagsImpl =
     overrides.discoverSupportedServerFlags ?? discoverSupportedServerFlags;
@@ -70,48 +87,205 @@ export function createDependencies(
   const discoverRemoteSupportedServerFlagsImpl =
     overrides.discoverRemoteSupportedServerFlags ??
     (async (profile: TargetProfile) => {
-      return discoverRemoteSupportedServerFlags(profile, executeSshCommandImpl);
+      const summary = await discoverRemoteLlamaServerHelpSummary(profile, executeSshCommandImpl);
+      return summary.supportedFlags;
     });
-  const remoteSupportedFlagCache = new Map<
+  const discoverRemoteGpuSelectionHintsImpl =
+    overrides.discoverRemoteGpuSelectionHints ??
+    (async (profile: TargetProfile) => {
+      const summary = await discoverRemoteLlamaServerHelpSummary(profile, executeSshCommandImpl);
+      return summary.gpuSelectionHints;
+    });
+
+  const useSharedRemoteHelpSummaryCache =
+    !overrides.discoverRemoteSupportedServerFlags &&
+    !overrides.discoverRemoteGpuSelectionHints;
+
+  const discoverRemoteHelpSummaryDirect = async (
+    profile: TargetProfile,
+  ): Promise<RemoteLlamaServerHelpSummary> => {
+    if (
+      !overrides.discoverRemoteSupportedServerFlags &&
+      !overrides.discoverRemoteGpuSelectionHints
+    ) {
+      return discoverRemoteLlamaServerHelpSummary(profile, executeSshCommandImpl);
+    }
+
+    const [supportedFlags, gpuSelectionHints] = await Promise.all([
+      discoverRemoteSupportedServerFlagsImpl(profile),
+      discoverRemoteGpuSelectionHintsImpl(profile),
+    ]);
+
+    return {
+      supportedFlags,
+      gpuSelectionHints,
+    };
+  };
+
+  const remoteHelpSummaryCache = new Map<
     string,
     {
       expiresAt: number;
-      supportedFlags: ReadonlySet<string>;
+      value: RemoteLlamaServerHelpSummary;
     }
   >();
-  const remoteDiscoveryInFlight = new Map<string, Promise<ReadonlySet<string>>>();
+  const remoteHelpSummaryDiscoveryInFlight = new Map<
+    string,
+    Promise<RemoteLlamaServerHelpSummary>
+  >();
 
-  const discoverRemoteSupportedServerFlagsWithCache = async (
+  const discoverRemoteHelpSummaryWithCache = async (
     profile: TargetProfile,
-  ): Promise<ReadonlySet<string>> => {
+  ): Promise<RemoteLlamaServerHelpSummary> => {
     const cacheKey = buildRemoteHelpCacheKey(profile);
-    const cached = remoteSupportedFlagCache.get(cacheKey);
     const nowMs = now();
-    if (cached && cached.expiresAt > nowMs) {
-      return cached.supportedFlags;
+    sweepExpiredCacheEntries(remoteHelpSummaryCache, nowMs);
+
+    const cached = remoteHelpSummaryCache.get(cacheKey);
+    if (cached) {
+      return cached.value;
     }
 
-    const inFlight = remoteDiscoveryInFlight.get(cacheKey);
+    const inFlight = remoteHelpSummaryDiscoveryInFlight.get(cacheKey);
     if (inFlight) {
       return inFlight;
     }
 
     // Failed discoveries are intentionally not cached. Concurrent callers will
     // observe the same rejection, and the next call retries fresh discovery.
+    const discoveryPromise = discoverRemoteHelpSummaryDirect(profile)
+      .then((summary) => {
+        const discoveryCompletedAtMs = now();
+        sweepExpiredCacheEntries(remoteHelpSummaryCache, discoveryCompletedAtMs);
+        remoteHelpSummaryCache.set(cacheKey, {
+          expiresAt: discoveryCompletedAtMs + remoteHelpCacheTtlMs,
+          value: summary,
+        });
+        trimCacheEntries(remoteHelpSummaryCache, remoteHelpCacheMaxEntries);
+        return summary;
+      })
+      .finally(() => {
+        remoteHelpSummaryDiscoveryInFlight.delete(cacheKey);
+      });
+
+    remoteHelpSummaryDiscoveryInFlight.set(cacheKey, discoveryPromise);
+    return discoveryPromise;
+  };
+
+  const remoteSupportedFlagCache = new Map<
+    string,
+    {
+      expiresAt: number;
+      value: ReadonlySet<string>;
+    }
+  >();
+  const remoteSupportedFlagDiscoveryInFlight = new Map<
+    string,
+    Promise<ReadonlySet<string>>
+  >();
+
+  const discoverRemoteSupportedServerFlagsOnlyWithCache = async (
+    profile: TargetProfile,
+  ): Promise<ReadonlySet<string>> => {
+    const cacheKey = buildRemoteHelpCacheKey(profile);
+    const nowMs = now();
+    sweepExpiredCacheEntries(remoteSupportedFlagCache, nowMs);
+
+    const cached = remoteSupportedFlagCache.get(cacheKey);
+    if (cached) {
+      return cached.value;
+    }
+
+    const inFlight = remoteSupportedFlagDiscoveryInFlight.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
     const discoveryPromise = discoverRemoteSupportedServerFlagsImpl(profile)
       .then((supportedFlags) => {
+        const completedAtMs = now();
+        sweepExpiredCacheEntries(remoteSupportedFlagCache, completedAtMs);
         remoteSupportedFlagCache.set(cacheKey, {
-          expiresAt: now() + remoteHelpCacheTtlMs,
-          supportedFlags,
+          expiresAt: completedAtMs + remoteHelpCacheTtlMs,
+          value: supportedFlags,
         });
+        trimCacheEntries(remoteSupportedFlagCache, remoteHelpCacheMaxEntries);
         return supportedFlags;
       })
       .finally(() => {
-        remoteDiscoveryInFlight.delete(cacheKey);
+        remoteSupportedFlagDiscoveryInFlight.delete(cacheKey);
       });
 
-    remoteDiscoveryInFlight.set(cacheKey, discoveryPromise);
+    remoteSupportedFlagDiscoveryInFlight.set(cacheKey, discoveryPromise);
     return discoveryPromise;
+  };
+
+  const remoteGpuSelectionHintsCache = new Map<
+    string,
+    {
+      expiresAt: number;
+      value: RemoteGpuSelectionHints;
+    }
+  >();
+  const remoteGpuSelectionHintsDiscoveryInFlight =
+    new Map<string, Promise<RemoteGpuSelectionHints>>();
+
+  const discoverRemoteGpuSelectionHintsOnlyWithCache = async (
+    profile: TargetProfile,
+  ): Promise<RemoteGpuSelectionHints> => {
+    const cacheKey = buildRemoteHelpCacheKey(profile);
+    const nowMs = now();
+    sweepExpiredCacheEntries(remoteGpuSelectionHintsCache, nowMs);
+
+    const cached = remoteGpuSelectionHintsCache.get(cacheKey);
+    if (cached) {
+      return cached.value;
+    }
+
+    const inFlight = remoteGpuSelectionHintsDiscoveryInFlight.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const discoveryPromise = discoverRemoteGpuSelectionHintsImpl(profile)
+      .then((gpuSelectionHints) => {
+        const completedAtMs = now();
+        sweepExpiredCacheEntries(remoteGpuSelectionHintsCache, completedAtMs);
+        remoteGpuSelectionHintsCache.set(cacheKey, {
+          expiresAt: completedAtMs + remoteHelpCacheTtlMs,
+          value: gpuSelectionHints,
+        });
+        trimCacheEntries(remoteGpuSelectionHintsCache, remoteHelpCacheMaxEntries);
+        return gpuSelectionHints;
+      })
+      .finally(() => {
+        remoteGpuSelectionHintsDiscoveryInFlight.delete(cacheKey);
+      });
+
+    remoteGpuSelectionHintsDiscoveryInFlight.set(cacheKey, discoveryPromise);
+    return discoveryPromise;
+  };
+
+  const discoverRemoteSupportedServerFlagsWithCache = async (
+    profile: TargetProfile,
+  ): Promise<ReadonlySet<string>> => {
+    if (useSharedRemoteHelpSummaryCache) {
+      const summary = await discoverRemoteHelpSummaryWithCache(profile);
+      return summary.supportedFlags;
+    }
+
+    return discoverRemoteSupportedServerFlagsOnlyWithCache(profile);
+  };
+
+  const discoverRemoteGpuSelectionHintsWithCache = async (
+    profile: TargetProfile,
+  ): Promise<RemoteGpuSelectionHints> => {
+    if (useSharedRemoteHelpSummaryCache) {
+      const summary = await discoverRemoteHelpSummaryWithCache(profile);
+      return summary.gpuSelectionHints;
+    }
+
+    return discoverRemoteGpuSelectionHintsOnlyWithCache(profile);
   };
 
   const reservedRemotePortsByDestination = new Map<string, Set<number>>();
@@ -169,10 +343,12 @@ export function createDependencies(
       }),
     discoverSupportedServerFlags: discoverSupportedServerFlagsWithCache,
     discoverRemoteSupportedServerFlags: discoverRemoteSupportedServerFlagsWithCache,
+    discoverRemoteGpuSelectionHints: discoverRemoteGpuSelectionHintsWithCache,
     executeSshCommand: executeSshCommandImpl,
     fetch: overrides.fetch ?? fetch,
     wait: overrides.wait ?? delay,
     now,
+    logInfo: overrides.logInfo ?? console.log,
     startupProbeWindowMs:
       overrides.startupProbeWindowMs ?? DEFAULT_STARTUP_PROBE_WINDOW_MS,
     startupRetryAttempts:
@@ -180,6 +356,7 @@ export function createDependencies(
     sshStartupRetryAttempts:
       overrides.sshStartupRetryAttempts ?? DEFAULT_SSH_STARTUP_RETRY_ATTEMPTS,
     remoteHelpCacheTtlMs,
+    remoteHelpCacheMaxEntries,
     reserveRemoteSshPort: overrides.reserveRemoteSshPort ?? reserveRemoteSshPort,
     releaseRemoteSshPort: overrides.releaseRemoteSshPort ?? releaseRemoteSshPort,
     stopGracePeriodMs: overrides.stopGracePeriodMs ?? DEFAULT_STOP_GRACE_PERIOD_MS,
@@ -211,10 +388,13 @@ async function discoverSupportedServerFlags(): Promise<ReadonlySet<string>> {
   throw new Error("Unable to parse supported flags from `llama-server --help` output.");
 }
 
-async function discoverRemoteSupportedServerFlags(
+async function discoverRemoteLlamaServerHelpSummary(
   profile: TargetProfile,
   runSshCommand: StarterLlamaCppPluginDependencies["executeSshCommand"],
-): Promise<ReadonlySet<string>> {
+): Promise<{
+  supportedFlags: ReadonlySet<string>;
+  gpuSelectionHints: RemoteGpuSelectionHints;
+}> {
   let commandResult:
     | {
         stdoutExcerpt: string;
@@ -244,9 +424,8 @@ async function discoverRemoteSupportedServerFlags(
     throw error;
   }
 
-  const supportedFlags = parseSupportedServerFlags(
-    `${commandResult.stdoutExcerpt}\n${commandResult.stderrExcerpt}`,
-  );
+  const combinedHelpOutput = `${commandResult.stdoutExcerpt}\n${commandResult.stderrExcerpt}`;
+  const supportedFlags = parseSupportedServerFlags(combinedHelpOutput);
   if (supportedFlags.size === 0) {
     throw new Error("Unable to parse supported flags from remote `llama-server --help` output.");
   }
@@ -259,111 +438,10 @@ async function discoverRemoteSupportedServerFlags(
     );
   }
 
-  return supportedFlags;
-}
-
-async function captureCommandOutput(
-  command: string,
-  args: string[],
-  timeoutMs: number,
-  maxCharsPerStream: number,
-): Promise<{
-  stdout: string;
-  stderr: string;
-}> {
-  return await new Promise((resolvePromise, rejectPromise) => {
-    let child: ChildProcess;
-    try {
-      child = spawn(command, args, {
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch (error) {
-      rejectPromise(toError(error));
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-
-    const timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, timeoutMs);
-
-    const cleanup = () => {
-      clearTimeout(timeoutHandle);
-      child.off("error", onError);
-      child.off("close", onClose);
-    };
-
-    const onError = (error: Error) => {
-      cleanup();
-      rejectPromise(error);
-    };
-
-    const onClose = () => {
-      cleanup();
-
-      if (timedOut) {
-        rejectPromise(
-          new Error(`Timed out after ${timeoutMs}ms while running '${command} ${args.join(" ")}'.`),
-        );
-        return;
-      }
-
-      // Some llama-server builds exit non-zero for --help while still emitting
-      // complete flag documentation; callers validate parsed flag content.
-
-      resolvePromise({
-        stdout,
-        stderr,
-      });
-    };
-
-    child.once("error", onError);
-    child.once("close", onClose);
-
-    if (child.stdout) {
-      child.stdout.setEncoding("utf8");
-      child.stdout.on("data", (chunk: string | Buffer) => {
-        stdout = appendBounded(stdout, chunk.toString(), maxCharsPerStream);
-      });
-    }
-
-    if (child.stderr) {
-      child.stderr.setEncoding("utf8");
-      child.stderr.on("data", (chunk: string | Buffer) => {
-        stderr = appendBounded(stderr, chunk.toString(), maxCharsPerStream);
-      });
-    }
-  });
-}
-
-function parseSupportedServerFlags(helpOutput: string): ReadonlySet<string> {
-  const supportedFlags = new Set<string>();
-  const flagPattern = /(?:^|\s)(--[a-z0-9][a-z0-9-]*|-[a-z0-9])(?=\s|=|,|\]|$)/gi;
-
-  for (const match of helpOutput.matchAll(flagPattern)) {
-    const flag = match[1]?.trim().toLowerCase();
-    if (!flag) {
-      continue;
-    }
-
-    supportedFlags.add(flag);
-  }
-
-  return supportedFlags;
-}
-
-function appendBounded(existing: string, nextChunk: string, maxChars: number): string {
-  const combined = `${existing}${nextChunk}`;
-  if (combined.length <= maxChars) {
-    return combined;
-  }
-
-  return combined.slice(-maxChars);
+  return {
+    supportedFlags,
+    gpuSelectionHints: parseGpuSelectionHints(combinedHelpOutput),
+  };
 }
 
 async function allocateLoopbackPort(): Promise<number> {

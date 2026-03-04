@@ -198,6 +198,20 @@ export function registerRunRoutes(
     }
 
     if (!validationResult.ok) {
+      const gpuSelectionIssue = validationResult.issues?.find((issue) => {
+        return issue.code === "SERVER_ARG_GPU_SELECTION_REQUIRED";
+      });
+      if (gpuSelectionIssue && request.target.type === "ssh") {
+        const requestId = getOrCreateRequestId(context);
+        logger.info(
+          `[chimera-bench] requestId=${requestId}` +
+            ` event=run.validation.gpu_selection_required` +
+            ` engineId=${sanitizeControlCharacters(request.engineId)}` +
+            ` targetProfileId=${sanitizeControlCharacters(request.target.profileId)}` +
+            ` guidance=${sanitizeControlCharacters(gpuSelectionIssue.message)}`,
+        );
+      }
+
       return jsonError(context, 400, buildValidationFailurePayload(validationResult));
     }
 

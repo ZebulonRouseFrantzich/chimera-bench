@@ -10,14 +10,29 @@ import type {
   EngineRunConfig,
   EngineRuntimeContext,
 } from "../../src/server/engines/engine-plugin.ts";
-import { createStarterLlamaCppPlugin } from "../../src/server/engines/starter-engine/index.ts";
+import {
+  createStarterLlamaCppPlugin as createStarterLlamaCppPluginImpl,
+  type StarterLlamaCppPluginDependencies,
+} from "../../src/server/engines/starter-engine/index.ts";
 import type { TargetProfile } from "../../src/server/targets/target-profile.ts";
 
-export { createStarterLlamaCppPlugin };
 export type { SpawnOptionsWithoutStdio, TargetProfile };
 
 export const TEST_API_KEY = "k".repeat(43);
 export const TEST_MODEL_IDENTIFIER = "/tmp/model.gguf";
+
+export function createStarterLlamaCppPlugin(
+  overrides: Partial<StarterLlamaCppPluginDependencies> = {},
+) {
+  return createStarterLlamaCppPluginImpl({
+    discoverRemoteGpuSelectionHints: async () => ({
+      gpuDeviceCount: 1,
+      mainGpuIndices: [0],
+      deviceIdentifiers: ["ROCm0"],
+    }),
+    ...overrides,
+  });
+}
 
 export class FakeChildProcess extends EventEmitter {
   readonly stdin = new PassThrough();
