@@ -14,6 +14,11 @@
 - Context files are resolved relative to the workload pack directory and must not escape it.
 - Exports are derived from `result.json` only (no additional data sources), and written atomically.
 - Visuals: none.
+- Post v0.0.1 engine hardening: mixed-GPU SSH hosts must use explicit GPU selection and should validate selector values up front.
+  - Accept `--device none`.
+  - Accept comma-separated `--device` identifiers in a single argv token (example: `ROCm0,ROCm1`).
+  - Only treat `--split-mode` as satisfying mixed-GPU safety when value is `none`.
+  - When remote discovery is unavailable, fail open but log that validation was skipped.
 
 ## Assumptions
 

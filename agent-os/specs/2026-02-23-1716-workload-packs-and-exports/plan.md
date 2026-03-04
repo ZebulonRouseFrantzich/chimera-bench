@@ -108,10 +108,38 @@ Define realistic benchmark workloads and produce portable run outputs for analys
        - `curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/exports/runs/RUN_ID/summary.md`
 
 5. Add fixture-based tests for exporter stability.
-   - Add a small `result.json` fixture and golden outputs for `cases.csv` and `summary.md`.
-   - Fail tests on any output drift unless explicitly updated.
+    - Add a small `result.json` fixture and golden outputs for `cases.csv` and `summary.md`.
+    - Fail tests on any output drift unless explicitly updated.
+    - Manual testing steps:
+      - Run tests: `bun test`
+
+## Post v0.0.1 follow-ups (engine hardening)
+
+These items are intentionally deferred until after v0.0.1.
+They are not required to meet this spec's exit criteria, but they reduce operator friction when running workload packs against SSH targets.
+
+6. Validate explicit GPU selector values for mixed-GPU SSH targets.
+   - Background:
+     - Mixed-GPU SSH hosts (dGPU + iGPU) can be unstable when `llama-server` auto-selects devices.
+     - v0.0.1 adds a guard that requires an explicit selector flag, but does not validate the selector value.
+   - Extend validation to reject invalid selector values before run creation:
+     - `--device <dev1,dev2,...>`:
+       - Accept `none`.
+       - Accept comma-separated device identifiers (single argv token).
+       - When remote GPU hints are available, require each device identifier to match a discovered identifier (e.g. `ROCm0`, `ROCm1`, `CUDA0`).
+     - `--main-gpu <index>`:
+       - Require an integer value.
+       - When remote GPU hints are available, require the index to be one of the discovered `--main-gpu` values.
+     - `--split-mode`:
+       - Only treat as satisfying the mixed-GPU guard when the value is `none`.
+   - Failure mode when discovery is unavailable:
+     - Keep validation fail-open (do not block run creation solely because discovery failed).
+     - Emit an operator-visible console log noting that GPU value validation was skipped.
    - Manual testing steps:
-     - Run tests: `bun test`
+     - Mixed-GPU SSH target without selector -> validation error with detected options.
+     - Mixed-GPU SSH target with invalid selector value (example: `--device ROCm`) -> validation error (do not reach engine startup).
+     - Mixed-GPU SSH target with `--device ROCm0` -> accepted.
+     - Mixed-GPU SSH target with `--device ROCm0,ROCm1` and `--device none` -> accepted.
 
 ## Exit criteria
 

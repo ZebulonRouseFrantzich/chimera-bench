@@ -40,6 +40,30 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     expect(plugin.capabilities.sshTarget).toBe(true);
   });
 
+  test("does not inject implicit GPU-selection defaults for SSH launch metadata", async () => {
+    const profile = createSshProfile("lab");
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        validationMode: "permissive",
+        serverArgs: ["--threads", "4"],
+      }),
+    );
+
+    const metadata = launchConfig.metadata as {
+      serverArgs?: string[];
+    };
+    expect(metadata.serverArgs).toEqual(["--threads", "4"]);
+  });
+
   test("uses cached remote strict flag discovery per profile/path with ttl", async () => {
     let discoveryCalls = 0;
     let nowMs = 1_000;

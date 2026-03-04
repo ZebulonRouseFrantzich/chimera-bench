@@ -20,7 +20,12 @@ import type {
   ServerArgsValidationResult,
   StarterLlamaCppPluginDependencies,
 } from "./types.ts";
-import { normalizeIssueMessage, toError } from "./utils.ts";
+import { enforceMixedGpuSafetyForSshTarget } from "./mixed-gpu-guard.ts";
+import {
+  extractFlagToken,
+  normalizeIssueMessage,
+  toError,
+} from "./utils.ts";
 
 export async function validateServerArgs(
   serverArgs: string[],
@@ -87,6 +92,14 @@ export async function validateServerArgs(
       index += 1;
     }
   }
+
+  await enforceMixedGpuSafetyForSshTarget({
+    serverArgs,
+    dependencies,
+    target,
+    sshProfile,
+    issues,
+  });
 
   if (validationMode !== "strict" || strictCandidateFlags.length === 0) {
     return {
@@ -366,15 +379,6 @@ function validateInteger(
       path,
     });
   }
-}
-
-function extractFlagToken(argument: string): string {
-  const equalsIndex = argument.indexOf("=");
-  if (equalsIndex === -1) {
-    return argument;
-  }
-
-  return argument.slice(0, equalsIndex);
 }
 
 function isServerArgValueToken(token: string): boolean {

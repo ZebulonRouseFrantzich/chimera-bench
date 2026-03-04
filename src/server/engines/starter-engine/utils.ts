@@ -59,6 +59,15 @@ export function extractFlagValue(args: string[], flag: string): string | null {
   return null;
 }
 
+export function extractFlagToken(argument: string): string {
+  const equalsIndex = argument.indexOf("=");
+  if (equalsIndex === -1) {
+    return argument;
+  }
+
+  return argument.slice(0, equalsIndex);
+}
+
 export function replaceRequiredFlagValue(
   args: string[],
   flag: string,
