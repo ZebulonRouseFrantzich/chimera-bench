@@ -130,6 +130,10 @@ export async function startSshLlamaServerWithRetries(
             destinationKey,
             remotePort,
           },
+          sshManagedRuntime: {
+            profile: input.launchMetadata.profile,
+            remotePort,
+          },
           startupDiagnosticData: {
             profileId: input.launchMetadata.profile.id,
             destination: launch.destination,

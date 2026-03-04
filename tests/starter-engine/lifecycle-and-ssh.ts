@@ -319,6 +319,71 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     expect(signalCalls).toEqual(["SIGTERM"]);
   });
 
+  test("issues remote cleanup pkill commands on SSH stop", async () => {
+    const processHandle = new FakeChildProcess(64011);
+    const profile = createSshProfile("lab");
+    const cleanupCommands: string[][] = [];
+
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+      createApiKey: () => TEST_API_KEY,
+      allocateLoopbackPort: async () => 18080,
+      allocateRemoteSshPort: () => 28080,
+      startupProbeWindowMs: 5,
+      sshStartupRetryAttempts: 1,
+      spawnProcess: () => processHandle.asChildProcess(),
+      signalProcessGroup: (_pid, signal) => {
+        if (signal === "SIGTERM") {
+          processHandle.emitExit(0, null);
+        }
+      },
+      executeSshCommand: async (request) => {
+        cleanupCommands.push([...request.remoteArgv]);
+        return {
+          argv: ["ssh", "..."],
+          stdoutExcerpt: "",
+          stderrExcerpt: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          exitCode: request.remoteArgv.includes("-TERM") ? 0 : 1,
+          signal: null,
+        };
+      },
+      wait: async () => {
+        return;
+      },
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        validationMode: "permissive",
+      }),
+    );
+    const context = createContext("run_remote_cleanup", launchConfig);
+
+    await plugin.start(context);
+    await plugin.stop(context);
+
+    expect(cleanupCommands).toHaveLength(2);
+    expect(cleanupCommands[0]).toEqual([
+      "pkill",
+      "-TERM",
+      "-f",
+      "llama-server.*--host 127.0.0.1 --port 28080",
+    ]);
+    expect(cleanupCommands[1]).toEqual([
+      "pkill",
+      "-KILL",
+      "-f",
+      "llama-server.*--host 127.0.0.1 --port 28080",
+    ]);
+  });
+
   test("retries SSH startup with a new remote port on bind collisions", async () => {
     const profile = createSshProfile("lab");
     const remotePorts = [28080, 28081];

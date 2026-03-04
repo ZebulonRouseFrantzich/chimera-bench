@@ -36,6 +36,10 @@ export interface LlamaServerRunState {
     destinationKey: string;
     remotePort: number;
   };
+  sshManagedRuntime?: {
+    profile: TargetProfile;
+    remotePort: number;
+  };
   startupDiagnosticData?: Record<string, unknown>;
   removeAbortListener: () => void;
 }
