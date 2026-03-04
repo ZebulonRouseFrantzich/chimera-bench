@@ -15,16 +15,22 @@ global:
     description: Source file SLOC budgets, ratcheted legacy caps, and module-level documentation requirements.
   time-based-testing:
     description: Deterministic testing conventions for TTL and timeout logic.
+  ttl-cache-and-inflight-dedupe:
+    description: Bounded TTL cache and in-flight promise deduplication pattern
 
 plugins:
   engine-interface:
     description: Engine plugin contract, lifecycle, and pass-through argument rules.
   llama-cpp-api-key-and-redaction:
     description: llama.cpp per-run API key generation and redaction rules
+  llama-cpp-mixed-gpu-guard:
+    description: SSH mixed-GPU guard requiring explicit GPU selector flags
   llama-cpp-model-identifier-validation:
     description: llama.cpp model identifier validation and CHIMERA_MODEL_ROOTS confinement
   llama-cpp-readiness-probe:
     description: llama.cpp readiness probe contract for /health
+  llama-cpp-remote-help-discovery-cache:
+    description: Remote llama-server --help discovery cache (TTL, max entries, in-flight dedupe)
   llama-cpp-stop-escalation:
     description: llama.cpp stop escalation (SIGTERM/SIGKILL) and process-group cleanup
   llama-cpp-strict-flag-validation:
@@ -35,6 +41,8 @@ plugins:
 runs:
   artifact-store:
     description: Atomic run result persistence and path safety
+  built-in-workload-hardening:
+    description: Built-in workload determinism, prompt size caps, and regression hash requirements
   orchestrator-cancellation-timeouts:
     description: Run cancellation/timeout orchestration semantics
   result-schema:

@@ -9,6 +9,8 @@ High relevance:
 - `agent-os/standards/runs/run-events.md`
 - `agent-os/standards/runs/orchestrator-cancellation-timeouts.md`
 - `agent-os/standards/runs/artifact-store.md`
+- `agent-os/standards/plugins/llama-cpp-mixed-gpu-guard.md`
+- `agent-os/standards/plugins/llama-cpp-remote-help-discovery-cache.md`
 - `agent-os/standards/server/json-request-validation.md`
 - `agent-os/standards/server/sse-streams.md`
 - `agent-os/standards/global/sanitization-and-safe-errors.md`
@@ -16,6 +18,8 @@ High relevance:
 
 Optional:
 
+- `agent-os/standards/runs/built-in-workload-hardening.md`
+- `agent-os/standards/global/ttl-cache-and-inflight-dedupe.md`
 - `agent-os/standards/server/log-line-format.md`
 - `agent-os/standards/server/ssh-command-execution.md`
 
