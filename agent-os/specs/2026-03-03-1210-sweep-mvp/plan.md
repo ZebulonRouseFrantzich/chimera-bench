@@ -490,6 +490,13 @@ cat runs/<runId>/result.json
 
 - A sweep run can execute end-to-end over SSH, producing a `runs/{runId}/result.json` with multiple cases and a deterministic ranking.
 
+## Future follow-ups (tracked)
+
+- Canonicalization allocation optimization (from Tasks 3-4 review finding L5):
+  evaluate a future spec that replaces full canonical-JSON string materialization
+  with streaming/incremental hashing for `caseConfigId` generation when payloads
+  approach upper bounds.
+
 ## Dependencies
 
 - `agent-os/specs/2026-02-23-1715-server-plugin-llama-cpp-foundation/`

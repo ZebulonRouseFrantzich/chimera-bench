@@ -19,6 +19,7 @@ interface RecordCaseCompletedInput {
   contextTokens: number;
   latencyMs: number;
   outputText: string;
+  engineArgs: readonly string[];
   requestParams: Record<string, unknown>;
   rawResponse?: unknown;
 }
@@ -29,6 +30,7 @@ interface RecordCaseFailedInput {
   index: number;
   contextTokens: number;
   latencyMs: number;
+  engineArgs: readonly string[];
   requestParams: Record<string, unknown>;
   error: RunFailureDetails;
 }
@@ -48,7 +50,7 @@ export function recordCompletedCaseOutcome(
     index: input.index,
     status: "completed",
     contextTokens: normalizeNonNegativeInteger(input.contextTokens, 0),
-    engineArgs: [...run.engineArgs],
+    engineArgs: [...input.engineArgs],
     requestParams: {
       ...input.requestParams,
     },
@@ -84,7 +86,7 @@ export function recordFailedCaseOutcome(
     index: input.index,
     status: "failed",
     contextTokens: normalizeNonNegativeInteger(input.contextTokens, 0),
-    engineArgs: [...run.engineArgs],
+    engineArgs: [...input.engineArgs],
     requestParams: {
       ...input.requestParams,
     },

@@ -13,10 +13,7 @@ import type {
 import { sanitizeControlCharacters } from "../../http/sanitize.ts";
 import type { RuntimeControl } from "../../runtime-control.ts";
 import { InMemoryRunStore } from "../in-memory-run-store/index.ts";
-import {
-  DEFAULT_CASE_TIMEOUT_MS,
-  DEFAULT_RUN_TIMEOUT_MS,
-} from "../defaults.ts";
+import { DEFAULT_CASE_TIMEOUT_MS, DEFAULT_RUN_TIMEOUT_MS } from "../defaults.ts";
 import { persistRunArtifact } from "../persist-run-artifact.ts";
 import type { RunArtifactStore } from "../run-artifact-store.ts";
 import {
@@ -36,6 +33,8 @@ import {
   withTimeout,
 } from "./runtime.ts";
 import type { StarterWorkload } from "../starter-workload.ts";
+import type { ExpandedSweepCase } from "../sweep-expansion.ts";
+import { executeSweepRunOrFailMissingPlugin } from "./sweep-execution/index.ts";
 import { estimateTokenCount } from "../token-estimation.ts";
 
 interface RunOrchestratorOptions {
@@ -50,6 +49,7 @@ interface StartRunInput {
   runId: string;
   runConfig: EngineRunConfig;
   workload: StarterWorkload;
+  sweepCases?: readonly ExpandedSweepCase[];
 }
 
 const ENGINE_STOP_TIMEOUT_MS = 10_000;
@@ -72,16 +72,31 @@ export class RunOrchestrator {
 
   private async execute(input: StartRunInput): Promise<void> {
     const initialStatus = this.options.runStore.getRunStatus(input.runId);
-    if (!initialStatus || initialStatus !== "queued") {
+    if (initialStatus !== "queued") {
       return;
     }
 
     const plugin = this.options.engines.getById(input.runConfig.engineId);
+    if (input.sweepCases) {
+      await executeSweepRunOrFailMissingPlugin({
+        runId: input.runId,
+        runConfig: input.runConfig,
+        sweepCases: input.sweepCases,
+        runStore: this.options.runStore,
+        runArtifacts: this.options.runArtifacts,
+        runtime: this.options.runtime,
+        plugin,
+        now: this.now,
+      });
+      return;
+    }
+
     if (!plugin) {
       failRunWithRemainingCases({
         runStore: this.options.runStore,
         runId: input.runId,
         workload: input.workload,
+        engineArgs: input.runConfig.engine.serverArgs,
         requestParams: input.runConfig.engine.requestParams,
         startIndex: 0,
         failure: {
@@ -286,6 +301,7 @@ export class RunOrchestrator {
             contextTokens,
             latencyMs: this.now() - caseStartMs,
             outputText: caseResult.outputText,
+            engineArgs: input.runConfig.engine.serverArgs,
             requestParams: input.runConfig.engine.requestParams,
             ...(caseResult.rawResponse === undefined
               ? {}
@@ -309,6 +325,7 @@ export class RunOrchestrator {
             index: nextCaseIndex,
             contextTokens,
             latencyMs: this.now() - caseStartMs,
+            engineArgs: input.runConfig.engine.serverArgs,
             requestParams: input.runConfig.engine.requestParams,
             error: failure,
           });
@@ -386,6 +403,7 @@ export class RunOrchestrator {
           runStore: this.options.runStore,
           runId: input.runId,
           workload: input.workload,
+          engineArgs: input.runConfig.engine.serverArgs,
           requestParams: input.runConfig.engine.requestParams,
           startIndex: nextCaseIndex,
           failure: error.failure,
@@ -403,6 +421,7 @@ export class RunOrchestrator {
         runStore: this.options.runStore,
         runId: input.runId,
         workload: input.workload,
+        engineArgs: input.runConfig.engine.serverArgs,
         requestParams: input.runConfig.engine.requestParams,
         startIndex: nextCaseIndex,
         failure: toRunFailure(error),

@@ -79,3 +79,98 @@ the decision taken for each finding, and where implementation landed.
       through sweep validation so they reference
       `sweep.axes.requestParams.<key>[<index>]` instead of `engine.requestParams`.
     - Implemented in: `src/server/runs/sweep-validation/index.ts`
+
+## Tasks 3-4 Review Findings and Decisions (2026-03-04)
+
+This section captures follow-up review findings after Tasks 3-4 implementation,
+the chosen disposition for each item, and whether it was implemented now or
+deferred.
+
+1. **Finally-block error masking in sweep case cleanup (H1)**
+   - Decision: implement now.
+   - Action: preserve primary cancellation/timeout failure when case-level
+     cleanup stop fails; log cleanup stop failure instead of replacing the
+     primary error.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/case-execution.ts`
+
+2. **Sweep stop lifecycle guard parity with non-sweep path (H2)**
+   - Decision: implement now.
+   - Action: add `engineStopCompleted` semantics to sweep stop orchestration and
+     avoid clearing active engine context on failed stop attempts.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/index.ts`
+
+3. **Floating timeout stop call during start/readiness (H3)**
+   - Decision: implement now.
+   - Action: remove floating timeout stop calls from sweep case start/readiness
+     timeout callbacks and rely on deterministic awaited cleanup in the case
+     `finally` path.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/case-execution.ts`
+
+4. **Defensive server-case cap during full expansion (M1)**
+   - Decision: implement now as defense-in-depth.
+   - Action: enforce a hard internal expansion ceiling (`MAX_SWEEP_CASES`) while
+     materializing expanded cases.
+   - Implemented in:
+     `src/server/runs/sweep-expansion.ts`
+
+5. **Run-level sweep metrics context (M2)**
+   - Decision: implement now.
+   - Action: include the associated case id alongside last-completed-case
+     metrics at run level for sweep runs.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/index.ts`
+
+6. **Silent JSON clone fallback mutation risk (M3)**
+   - Decision: implement now.
+   - Action: remove `JSON.stringify/parse` fallback in sweep clone helper and
+     raise explicit canonicalization error when safe cloning fails.
+   - Implemented in:
+     `src/server/runs/sweep-expansion.ts`
+
+7. **Consecutive lifecycle failure threshold coverage gap (M4)**
+   - Decision: implement now.
+   - Action: add test coverage for
+     `MAX_CONSECUTIVE_ENGINE_LIFECYCLE_FAILURES = 3` behavior.
+   - Implemented in:
+     `tests/app-runs/sweep-execution.ts`
+
+8. **Redundant `markRunRunning` in sweep fail helper (M5 + L1)**
+   - Decision: implement now.
+   - Action: call `markRunRunning` only for pre-run failure paths
+     (`startIndex === 0`), removing redundant mid-run transition calls.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/failure-utils.ts`
+
+9. **Potential cross-run `caseConfigId` collision concern (M6)**
+   - Decision: no behavior change needed; document invariant.
+   - Rationale: artifacts are persisted under run-scoped paths
+     (`runs/<runId>/result.json`), so identical `caseConfigId` values across
+     runs do not cause storage collisions.
+   - Documented in: `src/server/runs/sweep-expansion.ts`
+
+10. **Polling budget fragility in sweep tests (L2)**
+    - Decision: implement now.
+    - Action: increase default polling budget and make helper polling options
+      configurable.
+    - Implemented in: `tests/app-runs/helpers.ts`
+
+11. **Missing sweep run-timeout regression coverage (L3)**
+    - Decision: implement now.
+    - Action: add test asserting sweep run timeout surfaces as
+      `RUN_TIMEOUT_EXCEEDED`.
+    - Implemented in: `tests/app-runs/sweep-execution.ts`
+
+12. **Repetition indexing clarity (L4)**
+    - Decision: document now (no behavior change).
+    - Action: add explicit field doc that `repetitionIndex` is zero-based while
+      caseId repetition suffixes are one-based.
+    - Implemented in: `src/server/runs/sweep-expansion.ts`
+
+13. **Canonicalization allocation optimization (L5)**
+    - Decision: defer to a future spec (tracked, not lost).
+    - Scope: consider streaming/incremental hashing to reduce peak string
+      allocations when canonicalizing unusually large case config payloads.
+    - Tracking: noted in this spec's `plan.md` future follow-up section.
