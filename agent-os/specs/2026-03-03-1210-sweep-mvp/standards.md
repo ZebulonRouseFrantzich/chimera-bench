@@ -1,6 +1,23 @@
 # Standards for Sweep MVP
 
-This spec embeds the relevant standards for offline review.
+This spec embeds core standards for offline review and references additional standards that apply to Sweep MVP.
+
+## Additional standards (references only)
+
+High relevance:
+
+- `agent-os/standards/runs/run-events.md`
+- `agent-os/standards/runs/orchestrator-cancellation-timeouts.md`
+- `agent-os/standards/runs/artifact-store.md`
+- `agent-os/standards/server/json-request-validation.md`
+- `agent-os/standards/server/sse-streams.md`
+- `agent-os/standards/global/sanitization-and-safe-errors.md`
+- `agent-os/standards/server/openapi-and-sdk-artifacts.md`
+
+Optional:
+
+- `agent-os/standards/server/log-line-format.md`
+- `agent-os/standards/server/ssh-command-execution.md`
 
 ---
 
