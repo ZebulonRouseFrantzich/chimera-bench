@@ -503,6 +503,22 @@ Manual artifact inspection after a sweep completes:
 cat runs/<runId>/result.json
 ```
 
+#### Post-Review Follow-up (2026-03-05)
+
+- Task 5 review dispositions were implemented to reduce duplication and harden
+  ranking determinism without changing ranking semantics.
+- Sweep artifact shaping now uses shared sweep clone helpers, explicit
+  run-route field mapping, and named sweep ranking/result types.
+- Ranking comparison now normalizes `tokensPerSecond` to 3 decimals at compare
+  time as a deterministic guardrail if future producers emit higher precision.
+- Added regression coverage for empty sweep ranking and explicit `result.sweep`
+  presence assertions in integration tests.
+- Two reviewed suggestions were intentionally accepted as no-change decisions:
+  - keep locale-independent manual ASCII `caseId` ordering comparator,
+  - keep ranking `rank` as 1-indexed per Task 5 artifact contract.
+- Full per-finding disposition log is tracked in `review-findings.md` under
+  "Task 5 Review Findings and Decisions (2026-03-05)".
+
 ## Exit criteria
 
 - A sweep run can execute end-to-end over SSH, producing a `runs/{runId}/result.json` with multiple cases and a deterministic ranking.

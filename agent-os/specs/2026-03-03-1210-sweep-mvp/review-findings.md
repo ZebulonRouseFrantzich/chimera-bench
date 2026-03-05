@@ -285,11 +285,85 @@ Assessment of all PR comments for
 
 3. **Inline portability comment on regex whitespace token**
    - Source:
-     `https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22#discussion_r2886994651`
+      `https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22#discussion_r2886994651`
    - Severity: High.
    - Opinion: valid portability/correctness risk for POSIX ERE matching in
      `pkill`/`pgrep` cleanup paths.
    - Decision: implement now.
    - Implemented in:
-     `src/server/engines/starter-engine/run-state/remote-cleanup.ts`,
-     `tests/starter-engine/lifecycle-and-ssh.ts`
+      `src/server/engines/starter-engine/run-state/remote-cleanup.ts`,
+      `tests/starter-engine/lifecycle-and-ssh.ts`
+
+## Task 5 Review Findings and Decisions (2026-03-05)
+
+Assessment of Task 5 uncommitted changes after dual-model review. This section
+captures the final disposition for each finding and maps accepted items to
+implementation.
+
+1. **M1: duplicated `cloneUnknown` utility**
+   - Decision: implement now.
+   - Action: centralize sweep value cloning for run-store sweep modules.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/sweep-config.ts`,
+     `src/server/runs/in-memory-run-store/results.ts`
+
+2. **M2: duplicated sweep-axis clone logic**
+   - Decision: implement now.
+   - Action: extract shared `cloneSweepAxes` helper and reuse it for both
+     stored config cloning and persisted result shaping.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/sweep-config.ts`,
+     `src/server/runs/in-memory-run-store/results.ts`
+
+3. **M3: deterministic ranking assumes pre-rounded floats**
+   - Decision: implement now (hardening).
+   - Action: normalize `tokensPerSecond` to 3 decimals at ranking comparison
+     time and document this deterministic-contract guardrail inline.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/results.ts`
+
+4. **M4: silent clone-fallback data-shape risk**
+   - Decision: implement now.
+   - Action: remove JSON stringify/parse fallback in sweep run-store cloning;
+     raise explicit error when sweep value cloning fails.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/sweep-config.ts`
+
+5. **L1: ranking type repeated inline**
+   - Decision: implement now.
+   - Action: add named sweep ranking/result type aliases and consume them in
+     result builders.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/types.ts`,
+     `src/server/runs/in-memory-run-store/results.ts`
+
+6. **L2: `request.sweep` spread may leak future fields**
+   - Decision: implement now.
+   - Action: replace spread with explicit field mapping to the stored sweep
+     shape before queuing runs.
+   - Implemented in:
+     `src/server/routes/run-routes/index.ts`
+
+7. **L3: missing empty-ranking edge-case coverage**
+   - Decision: implement now.
+   - Action: add unit test asserting sweep ranking is an empty array when no
+     case outcomes were recorded.
+   - Implemented in:
+     `tests/in-memory-run-store.test.ts`
+
+8. **L4: integration cast lacks runtime guard**
+   - Decision: implement now.
+   - Action: add explicit assertion that `result.sweep` exists before typed
+     narrowing in ranking integration coverage.
+   - Implemented in:
+     `tests/app-runs/sweep-execution.ts`
+
+9. **L5: manual lexicographic comparator vs `localeCompare`**
+   - Decision: no code change.
+   - Rationale: `caseId` is ASCII-constrained and deterministic ordering is
+     intentionally locale-independent.
+
+10. **L6: rank starts at `1`**
+    - Decision: no code change.
+    - Rationale: this is intentional and aligned with Task 5 artifact examples
+      and ranking semantics.

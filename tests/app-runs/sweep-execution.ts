@@ -299,6 +299,152 @@ describe("run routes", () => {
     );
   });
 
+  test("persists sweep ranking deterministically in result.json", async () => {
+    const sweep = {
+      axes: {
+        serverArgs: {
+          ctxSize: [["--ctx-size", "4096"], ["--ctx-size", "8192"]],
+        },
+        requestParams: {
+          max_tokens: [64, 128],
+        },
+      },
+      maxCases: 16,
+      repetitions: 1,
+    };
+
+    const workload = getBuiltInWorkload("tuning.v0_0_1");
+    if (!workload) {
+      throw new Error("Expected tuning workload fixture.");
+    }
+    const workloadCase = workload.cases[0];
+    if (!workloadCase) {
+      throw new Error("Expected tuning workload to include one case.");
+    }
+
+    const expectedCases = expandSweepCases({
+      engineId: "llama-cpp",
+      modelIdentifier: TEST_MODEL_IDENTIFIER,
+      workloadId: "tuning.v0_0_1",
+      workloadCase,
+      baseServerArgs: [],
+      baseRequestParams: {},
+      sweep,
+    });
+    expect(expectedCases).toHaveLength(4);
+
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          executeCase: async (_context, caseConfig) => {
+            if (caseConfig.index >= 2) {
+              throw new Error(`synthetic case failure ${caseConfig.index}`);
+            }
+
+            await Bun.sleep(20);
+
+            if (caseConfig.index === 0) {
+              return {
+                outputText: Array.from({ length: 100 }, () => {
+                  return "token";
+                }).join(" "),
+              };
+            }
+
+            return {
+              outputText: "token",
+            };
+          },
+        }),
+      ]),
+    });
+
+    const runId = await createSweepRun(
+      app,
+      createSweepRequestBody({
+        sweep,
+      }),
+    );
+    const status = await waitForTerminalRunStatus(app, runId);
+    expect(status).toBe("completed");
+
+    const resultResponse = await app.request(`http://localhost/runs/${runId}/result`);
+    expect(resultResponse.status).toBe(200);
+    const resultPayload = await resultResponse.json();
+    expect(resultPayload.data?.result?.sweep).toBeDefined();
+
+    const sweepResult = resultPayload.data.result.sweep as {
+      axes: {
+        serverArgs: Record<string, string[][]>;
+        requestParams: Record<string, unknown[]>;
+      };
+      repetitions: number;
+      maxCases: number;
+      plannedCases: number;
+      ranking: Array<
+        | {
+            rank: number;
+            caseId: string;
+            status: "completed";
+            tokensPerSecond: number;
+            latencyMs: number;
+          }
+        | {
+            rank: number;
+            caseId: string;
+            status: "failed";
+          }
+      >;
+    };
+
+    expect(sweepResult.axes).toEqual(sweep.axes);
+    expect(sweepResult.repetitions).toBe(1);
+    expect(sweepResult.maxCases).toBe(16);
+    expect(sweepResult.plannedCases).toBe(4);
+    expect(sweepResult.ranking).toHaveLength(4);
+    expect(
+      sweepResult.ranking.map((entry) => {
+        return entry.rank;
+      }),
+    ).toEqual([1, 2, 3, 4]);
+
+    const firstExpectedCase = expectedCases[0];
+    const secondExpectedCase = expectedCases[1];
+    const thirdExpectedCase = expectedCases[2];
+    const fourthExpectedCase = expectedCases[3];
+    if (!firstExpectedCase || !secondExpectedCase || !thirdExpectedCase || !fourthExpectedCase) {
+      throw new Error("Expected four expanded sweep cases.");
+    }
+
+    expect(sweepResult.ranking[0]?.caseId).toBe(firstExpectedCase.caseId);
+    expect(sweepResult.ranking[0]?.status).toBe("completed");
+    expect(sweepResult.ranking[1]?.caseId).toBe(secondExpectedCase.caseId);
+    expect(sweepResult.ranking[1]?.status).toBe("completed");
+
+    const failedCaseIds = [thirdExpectedCase.caseId, fourthExpectedCase.caseId].sort();
+    expect(
+      sweepResult.ranking.slice(2).map((entry) => {
+        return entry.caseId;
+      }),
+    ).toEqual(failedCaseIds);
+    expect(sweepResult.ranking[2]?.status).toBe("failed");
+    expect(sweepResult.ranking[3]?.status).toBe("failed");
+
+    const firstRankingEntry = sweepResult.ranking[0];
+    if (!firstRankingEntry || firstRankingEntry.status !== "completed") {
+      throw new Error("Expected first ranking entry to be completed.");
+    }
+
+    expect(typeof firstRankingEntry.tokensPerSecond).toBe("number");
+    expect(typeof firstRankingEntry.latencyMs).toBe("number");
+    const thirdRankingEntry = sweepResult.ranking[2];
+    expect(thirdRankingEntry && "tokensPerSecond" in thirdRankingEntry).toBe(false);
+  });
+
   test("sweep cancel stops active case without starting the next case", async () => {
     let startCalls = 0;
     let stopCalls = 0;
