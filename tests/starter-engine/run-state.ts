@@ -133,6 +133,64 @@ describe("starter-engine run-state cleanup", () => {
     ]);
   });
 
+  test("treats missing SSH cleanup exit code as successful TERM dispatch", async () => {
+    const cleanupCommands: string[][] = [];
+
+    const dependencies = createDependencies({
+      signalProcessGroup: () => {
+        return;
+      },
+      wait: async () => {
+        return;
+      },
+      executeSshCommand: async (request) => {
+        cleanupCommands.push([...request.remoteArgv]);
+
+        if (request.remoteArgv[0] === "pgrep") {
+          return {
+            argv: ["ssh", "..."],
+            stdoutExcerpt: "",
+            stderrExcerpt: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            exitCode: 1,
+            signal: null,
+          };
+        }
+
+        return {
+          argv: ["ssh", "..."],
+          stdoutExcerpt: "",
+          stderrExcerpt: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      },
+    });
+
+    const runState = createBaseSshRunState();
+
+    await stopRunState(runState, {
+      runId: "run_cleanup_missing_exit_code",
+      reason: "stop",
+      emitDiagnostic: undefined,
+      dependencies,
+    });
+
+    expect(cleanupCommands).toHaveLength(2);
+    expect(cleanupCommands[0]).toEqual([
+      "pkill",
+      "-TERM",
+      "-f",
+      expect.any(String),
+    ]);
+    expect(cleanupCommands[1]).toEqual([
+      "pgrep",
+      "-f",
+      expect.any(String),
+    ]);
+  });
+
   test("deduplicates concurrent stop calls with one cleanup sequence", async () => {
     let localSignalCalls = 0;
     const cleanupCommands: string[][] = [];

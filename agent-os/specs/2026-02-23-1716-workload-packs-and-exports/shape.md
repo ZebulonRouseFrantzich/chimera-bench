@@ -13,6 +13,7 @@
 - Workload and prompt identifiers are stable and intended for long-term comparison.
 - Context files are resolved relative to the workload pack directory and must not escape it.
 - Exports are derived from `result.json` only (no additional data sources), and written atomically.
+- Operators may override per-run timeouts (case/run) for slow configurations; defaults stay conservative.
 - Visuals: none.
 - Prompt scenarios and calibration policies (small/medium/large tuning prompts; fit-min-ctx vs prune)
   are deferred until after v0.0.1 so Sweep MVP remains focused.

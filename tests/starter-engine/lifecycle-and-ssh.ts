@@ -319,7 +319,77 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     expect(signalCalls).toEqual(["SIGTERM"]);
   });
 
-  test("issues TERM + liveness-check + KILL cleanup commands on SSH stop", async () => {
+  test("cleans up remote SSH runtime when session exits unexpectedly", async () => {
+    const processHandle = new FakeChildProcess(64010);
+    const profile = createSshProfile("lab");
+    const cleanupCommands: string[][] = [];
+    const releasedRemotePorts: number[] = [];
+
+    const plugin = createStarterLlamaCppPlugin({
+      getTargetProfile: async () => profile,
+      createApiKey: () => TEST_API_KEY,
+      allocateLoopbackPort: async () => 18080,
+      allocateRemoteSshPort: () => 28080,
+      startupProbeWindowMs: 5,
+      sshStartupRetryAttempts: 1,
+      spawnProcess: () => processHandle.asChildProcess(),
+      signalProcessGroup: () => {
+        return;
+      },
+      executeSshCommand: async (request) => {
+        cleanupCommands.push([...request.remoteArgv]);
+        return {
+          argv: ["ssh", "..."],
+          stdoutExcerpt: "",
+          stderrExcerpt: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          exitCode: 1,
+          signal: null,
+        };
+      },
+      releaseRemoteSshPort: (_destinationKey, remotePort) => {
+        releasedRemotePorts.push(remotePort);
+      },
+    });
+
+    const launchConfig = await plugin.buildLaunchConfig(
+      createRunConfig({
+        target: {
+          type: "ssh",
+          profileId: "lab",
+        },
+        modelIdentifier: "/models/model.gguf",
+        validationMode: "permissive",
+      }),
+    );
+    const context = createContext("run_remote_unexpected_exit_cleanup", launchConfig);
+
+    await plugin.start(context);
+    processHandle.emitExit(255, null);
+
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (cleanupCommands.length > 0 && releasedRemotePorts.length > 0) {
+        break;
+      }
+
+      await Bun.sleep(10);
+    }
+
+    expect(cleanupCommands).toHaveLength(1);
+    expect(cleanupCommands[0]).toEqual([
+      "pkill",
+      "-TERM",
+      "-f",
+      expect.any(String),
+    ]);
+    expect(releasedRemotePorts).toEqual([28080]);
+
+    await plugin.stop(context);
+    expect(cleanupCommands).toHaveLength(1);
+  });
+
+  test("issues TERM + liveness-check + KILL cleanup commands when SSH success omits exit codes", async () => {
     const processHandle = new FakeChildProcess(64011);
     const profile = createSshProfile("lab");
     const cleanupCommands: string[][] = [];
@@ -348,8 +418,6 @@ describe("starter llama.cpp plugin process lifecycle", () => {
             stderrExcerpt: "",
             stdoutTruncated: false,
             stderrTruncated: false,
-            exitCode: 0,
-            signal: null,
           };
         }
 
@@ -359,8 +427,6 @@ describe("starter llama.cpp plugin process lifecycle", () => {
           stderrExcerpt: "",
           stdoutTruncated: false,
           stderrTruncated: false,
-          exitCode: 0,
-          signal: null,
         };
       },
       wait: async () => {

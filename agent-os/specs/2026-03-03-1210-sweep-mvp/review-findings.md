@@ -649,3 +649,39 @@ implemented for each item.
     - Implemented in:
       `src/server/engines/starter-engine/prompt-fit-preflight.ts`,
       `agent-os/specs/2026-03-03-1210-sweep-mvp/plan.md`
+
+## Task 6 Manual Validation Follow-up (2026-03-05, round 3)
+
+1. **SSH cleanup misclassification when command success omits `exitCode`**
+   - Severity: Medium.
+   - Opinion: valid regression; `executeSshCommand()` omits `exitCode` for
+     exit-0 success and cleanup paths treated this as indeterminate.
+   - Decision: implement now.
+   - Action: normalize SSH cleanup and liveness exit interpretation so
+     `undefined` maps to success (`0`) while `null` remains indeterminate.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state/remote-cleanup.ts`,
+     `tests/starter-engine/run-state.ts`,
+     `tests/starter-engine/lifecycle-and-ssh.ts`
+
+2. **Optimization: skip repeated startup for known prompt-overflow buckets**
+   - Severity: Low.
+   - Opinion: enhancement, not required for v0.0.1 correctness.
+   - Decision: defer.
+   - Tracking:
+     `agent-os/specs/2026-02-23-1716-workload-packs-and-exports/plan.md`
+
+## Task 6 Manual Validation Follow-up (2026-03-05, round 4)
+
+1. **Unexpected SSH session exits could skip remote cleanup and leak remote llama-server processes**
+   - Severity: High.
+   - Opinion: valid lifecycle leak; when the local SSH wrapper exited while run
+     state was still active, termination handling only logged diagnostics and did
+     not invoke stop/cleanup, leaving remote processes alive.
+   - Decision: implement now.
+   - Action: on active runtime termination observer events, invoke
+     `stopRunState()` with an `unexpected-exit` reason so SSH cleanup and remote
+     port release still run.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state.ts`,
+     `tests/starter-engine/lifecycle-and-ssh.ts`

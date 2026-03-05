@@ -92,7 +92,7 @@ async function runRemoteCleanupSignal(input: {
       diagnosticExcerptChars: REMOTE_CLEANUP_DIAGNOSTIC_EXCERPT_CHARS,
     });
 
-    const exitCode = result.exitCode;
+    const exitCode = normalizeSshCommandExitCode(result.exitCode);
     const commandSignal = result.signal;
 
     if (exitCode === 0) {
@@ -182,11 +182,13 @@ async function checkRemoteLlamaServerAlive(input: {
       diagnosticExcerptChars: REMOTE_CLEANUP_DIAGNOSTIC_EXCERPT_CHARS,
     });
 
-    if (result.exitCode === 0) {
+    const exitCode = normalizeSshCommandExitCode(result.exitCode);
+
+    if (exitCode === 0) {
       return true;
     }
 
-    if (result.exitCode === 1) {
+    if (exitCode === 1) {
       return false;
     }
 
@@ -196,9 +198,9 @@ async function checkRemoteLlamaServerAlive(input: {
       data: {
         runId: input.stopInput.runId,
         remotePort: input.remotePort,
-        ...(result.exitCode !== null
+        ...(exitCode !== null
           ? {
-              exitCode: result.exitCode,
+              exitCode,
             }
           : {}),
         ...(result.signal !== null
@@ -287,6 +289,11 @@ function buildRemoteLlamaServerPattern(input: {
 
 function toPkillSignalFlag(signal: RemoteCleanupSignal): string {
   return signal === "SIGTERM" ? "-TERM" : "-KILL";
+}
+
+function normalizeSshCommandExitCode(exitCode: number | null | undefined): number | null {
+  // executeSshCommand omits `exitCode` for standard exit-0 success paths.
+  return exitCode === undefined ? 0 : exitCode;
 }
 
 function escapeRegex(value: string): string {

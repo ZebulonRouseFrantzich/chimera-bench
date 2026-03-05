@@ -162,6 +162,33 @@ and they provide a clean UX for tuning prompt sizes without changing prompts mid
        instead of shrinking the prompt for every case.
    - Add an explicit override so operators can pin a specific prompt/scenario and skip calibration.
 
+9. Reduce repeated sweep restart churn for guaranteed prompt-overflow cases.
+   - Goal: avoid repeatedly starting/stopping remote engines when a prompt cannot fit a case's
+     configured context window.
+   - Add deterministic preflight bucketing keyed by effective prompt/scenario + `--ctx-size`.
+   - When a bucket fails prompt-fit preflight, mark all matching cases as
+     `VALIDATION_PROMPT_TOO_LARGE` without launching per-case engine sessions.
+   - Preserve stable case ordering and artifact determinism (same `caseId`/rank behavior).
+   - Manual testing steps:
+     - Run a sweep where every case is known oversize and confirm no repeated engine startup loops.
+     - Run a mixed sweep and confirm only fit-capable buckets launch engine sessions.
+
+10. Support per-run timeout overrides (sweep ergonomics).
+   - Goal: allow operators to extend timeouts for slow configurations without changing server defaults.
+   - Extend the create-run request to accept optional timeouts:
+     - `timeouts.caseMs` (positive integer milliseconds; bounded by a server-side max)
+     - `timeouts.runMs` (positive integer milliseconds; bounded by a server-side max)
+     - Validation: when both are provided, require `timeouts.caseMs <= timeouts.runMs`.
+   - Behavior:
+     - Defaults remain unchanged when timeouts are omitted.
+     - Persist resolved timeouts into `runs/{runId}/result.json` so exports capture the run policy.
+     - Sweep execution should cap per-case timeouts to remaining run time.
+   - Manual testing steps:
+     - Start a slow sweep and override timeouts:
+       - `{"timeouts": {"caseMs": 240000, "runMs": 1800000}}`
+     - Verify `runs/{runId}/result.json` records the overridden values under `timeouts`.
+     - Verify a case that previously failed with `RUN_CASE_TIMEOUT` can complete under the extended timeout.
+
 ## Exit criteria
 
 - A completed run generates consistent JSON, CSV, and markdown artifacts from the same data source.

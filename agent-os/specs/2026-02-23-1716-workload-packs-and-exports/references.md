@@ -16,6 +16,10 @@
 - llama-server prompt token preflight reference (uses `/tokenize`):
   - `src/server/engines/starter-engine/prompt-fit-preflight.ts`
   - `src/server/engines/starter-engine/utils.ts`
+- Run timeouts schema + defaults:
+  - `src/server/api/schemas.ts`
+  - `src/server/runs/defaults.ts`
+  - `src/server/routes/run-routes/index.ts`
 - Engine validation + SSH GPU hints (implementation):
   - `src/server/engines/starter-engine/mixed-gpu-guard.ts`
   - `src/server/engines/starter-engine/help-discovery.ts`

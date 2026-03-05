@@ -74,14 +74,13 @@ export function activateRunState(input: {
   });
 
   void input.runState.terminationPromise
-    .then((termination) => {
+    .then(async (termination) => {
       const activeRunState = input.runStates.get(input.context.runId);
       if (activeRunState !== input.runState) {
         return;
       }
 
       input.runStates.delete(input.context.runId);
-      input.runState.removeAbortListener();
 
       const secret = input.runState.apiKey;
       const stderrExcerpt = redactSecret(
@@ -92,7 +91,6 @@ export function activateRunState(input: {
         input.runState.stdoutBuffer.excerpt(input.dependencies.diagnosticExcerptChars),
         secret,
       );
-      input.runState.apiKey = "";
 
       if (termination.kind === "error") {
         input.context.emitDiagnostic?.({
@@ -117,43 +115,47 @@ export function activateRunState(input: {
               : {}),
           },
         });
-        return;
       }
 
-      if (termination.code === 0) {
-        return;
+      if (termination.kind === "exit" && termination.code !== 0) {
+        input.context.emitDiagnostic?.({
+          level: "warn",
+          message:
+            input.runState.mode === "ssh"
+              ? "SSH-managed remote llama-server session exited unexpectedly."
+              : "llama-server subprocess exited unexpectedly.",
+          data: {
+            runId: input.context.runId,
+            ...(input.runState.startupDiagnosticData ?? {}),
+            ...(termination.code !== null
+              ? {
+                  exitCode: termination.code,
+                }
+              : {}),
+            ...(termination.signal !== null
+              ? {
+                  signal: termination.signal,
+                }
+              : {}),
+            ...(stderrExcerpt.length > 0
+              ? {
+                  stderrExcerpt,
+                }
+              : {}),
+            ...(stdoutExcerpt.length > 0
+              ? {
+                  stdoutExcerpt,
+                }
+              : {}),
+          },
+        });
       }
 
-      input.context.emitDiagnostic?.({
-        level: "warn",
-        message:
-          input.runState.mode === "ssh"
-            ? "SSH-managed remote llama-server session exited unexpectedly."
-            : "llama-server subprocess exited unexpectedly.",
-        data: {
-          runId: input.context.runId,
-          ...(input.runState.startupDiagnosticData ?? {}),
-          ...(termination.code !== null
-            ? {
-                exitCode: termination.code,
-              }
-            : {}),
-          ...(termination.signal !== null
-            ? {
-                signal: termination.signal,
-              }
-            : {}),
-          ...(stderrExcerpt.length > 0
-            ? {
-                stderrExcerpt,
-              }
-            : {}),
-          ...(stdoutExcerpt.length > 0
-            ? {
-                stdoutExcerpt,
-              }
-            : {}),
-        },
+      await stopRunState(input.runState, {
+        runId: input.context.runId,
+        reason: "unexpected-exit",
+        emitDiagnostic: input.context.emitDiagnostic,
+        dependencies: input.dependencies,
       });
     })
     .catch((error) => {

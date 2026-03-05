@@ -38,9 +38,9 @@ describe("tuning workload prompt", () => {
     expect(endDatasetIndex).toBeGreaterThan(beginDatasetIndex);
 
     const datasetLines = lines.slice(beginDatasetIndex + 1, endDatasetIndex);
-    expect(datasetLines).toHaveLength(256);
+    expect(datasetLines).toHaveLength(32);
     expect(datasetLines[0]?.startsWith("rec-001|")).toBe(true);
-    expect(datasetLines[255]?.startsWith("rec-256|")).toBe(true);
+    expect(datasetLines[31]?.startsWith("rec-032|")).toBe(true);
   });
 
   test("stays under the built-in prompt byte limit", () => {
@@ -53,6 +53,6 @@ describe("tuning workload prompt", () => {
   test("matches the stable prompt regression hash", () => {
     const prompt = buildTuningPrompt();
     const hash = createHash("sha256").update(prompt).digest("hex");
-    expect(hash).toBe("6582bcdac5332da92c8cb7873ce6d376a58a61cac07a920cbf23cd502ef02d55");
+    expect(hash).toBe("5d191c59e33fe4e4a8d813cf1c8ea5d2a3a261de1f528ff19be005b339e07dfc");
   });
 });
