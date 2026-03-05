@@ -275,9 +275,13 @@ function buildRemoteLlamaServerPattern(input: {
   const escapedHost = escapeRegex(LOOPBACK_HOST);
   const escapedPort = escapeRegex(String(input.remotePort));
   const escapedApiKey = escapeRegex(input.apiKey);
+  const whitespaceClass = "[[:space:]]";
+
+  // `pkill -f` and `pgrep -f` generally evaluate POSIX ERE patterns, where
+  // `\s` is not a portable whitespace token.
   return (
-    `(^|/)llama-server(\\s|$).*` +
-    `--host ${escapedHost} --port ${escapedPort} --api-key ${escapedApiKey} --no-webui(\\s|$)`
+    `(^|/)llama-server(${whitespaceClass}|$).*` +
+    `--host ${escapedHost} --port ${escapedPort} --api-key ${escapedApiKey} --no-webui(${whitespaceClass}|$)`
   );
 }
 

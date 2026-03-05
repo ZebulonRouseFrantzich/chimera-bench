@@ -404,6 +404,7 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     const cleanupPattern = cleanupCommands[0]?.[3];
     expect(cleanupPattern?.includes("--no-webui")).toBe(true);
     expect(cleanupPattern?.includes(TEST_API_KEY)).toBe(true);
+    expect(cleanupPattern?.includes("[[:space:]]")).toBe(true);
   });
 
   test("skips KILL cleanup when TERM finds no matching remote process", async () => {

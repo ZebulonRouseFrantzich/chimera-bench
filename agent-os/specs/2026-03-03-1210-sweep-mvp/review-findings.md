@@ -251,4 +251,45 @@ maps each review finding to the implemented disposition.
    - Action: add inline code documentation for bounded worst-case SSH cleanup
      latency and rationale (prefer leak prevention over fastest shutdown).
    - Documented in:
-     `src/server/engines/starter-engine/run-state.ts`
+      `src/server/engines/starter-engine/run-state.ts`
+
+10. **POSIX regex portability for `pkill -f` / `pgrep -f` whitespace matching**
+    - Decision: implement now.
+    - Severity: High.
+    - Action: replace non-portable `\\s` tokens in cleanup regex patterns with
+      POSIX ERE-safe whitespace class (`[[:space:]]`) and add explicit test
+      coverage that the generated cleanup pattern includes the POSIX class.
+    - Implemented in:
+      `src/server/engines/starter-engine/run-state/remote-cleanup.ts`,
+      `tests/starter-engine/lifecycle-and-ssh.ts`
+
+## PR #22 Comment Assessment (2026-03-05)
+
+Assessment of all PR comments for
+`https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22`.
+
+1. **Review summary comment**
+   - Source:
+     `https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22#pullrequestreview-3892669944`
+   - Severity: Low.
+   - Opinion: informational summary only; no actionable defect.
+   - Decision: no code change.
+
+2. **Review wrapper comment**
+   - Source:
+     `https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22#pullrequestreview-3892975248`
+   - Severity: Low.
+   - Opinion: informational wrapper only; actionable content is in inline
+     review comments.
+   - Decision: no code change.
+
+3. **Inline portability comment on regex whitespace token**
+   - Source:
+     `https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22#discussion_r2886994651`
+   - Severity: High.
+   - Opinion: valid portability/correctness risk for POSIX ERE matching in
+     `pkill`/`pgrep` cleanup paths.
+   - Decision: implement now.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state/remote-cleanup.ts`,
+     `tests/starter-engine/lifecycle-and-ssh.ts`
