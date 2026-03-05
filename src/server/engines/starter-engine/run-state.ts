@@ -10,13 +10,9 @@ import type {
   StarterLlamaCppPluginDependencies,
   StopRunStateInput,
 } from "./types.ts";
+import { cleanupRemoteSshRuntime } from "./run-state/remote-cleanup.ts";
 import { waitForTermination } from "./spawn.ts";
 import { redactSecret, toError } from "./utils.ts";
-
-const REMOTE_CLEANUP_TIMEOUT_MS = 5_000;
-const REMOTE_CLEANUP_GRACE_MS = 250;
-const REMOTE_CLEANUP_MAX_BUFFERED_CHARS = 1_024;
-const REMOTE_CLEANUP_DIAGNOSTIC_EXCERPT_CHARS = 512;
 
 export function activateRunState(input: {
   context: EngineRuntimeContext;
@@ -177,6 +173,32 @@ export async function stopRunState(
   runState: LlamaServerRunState,
   input: StopRunStateInput,
 ): Promise<void> {
+  if (runState.stopCompleted) {
+    return;
+  }
+
+  if (runState.stopPromise) {
+    return runState.stopPromise;
+  }
+
+  const stopPromise = stopRunStateInternal(runState, input).then(() => {
+    runState.stopCompleted = true;
+  });
+  runState.stopPromise = stopPromise;
+
+  try {
+    await stopPromise;
+  } finally {
+    if (runState.stopPromise === stopPromise) {
+      delete runState.stopPromise;
+    }
+  }
+}
+
+async function stopRunStateInternal(
+  runState: LlamaServerRunState,
+  input: StopRunStateInput,
+): Promise<void> {
   runState.removeAbortListener();
 
   try {
@@ -235,6 +257,9 @@ export async function stopRunState(
         `${input.dependencies.stopGracePeriodMs + input.dependencies.killWaitTimeoutMs}ms after SIGTERM/SIGKILL.`,
     });
   } finally {
+    // Worst-case SSH cleanup latency per run is bounded by roughly:
+    //   TERM timeout + grace + pgrep timeout + KILL timeout
+    // while still preferring leak prevention over fast shutdown.
     await cleanupRemoteSshRuntime(runState, input);
 
     if (runState.remotePortReservation) {
@@ -303,91 +328,4 @@ function signalProcessGroup(
 
 function isMissingProcessError(error: Error): boolean {
   return (error as NodeJS.ErrnoException).code === "ESRCH";
-}
-
-async function cleanupRemoteSshRuntime(
-  runState: LlamaServerRunState,
-  input: StopRunStateInput,
-): Promise<void> {
-  if (runState.mode !== "ssh" || !runState.sshManagedRuntime) {
-    return;
-  }
-
-  const pattern = buildRemoteLlamaServerPattern(runState.sshManagedRuntime.remotePort);
-  const termExitCode = await runRemoteCleanupSignal({
-    signal: "TERM",
-    pattern,
-    runState,
-    stopInput: input,
-  });
-
-  if (termExitCode !== 0) {
-    return;
-  }
-
-  await input.dependencies.wait(REMOTE_CLEANUP_GRACE_MS);
-  await runRemoteCleanupSignal({
-    signal: "KILL",
-    pattern,
-    runState,
-    stopInput: input,
-  });
-}
-
-async function runRemoteCleanupSignal(input: {
-  signal: "TERM" | "KILL";
-  pattern: string;
-  runState: LlamaServerRunState;
-  stopInput: StopRunStateInput;
-}): Promise<number | null> {
-  const { signal, pattern, runState, stopInput } = input;
-  const sshManagedRuntime = runState.sshManagedRuntime;
-  if (!sshManagedRuntime) {
-    return null;
-  }
-
-  try {
-    const result = await stopInput.dependencies.executeSshCommand({
-      profile: sshManagedRuntime.profile,
-      remoteArgv: ["pkill", `-${signal}`, "-f", pattern],
-      allowNonZeroExit: true,
-      overallTimeoutMs: REMOTE_CLEANUP_TIMEOUT_MS,
-      maxBufferedChars: REMOTE_CLEANUP_MAX_BUFFERED_CHARS,
-      diagnosticExcerptChars: REMOTE_CLEANUP_DIAGNOSTIC_EXCERPT_CHARS,
-    });
-
-    const exitCode = result.exitCode ?? 0;
-    stopInput.emitDiagnostic?.({
-      level: "info",
-      message: "SSH remote llama-server cleanup signal dispatched.",
-      data: {
-        runId: stopInput.runId,
-        signal,
-        remotePort: sshManagedRuntime.remotePort,
-        ...(exitCode !== 0
-          ? {
-              exitCode,
-            }
-          : {}),
-      },
-    });
-
-    return exitCode;
-  } catch (error) {
-    stopInput.emitDiagnostic?.({
-      level: "warn",
-      message: "SSH remote llama-server cleanup command failed.",
-      data: {
-        runId: stopInput.runId,
-        signal,
-        remotePort: sshManagedRuntime.remotePort,
-        reason: redactSecret(toError(error).message, runState.apiKey),
-      },
-    });
-    return null;
-  }
-}
-
-function buildRemoteLlamaServerPattern(remotePort: number): string {
-  return `llama-server.*--host 127.0.0.1 --port ${remotePort}`;
 }

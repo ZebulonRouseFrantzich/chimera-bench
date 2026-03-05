@@ -174,3 +174,81 @@ deferred.
     - Scope: consider streaming/incremental hashing to reduce peak string
       allocations when canonicalizing unusually large case config payloads.
     - Tracking: noted in this spec's `plan.md` future follow-up section.
+
+## SSH Sweep Shutdown Follow-up Findings (2026-03-04)
+
+This section tracks post-merge hardening work for SSH-managed sweep cleanup and
+maps each review finding to the implemented disposition.
+
+1. **Cleanup `pkill -f` pattern precision**
+   - Decision: implement now.
+   - Action: harden cleanup pattern matching by anchoring to `llama-server`
+     command boundaries, escaping regex literals (including loopback host), and
+     requiring run-unique `--api-key` + `--no-webui` markers in the match.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state.ts`
+
+2. **`exitCode ?? 0` null-coalescing in cleanup**
+   - Decision: implement now.
+   - Action: treat `exitCode: null` (or signal-only termination) as an
+     indeterminate cleanup result rather than success.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state.ts`
+
+3. **Unconditional SIGKILL shortly after TERM**
+   - Decision: implement now.
+   - Action: replace TERM->fixed-KILL flow with TERM->grace->`pgrep` liveness
+     check->conditional KILL.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state.ts`
+
+4. **Duplicate remote port state across fields**
+   - Decision: implement now.
+   - Action: remove duplicate `remotePort` from `sshManagedRuntime`; keep
+     remote port authority in `remotePortReservation` and derive cleanup port
+     from that reservation.
+   - Implemented in:
+     `src/server/engines/starter-engine/types.ts`,
+     `src/server/engines/starter-engine/startup.ts`,
+     `src/server/engines/starter-engine/run-state.ts`
+
+5. **Cleanup test coverage gaps**
+   - Decision: implement now.
+   - Action: add tests for remote cleanup throw handling, TERM non-match skip,
+     and missing SSH runtime metadata.
+   - Implemented in:
+     `tests/starter-engine/lifecycle-and-ssh.ts`,
+     `tests/starter-engine/run-state.ts`
+
+6. **Signal naming consistency (`TERM` vs `SIGTERM`)**
+   - Decision: implement now.
+   - Action: standardize internal signal names (`SIGTERM` / `SIGKILL`) and map
+     explicitly to `pkill` CLI flags (`-TERM` / `-KILL`).
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state.ts`
+
+7. **Potential duplicate cleanup on repeated stop calls**
+   - Decision: implement now.
+   - Action: add idempotent stop lifecycle guards (`stopPromise` +
+     `stopCompleted`) so concurrent stop calls share one cleanup sequence.
+   - Implemented in:
+     `src/server/engines/starter-engine/types.ts`,
+     `src/server/engines/starter-engine/run-state.ts`,
+     `tests/starter-engine/run-state.ts`
+
+8. **Hardcoded remote cleanup timing values**
+   - Decision: implement now.
+   - Action: add dependency-level tuning knobs for remote cleanup command
+     timeout and grace period, with safe defaults from constants.
+   - Implemented in:
+     `src/server/engines/starter-engine/constants.ts`,
+     `src/server/engines/starter-engine/types.ts`,
+     `src/server/engines/starter-engine/dependencies.ts`,
+     `src/server/engines/starter-engine/run-state.ts`
+
+9. **Shutdown latency tradeoff documentation**
+   - Decision: document now.
+   - Action: add inline code documentation for bounded worst-case SSH cleanup
+     latency and rationale (prefer leak prevention over fastest shutdown).
+   - Documented in:
+     `src/server/engines/starter-engine/run-state.ts`

@@ -437,6 +437,20 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/runs/<runId>/
 
 5) Confirm restart-per-case behavior from server logs (look for repeated start/ready/stop diagnostics per case).
 
+#### Post-Review Follow-up (2026-03-04)
+
+- SSH sweep shutdown hardening landed after manual remote validation found
+  orphaned remote `llama-server` processes could accumulate and consume GPU
+  memory across runs.
+- Follow-up implementation now uses:
+  - stronger remote cleanup process matching,
+  - explicit null/indeterminate cleanup-exit handling,
+  - TERM -> liveness check -> conditional KILL cleanup flow,
+  - idempotent stop guards for concurrent stop calls,
+  - dependency-configurable remote cleanup timeout/grace knobs.
+- Full decision log and file mapping is tracked in `review-findings.md` under
+  "SSH Sweep Shutdown Follow-up Findings (2026-03-04)".
+
 ### Task 5: Persist Artifacts And Rank Results
 
 Persist a single `runs/{runId}/result.json` containing all sweep cases plus a deterministic ranking.
