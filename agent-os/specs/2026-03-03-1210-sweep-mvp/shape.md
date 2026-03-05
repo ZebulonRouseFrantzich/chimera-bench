@@ -2,27 +2,93 @@
 
 ## Scope
 
-- Add a minimal sweep config and deterministic expansion.
+- Add a minimal sweep config to `POST /runs` with deterministic expansion.
 - Execute sweep cases sequentially with engine restarts between cases.
-- Persist results to JSON and include a best-to-worst ranking.
+- Persist results to JSON and include a deterministic best-to-worst ranking.
 
 ## Decisions
 
-- Axis values are explicit lists for v0.0.1.
+- Axis values are explicit lists for v0.0.1 (no `{ min, max, step }` generators).
+- Deterministic expansion:
+  - sort axis keys lexicographically (namespace order: `serverArgs` then `requestParams`)
+  - preserve input ordering within each axis value list
+  - cartesian product across axes, then apply `repetitions`
+- Case identities are hash-based (future-proof):
+  - compute `caseConfigId` as `sha256` of a canonical JSON representation of the inference-affecting config
+  - derive `caseId` by adding a repetition suffix (ex: `.rep-1`)
+- Merge semantics are simple and deterministic:
+  - `engine.serverArgs` is the base argv list; sweep axis argv fragments are appended in sorted axis-key order
+  - `engine.requestParams` is the base object; sweep-selected keys override base values
+- Security hardening at creation time:
+  - reject reserved/core-owned and denylisted server flags inside sweep axis fragments
+  - reject reserved request param keys (`messages`, `model`, `stream`)
+  - apply the same request-param node/depth/string-length budget validation used for `engine.requestParams` to each axis value
+  - enforce merged argv ceiling: `engine.serverArgs + sweep-selected args <= 64`
+  - enforce schema-level sweep axis/value list ceilings for early oversized payload rejection
+- Temporary rollout safety gate (post PR #21 review):
+  - after sweep validation passes, return `VALIDATION_SWEEP_NOT_SUPPORTED` until Task 3 + Task 4 land
+  - Task 3/4 implementation must remove this gate
+- Workload constraint for v0.0.1: sweep execution supports workloads with exactly 1 workload case.
+  - enforce this at run creation time when the temporary gate is removed
 - Keep execution single-threaded (one active run) to reduce resource risk.
-- Defer resume/state persistence and sweep-specific event taxonomy until after v0.0.1.
+- Reuse existing `run.*` SSE events; defer sweep-specific event taxonomy.
+- SSE payloads must not include full per-case `engineArgs` / `requestParams` for v0.0.1.
+
+- Progress semantics:
+  - post-gate, when `sweep` is present, `totalCases` must equal `plannedCases` (not workload case count)
+
+- Throughput semantics:
+  - Sweep ranking relies on meaningful per-case `tokensPerSecond` / `latencyMs` values.
+  - This requires the built-in `llama.cpp` plugin `executeCase()` to perform a real
+    `/v1/chat/completions` request instead of returning a stubbed empty output.
+  - v0.0.1 prefers `rawResponse.usage.completion_tokens` when available,
+    falling back to output-text estimation when usage metrics are missing.
+
+- Execution safety semantics (Task 6 hardening):
+  - bound case response body reads before JSON parse to avoid unbounded memory
+    growth from malformed or hostile upstream responses,
+  - preflight prompt token count against configured `--ctx-size` via
+    `/tokenize` (plus conservative chat-overhead buffer) so oversize prompts
+    fail early with explicit validation errors,
+  - strip reserved request-param keys defensively before request dispatch even
+    when validation is expected to catch them,
+  - map upstream context-overflow HTTP errors to stable
+    `VALIDATION_PROMPT_TOO_LARGE` failures,
+  - persist only allowlisted raw response fields in run artifacts to avoid
+    leaking arbitrary upstream payload data,
+  - keep request timeout enforcement orchestrator-owned in v0.0.1 (engine-local
+    fetch timeout knobs deferred),
+  - keep warning diagnostics metadata-focused (status/size/reason) and avoid
+    logging response body excerpts by default.
+
+- Hard safety cap:
+  - `MAX_SWEEP_CASES = 256` server-enforced regardless of caller-provided `maxCases`
+  - for `maxCases > MAX_SWEEP_CASES`, return immediate `VALIDATION_SWEEP_TOO_LARGE`
+
+- Reliability stop condition:
+  - `MAX_CONSECUTIVE_ENGINE_LIFECYCLE_FAILURES = 3` triggers failing the run and marking remaining cases failed
 
 ## Context
 
 - Visuals: none.
-- References: existing run orchestration and result schema.
+- References: existing run orchestration, run store, and result schema.
 - Roadmap sequencing: `agent-os/product/roadmap.md`.
+- Artifact note: v0.0.1 Sweep MVP requires `runs/{runId}/result.json`; `cases.csv` + `summary.md` remain deferred.
 
 ## Risks
 
 - Combinatorial explosion: mitigate with `maxCases` caps.
 - Restart-per-case increases runtime; acceptable for tuning MVP.
+- Hash-based identities require canonical JSON + JSON-serializable axis values.
+- Hash stability drift: mitigate with golden hash fixtures.
+- Persisting many cases can produce large artifacts; keep `maxCases` conservative.
+- Existing run storage/orchestration must record per-case `engineArgs` + `requestParams` for sweeps.
 
 ## Success Criteria
 
 - Operators can sweep `llama-server` args/params against an SSH target and quickly see rough best configs.
+- Re-running the same sweep config yields identical expansion order, stable `caseId`s, and deterministic ranking.
+
+## Review Follow-Up
+
+- Review triage and implementation decisions for Tasks 1-2 are documented in `review-findings.md`.

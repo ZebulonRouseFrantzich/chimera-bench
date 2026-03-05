@@ -242,6 +242,54 @@
               }
             }
           },
+          "sweep": {
+            "type": "object",
+            "properties": {
+              "axes": {
+                "type": "object",
+                "properties": {
+                  "serverArgs": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096
+                        },
+                        "maxItems": 64
+                      },
+                      "maxItems": 256
+                    }
+                  },
+                  "requestParams": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {},
+                      "maxItems": 256
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "repetitions": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "maxCases": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "axes",
+              "maxCases"
+            ],
+            "additionalProperties": false
+          },
           "validationMode": {
             "type": "string",
             "enum": [

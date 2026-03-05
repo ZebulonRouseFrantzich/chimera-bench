@@ -12,6 +12,7 @@ import {
 } from "../../api/envelope.ts";
 import {
   CreateRunRequestSchema,
+  MAX_SERVER_ARGS,
   normalizeCreateRunRequest,
 } from "../../api/schemas.ts";
 import type { EngineCatalog } from "../../engines/engine-catalog.ts";
@@ -29,6 +30,15 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../../runs/defaults.ts";
+import {
+  computeMaxSweepAdditionalServerArgs,
+  validateAndPlanSweepConfig,
+} from "../../runs/sweep-validation.ts";
+import {
+  expandSweepCases,
+  SweepCaseCanonicalizationError,
+  type ExpandedSweepCase,
+} from "../../runs/sweep-expansion.ts";
 import { validateSshModelIdentifier } from "../../runs/ssh-model-identifier-validation.ts";
 import type { RunArtifactStore } from "../../runs/run-artifact-store.ts";
 import { RunOrchestrator } from "../../runs/run-orchestrator/index.ts";
@@ -180,6 +190,32 @@ export function registerRunRoutes(
       });
     }
 
+    const workload = getBuiltInWorkload(request.workloadId);
+    if (!workload) {
+      return jsonError(context, 400, {
+        code: "VALIDATION_WORKLOAD_INVALID",
+        message: `Workload '${sanitizeControlCharacters(request.workloadId)}' is not available in this build.`,
+      });
+    }
+
+    let plannedSweepCases: number | null = null;
+    if (request.sweep) {
+      const sweepValidation = validateAndPlanSweepConfig(request.sweep);
+      if (!sweepValidation.ok) {
+        return jsonError(context, 400, sweepValidation.payload);
+      }
+
+      plannedSweepCases = sweepValidation.plannedCases;
+
+      if (workload.cases.length !== 1) {
+        return jsonError(context, 400, {
+          code: "VALIDATION_SWEEP_WORKLOAD_NOT_SUPPORTED",
+          message:
+            "Sweep runs currently support workloads with exactly one workload case.",
+        });
+      }
+    }
+
     let validationResult: EngineRunConfigValidationResult;
     try {
       validationResult = await plugin.validateRunConfig(request);
@@ -219,12 +255,81 @@ export function registerRunRoutes(
     request.engine.requestParams = validationResult.normalized.requestParams;
     request.model.identifier = validationResult.normalized.modelIdentifier;
 
-    const workload = getBuiltInWorkload(request.workloadId);
-    if (!workload) {
-      return jsonError(context, 400, {
-        code: "VALIDATION_WORKLOAD_INVALID",
-        message: `Workload '${sanitizeControlCharacters(request.workloadId)}' is not available in this build.`,
-      });
+    if (request.sweep) {
+      const baseServerArgsCount = request.engine.serverArgs.length;
+      const sweepMaxAdditionalServerArgs = computeMaxSweepAdditionalServerArgs(request.sweep);
+      const maxMergedServerArgs = baseServerArgsCount + sweepMaxAdditionalServerArgs;
+
+      if (maxMergedServerArgs > MAX_SERVER_ARGS) {
+        return jsonError(context, 400, {
+          code: "VALIDATION_SWEEP_INVALID",
+          message: "Sweep configuration is invalid.",
+          details: {
+            issues: [
+              {
+                code: "VALIDATION_SWEEP_INVALID",
+                message:
+                  `Merged serverArgs can exceed ${MAX_SERVER_ARGS} tokens (` +
+                  `base=${baseServerArgsCount}, sweepAdditional=${sweepMaxAdditionalServerArgs}).`,
+                path: "sweep.axes.serverArgs",
+              },
+            ],
+          },
+        });
+      }
+    }
+
+    let sweepCases: ExpandedSweepCase[] | undefined;
+    if (request.sweep) {
+      const workloadCase = workload.cases[0];
+      if (!workloadCase) {
+        return jsonError(context, 400, {
+          code: "VALIDATION_SWEEP_WORKLOAD_NOT_SUPPORTED",
+          message:
+            "Sweep runs currently support workloads with exactly one workload case.",
+        });
+      }
+
+      try {
+        sweepCases = expandSweepCases({
+          engineId: request.engineId,
+          modelIdentifier: request.model.identifier,
+          workloadId: request.workloadId,
+          workloadCase,
+          baseServerArgs: request.engine.serverArgs,
+          baseRequestParams: request.engine.requestParams,
+          sweep: request.sweep,
+        });
+      } catch (error) {
+        if (error instanceof SweepCaseCanonicalizationError) {
+          return jsonError(context, 400, {
+            code: "VALIDATION_SWEEP_INVALID",
+            message: "Sweep configuration is invalid.",
+            details: {
+              issues: [
+                {
+                  code: "VALIDATION_SWEEP_INVALID",
+                  message: sanitizeControlCharacters(error.message),
+                  path: sanitizeValidationPath(error.path),
+                },
+              ],
+            },
+          });
+        }
+
+        return jsonError(context, 400, {
+          code: "VALIDATION_SWEEP_INVALID",
+          message: "Sweep configuration is invalid.",
+        });
+      }
+
+      if (plannedSweepCases !== null && sweepCases.length !== plannedSweepCases) {
+        return jsonError(context, 400, {
+          code: "VALIDATION_SWEEP_INVALID",
+          message:
+            "Sweep configuration expanded into an unexpected number of cases.",
+        });
+      }
     }
 
     const caseTimeoutMs = request.timeouts.caseMs ?? DEFAULT_CASE_TIMEOUT_MS;
@@ -243,7 +348,20 @@ export function registerRunRoutes(
       modelIdentifier: request.model.identifier,
       workloadId: request.workloadId,
       engineArgs: request.engine.serverArgs,
-      totalCases: workload.cases.length,
+      ...(request.sweep && sweepCases
+        ? {
+            sweep: {
+              axes: {
+                serverArgs: request.sweep.axes.serverArgs,
+                requestParams: request.sweep.axes.requestParams,
+              },
+              repetitions: request.sweep.repetitions,
+              maxCases: request.sweep.maxCases,
+              plannedCases: sweepCases.length,
+            },
+          }
+        : {}),
+      totalCases: sweepCases?.length ?? workload.cases.length,
       caseTimeoutMs,
       runTimeoutMs,
     });
@@ -281,6 +399,11 @@ export function registerRunRoutes(
           ...request.engine.requestParams,
         },
       },
+      ...(request.sweep
+        ? {
+            sweep: request.sweep,
+          }
+        : {}),
       timeouts: {
         caseMs: caseTimeoutMs,
         runMs: runTimeoutMs,
@@ -291,6 +414,11 @@ export function registerRunRoutes(
       runId,
       runConfig,
       workload,
+      ...(sweepCases
+        ? {
+            sweepCases,
+          }
+        : {}),
     });
 
     return jsonSuccess(

@@ -9,10 +9,15 @@ import {
   buildProgress,
   cloneRunFailure,
 } from "./record-utils.ts";
+import { cloneSweepAxes } from "./sweep-config.ts";
 import type {
   RunRecord,
   RunSummaryData,
+  StoredCaseOutcome,
   StoredRunResult,
+  StoredSweepResult,
+  StoredSweepConfig,
+  SweepRankingEntry,
 } from "./types.ts";
 
 export function buildRunSummary(run: RunRecord): RunSummaryData {
@@ -73,9 +78,7 @@ export function buildRunResult(run: RunRecord): StoredRunResult {
       index: caseOutcome.index,
       contextTokens: caseOutcome.contextTokens,
       engineArgs: [...caseOutcome.engineArgs],
-      requestParams: {
-        ...caseOutcome.requestParams,
-      },
+      requestParams: cloneRequestParams(caseOutcome.requestParams),
       status: caseOutcome.status,
       latencyMs: caseOutcome.latencyMs,
       ttftMs: caseOutcome.ttftMs,
@@ -96,6 +99,11 @@ export function buildRunResult(run: RunRecord): StoredRunResult {
           }),
     })),
     error: run.failure ? cloneRunFailure(run.failure) : null,
+    ...(run.sweep
+      ? {
+          sweep: buildSweepResult(run.sweep, run.caseOutcomes),
+        }
+      : {}),
     ...(run.metrics
       ? {
           metricsExtra: {
@@ -104,4 +112,102 @@ export function buildRunResult(run: RunRecord): StoredRunResult {
         }
       : {}),
   };
+}
+
+function buildSweepResult(
+  sweep: StoredSweepConfig,
+  caseOutcomes: readonly StoredCaseOutcome[],
+): StoredSweepResult {
+  const ranking = buildSweepRanking(caseOutcomes);
+
+  return {
+    axes: cloneSweepAxes(sweep.axes),
+    repetitions: sweep.repetitions,
+    maxCases: sweep.maxCases,
+    plannedCases: sweep.plannedCases,
+    ranking,
+  };
+}
+
+function buildSweepRanking(
+  caseOutcomes: readonly StoredCaseOutcome[],
+): SweepRankingEntry[] {
+  const completed = caseOutcomes
+    .filter((caseOutcome) => {
+      return caseOutcome.status === "completed";
+    })
+    .sort((left, right) => {
+      // Keep ranking deterministic even if a future producer supplies
+      // higher-precision values than the orchestrator's current 3-decimal TPS.
+      const leftTokensPerSecond = normalizeRankingTokensPerSecond(left.tokensPerSecond);
+      const rightTokensPerSecond = normalizeRankingTokensPerSecond(right.tokensPerSecond);
+      if (leftTokensPerSecond !== rightTokensPerSecond) {
+        return rightTokensPerSecond - leftTokensPerSecond;
+      }
+
+      if (left.latencyMs !== right.latencyMs) {
+        return left.latencyMs - right.latencyMs;
+      }
+
+      return compareLexicographic(left.caseId, right.caseId);
+    });
+
+  const failed = caseOutcomes
+    .filter((caseOutcome) => {
+      return caseOutcome.status === "failed";
+    })
+    .sort((left, right) => {
+      return compareLexicographic(left.caseId, right.caseId);
+    });
+
+  const ranking: SweepRankingEntry[] = [];
+
+  let rank = 1;
+  for (const caseOutcome of completed) {
+    ranking.push({
+      rank,
+      caseId: caseOutcome.caseId,
+      status: "completed",
+      tokensPerSecond: caseOutcome.tokensPerSecond,
+      latencyMs: caseOutcome.latencyMs,
+    });
+    rank += 1;
+  }
+
+  for (const caseOutcome of failed) {
+    ranking.push({
+      rank,
+      caseId: caseOutcome.caseId,
+      status: "failed",
+    });
+    rank += 1;
+  }
+
+  return ranking;
+}
+
+function compareLexicographic(left: string, right: string): number {
+  if (left < right) {
+    return -1;
+  }
+
+  if (left > right) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function normalizeRankingTokensPerSecond(tokensPerSecond: number): number {
+  return Number(tokensPerSecond.toFixed(3));
+}
+
+function cloneRequestParams(value: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return structuredClone(value);
+  } catch {
+    return {
+      ...value,
+    };
+  }
 }

@@ -32,10 +32,18 @@ export interface LlamaServerRunState {
   healthUrl: string;
   healthRequestHeaders: Record<string, string>;
   apiKey: string;
+  modelIdentifier: string;
+  contextWindowTokens: number | null;
+  promptFitPreflightSkipLogged?: boolean;
   remotePortReservation?: {
     destinationKey: string;
     remotePort: number;
   };
+  sshManagedRuntime?: {
+    profile: TargetProfile;
+  };
+  stopPromise?: Promise<void>;
+  stopCompleted?: boolean;
   startupDiagnosticData?: Record<string, unknown>;
   removeAbortListener: () => void;
 }
@@ -127,11 +135,14 @@ export interface StarterLlamaCppPluginDependencies {
   releaseRemoteSshPort: (destinationKey: string, remotePort: number) => void;
   stopGracePeriodMs: number;
   killWaitTimeoutMs: number;
+  remoteCleanupCommandTimeoutMs: number;
+  remoteCleanupGracePeriodMs: number;
   readinessPollIntervalMs: number;
   readinessTimeoutMs: number;
   readinessRequestTimeoutMs: number;
   bufferedLogChars: number;
   diagnosticExcerptChars: number;
+  maxCaseResponseBytes: number;
 }
 
 export interface ReadinessProbeSuccess {

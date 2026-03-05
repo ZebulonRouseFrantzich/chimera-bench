@@ -16,6 +16,7 @@ Enable a minimal, server-side sweep execution path for v0.0.1 so operators can t
 - Deterministic sweep expansion order and stable case identities.
 - Engine restarts between sweep cases.
 - A single `runs/{runId}/result.json` containing all cases plus a best-to-worst ranking.
+- Completed sweep cases produce non-stubbed per-case outputs and throughput metrics (not all-zero `tokensPerSecond`).
 
 ## Non-goals
 
@@ -27,41 +28,140 @@ Enable a minimal, server-side sweep execution path for v0.0.1 so operators can t
 
 ## Implementation tasks
 
-1. Save spec documentation (this folder).
-   - Ensure this spec folder contains:
-     - `plan.md`
-     - `shape.md`
-     - `references.md`
-     - `standards.md`
-     - `visuals/README.md`
+### Task 1: Finalize Spec Documentation
 
-2. Extend run creation schema with a sweep config (explicit lists).
-   - Add `sweep.axes.serverArgs` and `sweep.axes.requestParams`.
-   - Enforce `maxCases` to prevent combinatorial explosions.
+- Ensure this spec folder contains:
+  - `plan.md`
+  - `shape.md`
+  - `references.md`
+  - `standards.md`
+  - `visuals/README.md`
+- Ensure every task in `plan.md` includes a `Manual Testing Steps` section.
+- Note on artifacts: the embedded run result standard mentions `cases.csv` + `summary.md`, but v0.0.1 Sweep MVP only requires `runs/{runId}/result.json`.
 
-3. Implement deterministic expansion.
-   - Sort axis keys.
-   - Preserve input list ordering within each axis.
-   - Apply cartesian product across axes and then apply `repetitions`.
+#### Manual Testing Steps
 
-4. Implement sweep execution with restart-per-case.
-   - For each expanded case:
-     - start engine
-     - wait ready
-     - execute exactly one workload case
-     - collect metrics
-     - stop engine
+```bash
+ls -la agent-os/specs/2026-03-03-1210-sweep-mvp/
+rg -n "^### Task |^#### Manual Testing Steps" agent-os/specs/2026-03-03-1210-sweep-mvp/plan.md
+```
 
-5. Persist artifacts and rank results.
-   - Persist all cases to `runs/{runId}/result.json`.
-   - Rank best-to-worst using a simple score:
-     - completed cases ranked by `tokensPerSecond` desc (tie-breaker: `latencyMs` asc)
-     - failed cases ranked after completed cases
+### Task 2: Extend Run Creation Schema With Sweep Config (Explicit Lists)
 
-## Manual testing steps
+Add an optional `sweep` object to `POST /runs` request bodies.
 
-1. Start the server.
-2. Start a sweep run (example shows two 2-value axes):
+#### Request Shape
+
+- `sweep.axes.serverArgs`: `Record<string, string[][]>`
+  - Each axis key is a human label (example: `"ctxSize"`, `"gpuLayers"`).
+  - Each axis value is a list of argv fragments.
+  - Each argv fragment is a non-empty `string[]` that will be appended to `engine.serverArgs`.
+  - Example value: `["--ctx-size", "8192"]`.
+
+- `sweep.axes.requestParams`: `Record<string, unknown[]>`
+  - Each key is a top-level request param key (example: `"max_tokens"`).
+  - Each axis value is a list of JSON-serializable values.
+
+- `sweep.repetitions`: optional integer, default `1`.
+  - v0.0.1 semantics: repetitions produce multiple independent cases (no aggregation/averaging).
+
+- `sweep.maxCases`: required integer hard cap.
+
+#### Merge Semantics (Base Engine Options + Sweep)
+
+- Base engine options come from `engine.serverArgs` and `engine.requestParams` and apply to every sweep case.
+- For each expanded case:
+  - `serverArgs`:
+    - Start with the base `engine.serverArgs`.
+    - Append one argv fragment from each `sweep.axes.serverArgs` axis in deterministic axis-key order.
+    - If flags repeat, engine CLI semantics apply (often "last one wins").
+  - `requestParams`:
+    - Start with `{ ...engine.requestParams }`.
+    - For each `sweep.axes.requestParams` key selected, set/override that key on the object.
+
+#### Server-Side Hard Limits (v0.0.1)
+
+- The server must enforce a hard upper bound on sweep size regardless of what the client requests:
+  - `MAX_SWEEP_CASES = 256`
+- Additional schema-level limits for early rejection:
+  - `MAX_SWEEP_AXES_PER_NAMESPACE = 32`
+  - `MAX_SWEEP_AXIS_VALUES = 256` per axis list
+  - sweep server-arg fragment token cap matches base `engine.serverArgs` cap (`64`)
+- `sweep.maxCases` must be `<= MAX_SWEEP_CASES`.
+- `plannedCases` must be `<= MAX_SWEEP_CASES`.
+
+Rationale: avoid accidental or malicious long-running sweeps (SSH restarts per case) and overly large `result.json` artifacts.
+
+#### Validation Ordering (POST /runs)
+
+Perform validations in an order that avoids expensive work and prevents surprising partial acceptance:
+
+1) Parse and validate the request body shape (zod).
+2) Resolve the workload (to enforce sweep workload constraints before accepting a run).
+3) Validate sweep config (axes shape, JSON-only values, caps) and compute `plannedCases` without expanding the full matrix.
+4) Accept the run.
+
+#### Validation Rules
+
+- If `sweep` is present, it must expand to at least 1 case.
+- All axis lists must be non-empty.
+- `sweep.maxCases` must be enforced against the planned total cases.
+  - `plannedCases = (product of axis lengths across both namespaces) * repetitions`
+- Reject any request where `sweep.maxCases > MAX_SWEEP_CASES` with `400` and code `VALIDATION_SWEEP_TOO_LARGE`.
+  - Fast-fail precedence is intentional: return this stable ceiling error immediately even if other sweep issues exist.
+- If `plannedCases > maxCases` or `plannedCases > MAX_SWEEP_CASES`, reject with `400` and code `VALIDATION_SWEEP_TOO_LARGE`.
+- If `sweep` is present but axes are empty (no `serverArgs` and no `requestParams` axes), reject with `400` and code `VALIDATION_SWEEP_EMPTY`.
+- `sweep.repetitions` and `sweep.maxCases` must be integers `>= 1`.
+
+- If `sweep` is present, the selected workload must contain exactly one workload case for v0.0.1.
+  - Otherwise reject with `400` and code `VALIDATION_SWEEP_INVALID`.
+- Axis values must be JSON-only. Reject values containing:
+  - `undefined`
+  - non-finite numbers (`NaN`, `Infinity`, `-Infinity`)
+  - non-plain-JSON objects (for example `Date`, `Map`, `Set`, class instances)
+  - circular references
+  - `BigInt`
+  - symbols
+
+- `sweep.axes.serverArgs` validation (creation-time, lightweight):
+  - Reject reserved/core-owned flags (model/host/port/api-key/webui and any other flags owned by core/plugin) in any axis argv fragment.
+  - Reject denylisted flags/values that can write files or expand network exposure.
+  - This validation must not require repeated remote `llama-server --help` probes.
+
+- `sweep.axes.requestParams` validation (creation-time):
+  - Reject reserved request param keys owned by the orchestrator (at minimum: `messages`, `model`, `stream`).
+  - Each axis value must pass the same request-param node/depth/string-length budget validation used for `engine.requestParams`.
+
+- Merged server args safety:
+  - Let `baseCount = engine.serverArgs.length` after plugin normalization.
+  - Let `sweepMaxAdditional = sum(longestFragmentLengthPerServerArgAxis)`.
+  - If `baseCount + sweepMaxAdditional > 64`, reject with `400` and code `VALIDATION_SWEEP_INVALID`.
+
+- If any of the above validations fail, reject with `400` and code `VALIDATION_SWEEP_INVALID`.
+
+- Temporary rollout gate (post-PR review safety decision):
+  - If sweep validation passes, reject with `400` and code `VALIDATION_SWEEP_NOT_SUPPORTED` until Task 3 + Task 4 are implemented.
+
+- Post-gate progress accounting (required once Tasks 3/4 remove the temporary rejection):
+  - When `sweep` is present, create the run with `totalCases = plannedCases` (not workload case count) so status + SSE progress are correct.
+
+#### Post-Review Notes (2026-03-04)
+
+- Review findings and final decisions for Tasks 1-2 are tracked in `review-findings.md`.
+
+#### Manual Testing Steps
+
+Run validation-focused tests (to be added in the implementation for this task):
+
+```bash
+bun test tests/app-runs.test.ts -t "sweep"
+```
+
+Manual server smoke (valid sweep is currently rejected by temporary gate, invalid sweeps still return validation errors):
+
+1) Start the server.
+
+2) Create a syntactically valid sweep run (expect `400 VALIDATION_SWEEP_NOT_SUPPORTED`):
 
 ```bash
 curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
@@ -69,7 +169,7 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
   http://127.0.0.1:4096/runs \
   -d '{
     "engineId": "llama-cpp",
-    "target": { "type": "ssh", "profileId": "lab" },
+    "target": { "type": "local" },
     "model": { "identifier": "/models/model.gguf" },
     "workloadId": "tuning.v0_0_1",
     "engine": { "serverArgs": [], "requestParams": {} },
@@ -96,9 +196,472 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
   }'
 ```
 
+3) Oversize on purpose (expect `400 VALIDATION_SWEEP_TOO_LARGE`):
+
+```bash
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:4096/runs \
+  -d '{
+    "engineId": "llama-cpp",
+    "target": { "type": "local" },
+    "model": { "identifier": "/models/model.gguf" },
+    "workloadId": "tuning.v0_0_1",
+    "validationMode": "permissive",
+    "sweep": {
+      "axes": {
+        "requestParams": {
+          "max_tokens": [1,2,3,4,5,6,7,8,9,10]
+        }
+      },
+      "maxCases": 2,
+      "repetitions": 1
+    }
+  }'
+```
+
+4) Verify server-wide ceiling is enforced (expect `400 VALIDATION_SWEEP_TOO_LARGE`):
+
+```bash
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:4096/runs \
+  -d '{
+    "engineId": "llama-cpp",
+    "target": { "type": "local" },
+    "model": { "identifier": "/models/model.gguf" },
+    "workloadId": "tuning.v0_0_1",
+    "validationMode": "permissive",
+    "sweep": {
+      "axes": { "requestParams": { "max_tokens": [1] } },
+      "maxCases": 1000,
+      "repetitions": 1
+    }
+  }'
+```
+
+5) Verify reserved keys/flags are rejected (expect `400 VALIDATION_SWEEP_INVALID`):
+
+```bash
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:4096/runs \
+  -d '{
+    "engineId": "llama-cpp",
+    "target": { "type": "local" },
+    "model": { "identifier": "/models/model.gguf" },
+    "workloadId": "tuning.v0_0_1",
+    "validationMode": "permissive",
+    "sweep": {
+      "axes": {
+        "serverArgs": { "bad": [["--port", "1234"]] },
+        "requestParams": { "messages": [[{"role":"user","content":"x"}]] }
+      },
+      "maxCases": 32,
+      "repetitions": 1
+    }
+  }'
+```
+
+### Task 3: Implement Deterministic Expansion And Stable Case Identities
+
+#### Temporary Gate Removal Coupling (Required)
+
+- Task 3 must be coordinated with Task 4 to remove the temporary
+  `VALIDATION_SWEEP_NOT_SUPPORTED` gate introduced after PR #21 review.
+- Do not leave the temporary gate in place once deterministic expansion and
+  execution wiring are complete.
+
+#### Deterministic Expansion
+
+- Axis namespaces expand in this order:
+  1) `sweep.axes.serverArgs` axis keys (sorted lexicographically)
+  2) `sweep.axes.requestParams` axis keys (sorted lexicographically)
+- Within each axis, preserve the input list ordering.
+- Build the cartesian product across all axes.
+- After generating each axis combination, apply `repetitions` by emitting the same combination `repetitions` times with a `repetitionIndex` in `[0, repetitions-1]`.
+
+#### Case Identity (Hash-Based, Future-Proof)
+
+Each expanded case must have a stable identity derived from the inference-affecting configuration.
+
+- Build a canonical JSON object with these fields (minimum):
+  - `engineId`
+  - `modelIdentifier` (normalized identifier used for execution)
+  - `workloadId`
+  - `promptId`
+  - `engineArgs` (final argv array used to launch the engine for this case)
+  - `requestParams` (final request params object for this case)
+
+- Canonicalization rules:
+  - Only JSON values are allowed:
+    - `null`, booleans, strings, finite numbers, arrays, plain objects
+  - Reject any case config value containing:
+    - `undefined`
+    - non-finite numbers (`NaN`, `Infinity`, `-Infinity`)
+    - `BigInt`
+    - symbols
+    - functions
+    - circular references
+    - non-plain objects (for example `Date`, `Map`, `Set`, class instances)
+  - All object keys are sorted lexicographically at every object level.
+  - Arrays preserve order.
+
+- Canonical JSON algorithm (must be stable across runs and refactors):
+  - Normalize the case-config object by recursively sorting keys and validating JSON-only values.
+  - Produce canonical JSON with `JSON.stringify(normalizedValue)`.
+
+- Compute:
+  - `caseConfigId = "sweep_" + sha256Hex(canonicalJson(caseConfigWithoutRepetition))`
+  - `caseId = caseConfigId + ".rep-" + (repetitionIndex + 1)`
+
+#### Manual Testing Steps
+
+Run deterministic expansion tests (to be added in the implementation for this task):
+
+```bash
+bun test tests/app-runs.test.ts -t "deterministic"
+```
+
+Run golden fixture tests that lock hash stability (to be added in the implementation for this task):
+
+```bash
+bun test tests/app-runs.test.ts -t "hash"
+```
+
+Optional local check after implementation:
+
+```bash
+bun test tests/app-runs.test.ts -t "caseId"
+```
+
+### Task 4: Implement Sweep Execution With Restart-Per-Case
+
+When `sweep` is present, execute expanded cases sequentially and restart the engine between cases.
+
+- As part of Task 4 completion, remove the temporary
+  `VALIDATION_SWEEP_NOT_SUPPORTED` gate from `POST /runs`.
+
+#### Workload Constraint (v0.0.1)
+
+- The selected `workloadId` must contain exactly 1 workload case.
+  - If `workload.cases.length !== 1`, reject `POST /runs` with `400` and code `VALIDATION_SWEEP_WORKLOAD_NOT_SUPPORTED`.
+  - Rationale: Sweep MVP varies launch args and request params; it does not yet define multi-prompt sweep semantics.
+
+#### Execution Loop
+
+For each expanded case:
+
+1) Build launch config for that case's `engineArgs`.
+2) `start` engine.
+3) `waitUntilReady`.
+4) Execute exactly one workload case with that case's `requestParams`.
+5) Collect metrics.
+6) `stop` engine.
+
+#### Per-Case Validation And Failure Handling
+
+- Sweep execution must be resilient to partial failures:
+  - If a single case is invalid (reserved flags, invalid request param types, etc.), record that case as `failed` and continue to the next case.
+  - If a case cannot start the engine or fails readiness, record that case as `failed` and continue when possible.
+  - If the runtime enters a state where continuing is unsafe/impossible (for example repeated SSH transport failure), fail the run and mark remaining cases as failed.
+
+- Recommended behavior for validation:
+  - Validate the sweep config itself at `POST /runs` time (axes shape, `maxCases`, JSON-serializable values).
+  - Validate each expanded case config just-in-time before starting the engine for that case.
+    - If validation fails, do not start the engine; record the case as failed with a stable validation error code/message.
+
+#### Infrastructure Failure Threshold (v0.0.1)
+
+- Define an explicit stop condition to avoid spending hours retrying a broken environment:
+  - `MAX_CONSECUTIVE_ENGINE_LIFECYCLE_FAILURES = 3`
+
+- Count an engine lifecycle failure when:
+  - engine `start()` fails, or
+  - engine `waitUntilReady()` fails, or
+  - an SSH transport/probe required for engine lifecycle fails.
+
+- Do not count pure per-case validation failures (bad args/params) toward the consecutive-infra-failure threshold.
+- When the threshold is exceeded, fail the run and mark remaining cases as failed.
+
+#### State, Events, And Cancellation
+
+- Reuse existing run events (`run.case.started`, `run.case.completed`, `run.case.failed`, terminal run events). Do not introduce a new sweep-specific event taxonomy for v0.0.1.
+- Event payload guidance:
+  - Include `runId`, `caseId`, `index`, and progress counts.
+  - Do not emit full per-case `engineArgs` / `requestParams` in SSE payloads for v0.0.1 (can be large and may contain sensitive values).
+- Cancellation uses existing `POST /runs/:runId/cancel`:
+  - Stop the currently-running engine.
+  - Transition run to `cancelled`.
+  - Persist a terminal `result.json` that includes completed/failed cases so far.
+  - If cancellation happens between cases (engine already stopped), transition immediately without attempting a new engine start.
+
+#### Storage Constraint To Call Out (Required For Correct Artifacts)
+
+Because sweep cases vary `engineArgs` and `requestParams` per case, run storage must record these per case outcome (not only at the run level).
+
+- Required implementation approach:
+  - Pass per-case `engineArgs` into the case outcome recorder (do not rely on a single run-level `engineArgs`).
+  - Do not implement this by mutating `run.engineArgs` between cases.
+
+Ensure the persisted `cases[*].engineArgs` and `cases[*].requestParams` reflect the per-case values used.
+
+#### Manual Testing Steps
+
+Run the sweep execution tests (to be added in the implementation for this task):
+
+```bash
+bun test tests/app-runs.test.ts -t "sweep execution"
+```
+
+Cancellation boundary tests (to be added in the implementation for this task):
+
+```bash
+bun test tests/app-runs.test.ts -t "sweep cancel"
+```
+
+End-to-end smoke over SSH:
+
+1) Start the server.
+2) Create a sweep run (use the curl example from Task 2).
+3) Poll until terminal status:
+
+```bash
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/runs/<runId>
+```
+
+4) Fetch the result:
+
+```bash
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/runs/<runId>/result
+```
+
+5) Confirm restart-per-case behavior from server logs (look for repeated start/ready/stop diagnostics per case).
+
+#### Post-Review Follow-up (2026-03-04 / 2026-03-05)
+
+- SSH sweep shutdown hardening landed after manual remote validation found
+  orphaned remote `llama-server` processes could accumulate and consume GPU
+  memory across runs.
+- Follow-up implementation now uses:
+  - stronger remote cleanup process matching,
+  - POSIX ERE-safe cleanup regex whitespace matching (`[[:space:]]`) for
+    `pkill -f` / `pgrep -f` portability,
+  - explicit null/indeterminate cleanup-exit handling,
+  - TERM -> liveness check -> conditional KILL cleanup flow,
+  - idempotent stop guards for concurrent stop calls,
+  - dependency-configurable remote cleanup timeout/grace knobs.
+- Full decision log and file mapping is tracked in `review-findings.md` under
+  "SSH Sweep Shutdown Follow-up Findings (2026-03-04)" and
+  "PR #22 Comment Assessment (2026-03-05)".
+
+### Task 5: Persist Artifacts And Rank Results
+
+Persist a single `runs/{runId}/result.json` containing all sweep cases plus a deterministic ranking.
+
+#### Artifact Requirements
+
+- Persist per-case outcomes as the standard `cases[]` entries.
+- Add a sweep-specific block to the persisted result (recommended shape):
+
+```json
+{
+  "sweep": {
+    "axes": { "serverArgs": {}, "requestParams": {} },
+    "repetitions": 1,
+    "maxCases": 32,
+    "plannedCases": 8,
+    "ranking": [
+      { "rank": 1, "caseId": "...", "status": "completed", "tokensPerSecond": 123.4, "latencyMs": 1000 },
+      { "rank": 2, "caseId": "...", "status": "failed" }
+    ]
+  }
+}
+```
+
+#### Ranking Rules (Deterministic)
+
+- Repetitions are ranked independently (no aggregation/averaging across `.rep-*` cases in v0.0.1).
+
+- Completed cases first:
+  - sort by `tokensPerSecond` descending
+  - tie-breaker: `latencyMs` ascending
+  - final tie-breaker: `caseId` ascending
+- Failed cases after completed cases:
+  - sort by `caseId` ascending
+
+#### Manual Testing Steps
+
+Run ranking tests (to be added in the implementation for this task):
+
+```bash
+bun test tests/app-runs.test.ts -t "ranking"
+```
+
+Manual artifact inspection after a sweep completes:
+
+```bash
+cat runs/<runId>/result.json
+```
+
+#### Post-Review Follow-up (2026-03-05)
+
+- Task 5 review dispositions were implemented to reduce duplication and harden
+  ranking determinism without changing ranking semantics.
+- Sweep artifact shaping now uses shared sweep clone helpers, explicit
+  run-route field mapping, and named sweep ranking/result types.
+- Ranking comparison now normalizes `tokensPerSecond` to 3 decimals at compare
+  time as a deterministic guardrail if future producers emit higher precision.
+- Added regression coverage for empty sweep ranking and explicit `result.sweep`
+  presence assertions in integration tests.
+- Two reviewed suggestions were intentionally accepted as no-change decisions:
+  - keep locale-independent manual ASCII `caseId` ordering comparator,
+  - keep ranking `rank` as 1-indexed per Task 5 artifact contract.
+- Full per-finding disposition log is tracked in `review-findings.md` under
+  "Task 5 Review Findings and Decisions (2026-03-05)".
+
+### Task 6: Implement llama-server Case Execution (Non-stubbed TPS)
+
+Manual validation of Task 5 can show `tokensPerSecond: 0` for every case because
+the built-in `llama.cpp` plugin still returns an empty `outputText` and a
+`rawResponse.status: "not-implemented"` placeholder. This task wires real
+OpenAI-compatible case execution so sweep artifacts contain meaningful
+throughput values.
+
+#### Requirements
+
+- Replace the stubbed `executeCase()` implementation in
+  `src/server/engines/starter-engine/index.ts`.
+
+- Execute inference via the running `llama-server` instance:
+  - `POST /v1/chat/completions`
+  - `Authorization: Bearer <apiKey>` (same API key used for health probing)
+  - `Content-Type: application/json`
+  - Request body:
+    - `model: <run model identifier>` (core-owned; do not accept from user request params)
+    - `messages: caseConfig.messages`
+    - `stream: false`
+    - spread sanitized `caseConfig.requestParams` (strip reserved keys like `model`, `messages`, `stream`)
+
+- Prompt-fit preflight (avoid repeated context overflow failures):
+  - When `--ctx-size` is configured, call `POST /tokenize` with:
+    - `{ content: caseConfig.prompt, add_special: true }`
+  - If the prompt token count (plus conservative overhead buffer) exceeds the configured
+    context window, fail the case early with `VALIDATION_PROMPT_TOO_LARGE`.
+  - Note: v0.0.1 treats this as a prompt-only fit check; output token headroom budgeting
+    and scenario-style prompt selection are deferred.
+
+- Response handling:
+  - On non-2xx responses: throw a stable `ENGINE_EXECUTION_FAILED` error (or
+    equivalent existing run failure code) with a safe message; include bounded
+    diagnostics server-side.
+  - On success: parse JSON and extract the first assistant message content as
+    `outputText`.
+  - Persist the full parsed response under `rawResponse` (bounded/sanitized if
+    needed for safety).
+
+- Timing semantics (for meaningful TPS):
+  - For sweep runs, record `latencyMs` as the inference time spent in
+    `executeCase()` (align with the non-sweep run path).
+  - Startup/readiness time may be recorded separately under `metricsExtra` if
+    needed, but must not be mixed into per-case inference latency.
+
+- Throughput:
+  - Ensure completed cases yield non-zero `outputTokens` / `tokensPerSecond`
+    when the model generates output (for example `max_tokens >= 1`).
+  - v0.0.1 may keep token counts as an estimate derived from `outputText` until
+    deeper metrics extraction lands.
+
+#### Manual Testing Steps
+
+1) Run the ranking tests:
+
+```bash
+bun test tests/app-runs.test.ts -t "ranking"
+```
+
+2) Create a sweep run against a real `llama-server` (local or SSH target) and
+inspect `runs/<runId>/result.json`:
+
+- Confirm completed cases persist `rawResponse` as an allowlisted
+  chat-completions subset (for example `id`, `model`, `choices`, `usage`) with
+  no opaque debug fields.
+- Confirm at least one completed case has `outputTokens > 0` and
+  `tokensPerSecond > 0`.
+- If the workload prompt is too large for the configured `--ctx-size`, confirm cases fail
+  with `VALIDATION_PROMPT_TOO_LARGE` (instead of downstream HTTP 400 context-overflow).
+
+#### Post-Review Follow-up (2026-03-05, Task 6)
+
+- Added bounded case-response body reads before JSON parsing (default
+  8 MiB limit) to prevent unbounded memory growth during case execution.
+- Added defense-in-depth reserved-key stripping for runtime case request params
+  before constructing `/v1/chat/completions` payloads.
+- Restored explicit core-owned `model` in runtime `/v1/chat/completions`
+  payloads (taken from run launch model identifier) so OpenAI-compatible
+  backends that require `model` do not return HTTP 400.
+- Added per-case prompt token preflight against configured `--ctx-size` using
+  llama-server `/tokenize` with a conservative chat-overhead buffer, failing
+  cases early with `VALIDATION_PROMPT_TOO_LARGE` instead of opaque downstream
+  HTTP 400 context-overflow errors.
+- Reduced warn-level diagnostics for case execution failures to metadata-only
+  context (status/size/reason), without response-body excerpts by default.
+- Added allowlisted raw-response persistence for chat-completions responses to
+  avoid exposing arbitrary upstream payload fields through `result.json`.
+- Added context-overflow fallback mapping so non-2xx upstream error payloads
+  with context-size overflow semantics surface as `VALIDATION_PROMPT_TOO_LARGE`.
+- Added one-time diagnostic logging when prompt preflight is skipped because
+  `--ctx-size` is not explicitly present in launch args.
+- Updated output token accounting to prefer `rawResponse.usage.completion_tokens`
+  when available (fallback remains text-based token estimation).
+- Updated bounded response buffering to reduce temporary string allocation
+  overhead while preserving byte-limit enforcement behavior.
+- Utility flag parsing now treats the last flag occurrence as authoritative,
+  matching runtime "last wins" CLI behavior.
+- v0.0.1 keeps fetch timeout ownership in orchestrator case/run timeout
+  controls; engine-local fetch timeout knobs are deferred.
+- Tightened response parsing behavior:
+  - prefer `message.role === "assistant"` content when present,
+  - keep tolerant fallback to `choices[0].text` for compatibility,
+  - hard-fail when no assistant output is available.
+- Kept a conservative fixed prompt-overhead buffer in preflight for v0.0.1;
+  scenario/prompt calibration policies remain deferred.
+- Expanded Task 6 regression coverage for:
+  - non-2xx responses,
+  - invalid JSON,
+  - oversized responses,
+  - network throw and AbortError passthrough,
+  - missing assistant output structure,
+  - sweep latency semantics with wider timing margins.
+
+#### Final Pre-PR Ruthless Review Follow-up (2026-03-05)
+
+- Removed API key material from SSH remote cleanup process-match patterns.
+- Made sweep request-param axis cloning fail-fast (removed JSON stringify/parse
+  fallback).
+- Deep-cloned persisted per-case `requestParams` in run-store outcome/result
+  paths to prevent nested-reference aliasing.
+- Added explicit rationale notes for the compact deterministic
+  `tuning.v0_0_1` prompt contract and its stable regression hash.
+- Findings intentionally accepted as no-change are tracked in
+  `review-findings.md` under
+  "Final Pre-PR Ruthless Review Findings (2026-03-05, round 5)".
+
 ## Exit criteria
 
 - A sweep run can execute end-to-end over SSH, producing a `runs/{runId}/result.json` with multiple cases and a deterministic ranking.
+- Completed cases include non-stubbed outputs with non-zero throughput metrics (`tokensPerSecond`) when generation occurs.
+
+## Future follow-ups (tracked)
+
+- Canonicalization allocation optimization (from Tasks 3-4 review finding L5):
+  evaluate a future spec that replaces full canonical-JSON string materialization
+  with streaming/incremental hashing for `caseConfigId` generation when payloads
+  approach upper bounds.
+
+- Workload scenarios + prompt calibration policies (choose prompt variants per context
+  window, and optionally prune smaller `--ctx-size` cases) are intentionally deferred.
+  Track under `agent-os/specs/2026-02-23-1716-workload-packs-and-exports/`.
 
 ## Dependencies
 

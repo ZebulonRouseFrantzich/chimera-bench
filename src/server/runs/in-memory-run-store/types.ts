@@ -63,6 +63,40 @@ export interface StoredCaseOutcome {
   rawResponse?: unknown;
 }
 
+export interface StoredSweepAxes {
+  serverArgs: Record<string, string[][]>;
+  requestParams: Record<string, unknown[]>;
+}
+
+export interface StoredSweepConfig {
+  axes: StoredSweepAxes;
+  repetitions: number;
+  maxCases: number;
+  plannedCases: number;
+}
+
+export type SweepRankingEntry =
+  | {
+      rank: number;
+      caseId: string;
+      status: "completed";
+      tokensPerSecond: number;
+      latencyMs: number;
+    }
+  | {
+      rank: number;
+      caseId: string;
+      status: "failed";
+    };
+
+export interface StoredSweepResult {
+  axes: StoredSweepAxes;
+  repetitions: number;
+  maxCases: number;
+  plannedCases: number;
+  ranking: SweepRankingEntry[];
+}
+
 export interface RunRecord {
   runId: string;
   engineId: string;
@@ -73,6 +107,7 @@ export interface RunRecord {
   modelIdentifier: string;
   workloadId: string;
   engineArgs: string[];
+  sweep: StoredSweepConfig | null;
   status: RunStatus;
   createdAt: string;
   startedAt: string | null;
@@ -96,6 +131,7 @@ export interface CreateQueuedRunInput {
   modelIdentifier: string;
   workloadId: string;
   engineArgs?: string[];
+  sweep?: StoredSweepConfig;
   totalCases?: number;
   caseTimeoutMs?: number;
   runTimeoutMs?: number;

@@ -19,6 +19,7 @@ interface RecordCaseCompletedInput {
   contextTokens: number;
   latencyMs: number;
   outputText: string;
+  engineArgs: readonly string[];
   requestParams: Record<string, unknown>;
   rawResponse?: unknown;
 }
@@ -29,6 +30,7 @@ interface RecordCaseFailedInput {
   index: number;
   contextTokens: number;
   latencyMs: number;
+  engineArgs: readonly string[];
   requestParams: Record<string, unknown>;
   error: RunFailureDetails;
 }
@@ -39,7 +41,8 @@ export function recordCompletedCaseOutcome(
   input: RecordCaseCompletedInput,
 ): void {
   const latencyMs = normalizeNonNegativeInteger(input.latencyMs, 0);
-  const outputTokens = estimateTokenCount(input.outputText);
+  const outputTokens =
+    extractUsageCompletionTokens(input.rawResponse) ?? estimateTokenCount(input.outputText);
 
   run.caseOutcomes.push({
     runId,
@@ -48,13 +51,13 @@ export function recordCompletedCaseOutcome(
     index: input.index,
     status: "completed",
     contextTokens: normalizeNonNegativeInteger(input.contextTokens, 0),
-    engineArgs: [...run.engineArgs],
-    requestParams: {
-      ...input.requestParams,
-    },
+    engineArgs: [...input.engineArgs],
+    requestParams: cloneRequestParams(input.requestParams),
     latencyMs,
     ttftMs: null,
     outputTokens,
+    // Keep v0.0.1 throughput semantics end-to-end: output tokens over full
+    // case-execution latency (including prompt processing and network overhead).
     tokensPerSecond: estimateTokensPerSecond(outputTokens, latencyMs),
     promptEvalTokensPerSecond: null,
     acceptanceRatio: null,
@@ -84,10 +87,8 @@ export function recordFailedCaseOutcome(
     index: input.index,
     status: "failed",
     contextTokens: normalizeNonNegativeInteger(input.contextTokens, 0),
-    engineArgs: [...run.engineArgs],
-    requestParams: {
-      ...input.requestParams,
-    },
+    engineArgs: [...input.engineArgs],
+    requestParams: cloneRequestParams(input.requestParams),
     latencyMs: normalizeNonNegativeInteger(input.latencyMs, 0),
     ttftMs: null,
     outputTokens: 0,
@@ -100,4 +101,32 @@ export function recordFailedCaseOutcome(
   reconcileTotalCases(run);
 
   return sanitizedError;
+}
+
+function cloneRequestParams(value: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return structuredClone(value);
+  } catch {
+    return {
+      ...value,
+    };
+  }
+}
+
+function extractUsageCompletionTokens(rawResponse: unknown): number | null {
+  if (!rawResponse || typeof rawResponse !== "object") {
+    return null;
+  }
+
+  const usage = (rawResponse as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== "object") {
+    return null;
+  }
+
+  const completionTokens = (usage as Record<string, unknown>).completion_tokens;
+  if (typeof completionTokens !== "number" || !Number.isFinite(completionTokens)) {
+    return null;
+  }
+
+  return normalizeNonNegativeInteger(completionTokens, 0);
 }

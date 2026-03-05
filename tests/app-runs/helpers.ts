@@ -4,14 +4,24 @@ import { buildApp, createRun, TEST_MODEL_IDENTIFIER } from "../helpers/app-fixtu
 
 export { buildApp, createRun, TEST_MODEL_IDENTIFIER };
 
+const DEFAULT_WAIT_MAX_ATTEMPTS = 200;
+const DEFAULT_WAIT_INTERVAL_MS = 20;
+
 export async function waitForTerminalRunStatus(
   app: ReturnType<typeof buildApp>["app"],
   runId: string,
+  options: {
+    maxAttempts?: number;
+    intervalMs?: number;
+  } = {},
 ): Promise<string> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const maxAttempts = options.maxAttempts ?? DEFAULT_WAIT_MAX_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_WAIT_INTERVAL_MS;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const response = await app.request(`http://localhost/runs/${runId}`);
     if (response.status !== 200) {
-      await Bun.sleep(10);
+      await Bun.sleep(intervalMs);
       continue;
     }
 
@@ -25,19 +35,28 @@ export async function waitForTerminalRunStatus(
       return status;
     }
 
-    await Bun.sleep(10);
+    await Bun.sleep(intervalMs);
   }
 
   throw new Error(`Run '${runId}' did not reach a terminal status in time.`);
 }
 
-export async function waitForCondition(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+export async function waitForCondition(
+  predicate: () => boolean,
+  options: {
+    maxAttempts?: number;
+    intervalMs?: number;
+  } = {},
+): Promise<void> {
+  const maxAttempts = options.maxAttempts ?? DEFAULT_WAIT_MAX_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_WAIT_INTERVAL_MS;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (predicate()) {
       return;
     }
 
-    await Bun.sleep(10);
+    await Bun.sleep(intervalMs);
   }
 
   throw new Error("Condition did not become true in time.");

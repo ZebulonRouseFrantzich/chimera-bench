@@ -24,6 +24,7 @@ import type {
 import {
   buildHealthRequestHeaders,
   createCodeError,
+  parseFlagIntValue,
   redactLaunchArgs,
   redactSecret,
 } from "./utils.ts";
@@ -126,9 +127,14 @@ export async function startSshLlamaServerWithRetries(
           healthUrl: `http://${LOOPBACK_HOST}:${localPort}/health`,
           healthRequestHeaders: buildHealthRequestHeaders(apiKey),
           apiKey,
+          modelIdentifier: input.launchMetadata.modelIdentifier,
+          contextWindowTokens: parseFlagIntValue(input.launchMetadata.serverArgs, "--ctx-size"),
           remotePortReservation: {
             destinationKey,
             remotePort,
+          },
+          sshManagedRuntime: {
+            profile: input.launchMetadata.profile,
           },
           startupDiagnosticData: {
             profileId: input.launchMetadata.profile.id,

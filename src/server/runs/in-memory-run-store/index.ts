@@ -27,6 +27,7 @@ import {
   buildRunResult,
   buildRunSummary,
 } from "./results.ts";
+import { cloneStoredSweepConfig } from "./sweep-config.ts";
 import {
   DEFAULT_MAX_TRACKED_RUNS,
   DEFAULT_TERMINAL_RUN_RETENTION_MS,
@@ -141,6 +142,7 @@ export class InMemoryRunStore {
       modelIdentifier: input.modelIdentifier,
       workloadId: input.workloadId,
       engineArgs: [...(input.engineArgs ?? [])],
+      sweep: input.sweep ? cloneStoredSweepConfig(input.sweep) : null,
       status: "queued",
       createdAt,
       startedAt: null,
@@ -259,6 +261,7 @@ export class InMemoryRunStore {
       contextTokens: number;
       latencyMs: number;
       outputText: string;
+      engineArgs: readonly string[];
       requestParams: Record<string, unknown>;
       rawResponse?: unknown;
     },
@@ -289,6 +292,7 @@ export class InMemoryRunStore {
       index: number;
       contextTokens: number;
       latencyMs: number;
+      engineArgs: readonly string[];
       requestParams: Record<string, unknown>;
       error: RunFailureDetails;
     },

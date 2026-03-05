@@ -91,6 +91,221 @@ describe("InMemoryRunStore", () => {
     expect(result?.targetProfileId).toBe("lab");
   });
 
+  test("builds deterministic sweep ranking for persisted results", () => {
+    const store = new InMemoryRunStore();
+    const runId = store.tryCreateQueuedRun({
+      ...RUN_INPUT,
+      sweep: {
+        axes: {
+          serverArgs: {
+            ctxSize: [["--ctx-size", "4096"]],
+          },
+          requestParams: {
+            max_tokens: [128],
+          },
+        },
+        repetitions: 1,
+        maxCases: 16,
+        plannedCases: 5,
+      },
+      totalCases: 5,
+    });
+
+    expect(typeof runId).toBe("string");
+    if (!runId) {
+      throw new Error("Expected run to be created.");
+    }
+
+    store.markRunRunning(runId, new Date().toISOString());
+
+    store.recordCaseCompleted(runId, {
+      caseId: "case-a",
+      promptId: "prompt-a",
+      index: 0,
+      contextTokens: 10,
+      latencyMs: 100,
+      outputText: "one two three four five six seven eight nine ten",
+      engineArgs: ["--ctx-size", "4096"],
+      requestParams: {
+        max_tokens: 128,
+      },
+    });
+    store.recordCaseCompleted(runId, {
+      caseId: "case-c",
+      promptId: "prompt-c",
+      index: 1,
+      contextTokens: 5,
+      latencyMs: 50,
+      outputText: "one two three four five",
+      engineArgs: ["--ctx-size", "4096"],
+      requestParams: {
+        max_tokens: 128,
+      },
+    });
+    store.recordCaseCompleted(runId, {
+      caseId: "case-b",
+      promptId: "prompt-b",
+      index: 2,
+      contextTokens: 5,
+      latencyMs: 50,
+      outputText: "one two three four five",
+      engineArgs: ["--ctx-size", "4096"],
+      requestParams: {
+        max_tokens: 128,
+      },
+    });
+    store.recordCaseFailed(runId, {
+      caseId: "case-d",
+      promptId: "prompt-d",
+      index: 3,
+      contextTokens: 1,
+      latencyMs: 0,
+      engineArgs: ["--ctx-size", "4096"],
+      requestParams: {
+        max_tokens: 128,
+      },
+      error: {
+        code: "ENGINE_EXECUTION_FAILED",
+        message: "synthetic failure",
+      },
+    });
+    store.recordCaseFailed(runId, {
+      caseId: "case-aa",
+      promptId: "prompt-aa",
+      index: 4,
+      contextTokens: 1,
+      latencyMs: 0,
+      engineArgs: ["--ctx-size", "4096"],
+      requestParams: {
+        max_tokens: 128,
+      },
+      error: {
+        code: "ENGINE_EXECUTION_FAILED",
+        message: "synthetic failure",
+      },
+    });
+
+    const status = store.completeRun(runId, new Date().toISOString());
+    expect(status).toBe("completed");
+
+    const result = store.getRunResult(runId) as {
+      sweep?: {
+        repetitions: number;
+        maxCases: number;
+        plannedCases: number;
+        ranking: Array<
+          | {
+              rank: number;
+              caseId: string;
+              status: "completed";
+              tokensPerSecond: number;
+              latencyMs: number;
+            }
+          | {
+              rank: number;
+              caseId: string;
+              status: "failed";
+            }
+        >;
+      };
+    };
+
+    expect(result.sweep?.repetitions).toBe(1);
+    expect(result.sweep?.maxCases).toBe(16);
+    expect(result.sweep?.plannedCases).toBe(5);
+    expect(
+      result.sweep?.ranking.map((entry) => {
+        return entry.caseId;
+      }),
+    ).toEqual(["case-b", "case-c", "case-a", "case-aa", "case-d"]);
+    expect(
+      result.sweep?.ranking.map((entry) => {
+        return entry.rank;
+      }),
+    ).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test("persists empty sweep ranking when no case outcomes are recorded", () => {
+    const store = new InMemoryRunStore();
+    const runId = store.tryCreateQueuedRun({
+      ...RUN_INPUT,
+      sweep: {
+        axes: {
+          serverArgs: {
+            ctxSize: [["--ctx-size", "4096"]],
+          },
+          requestParams: {
+            max_tokens: [128],
+          },
+        },
+        repetitions: 1,
+        maxCases: 16,
+        plannedCases: 1,
+      },
+      totalCases: 1,
+    });
+
+    expect(typeof runId).toBe("string");
+    if (!runId) {
+      throw new Error("Expected run to be created.");
+    }
+
+    store.markRunRunning(runId, new Date().toISOString());
+    const status = store.completeRun(runId, new Date().toISOString());
+    expect(status).toBe("completed");
+
+    const result = store.getRunResult(runId) as {
+      sweep?: {
+        ranking?: unknown;
+      };
+    };
+
+    expect(Array.isArray(result.sweep?.ranking)).toBe(true);
+    expect(result.sweep?.ranking).toEqual([]);
+  });
+
+  test("uses completion_tokens from rawResponse when available", () => {
+    const store = new InMemoryRunStore();
+    const runId = store.tryCreateQueuedRun({
+      ...RUN_INPUT,
+      totalCases: 1,
+    });
+
+    expect(typeof runId).toBe("string");
+    if (!runId) {
+      throw new Error("Expected run to be created.");
+    }
+
+    store.markRunRunning(runId, new Date().toISOString());
+    store.recordCaseCompleted(runId, {
+      caseId: "case-usage",
+      promptId: "prompt-usage",
+      index: 0,
+      contextTokens: 10,
+      latencyMs: 84,
+      outputText: "fallback text not used",
+      engineArgs: [],
+      requestParams: {},
+      rawResponse: {
+        usage: {
+          completion_tokens: 42,
+        },
+      },
+    });
+
+    store.completeRun(runId, new Date().toISOString());
+
+    const result = store.getRunResult(runId) as {
+      cases?: Array<{
+        outputTokens?: number;
+        tokensPerSecond?: number;
+      }>;
+    } | null;
+    const firstCase = result?.cases?.[0];
+    expect(firstCase?.outputTokens).toBe(42);
+    expect(firstCase?.tokensPerSecond).toBe(500);
+  });
+
   test("prunes terminal runs that exceed retention window", () => {
     const store = new InMemoryRunStore({
       maxTrackedRuns: 1,
@@ -158,5 +373,77 @@ describe("InMemoryRunStore", () => {
         }
       | undefined;
     expect(failureDetails?.details?.nested?.code).toBe("initial");
+  });
+
+  test("deep-clones nested requestParams for persisted case outcomes", () => {
+    const store = new InMemoryRunStore();
+    const runId = store.tryCreateQueuedRun({
+      ...RUN_INPUT,
+      totalCases: 2,
+    });
+
+    expect(typeof runId).toBe("string");
+    if (!runId) {
+      throw new Error("Expected run to be created.");
+    }
+
+    const completedRequestParams = {
+      nested: {
+        temperature: 0.2,
+      },
+    };
+    const failedRequestParams = {
+      nested: {
+        max_tokens: 32,
+      },
+    };
+
+    store.markRunRunning(runId, new Date().toISOString());
+
+    store.recordCaseCompleted(runId, {
+      caseId: "case-completed",
+      promptId: "prompt-completed",
+      index: 0,
+      contextTokens: 10,
+      latencyMs: 100,
+      outputText: "hello world",
+      engineArgs: [],
+      requestParams: completedRequestParams,
+    });
+
+    store.recordCaseFailed(runId, {
+      caseId: "case-failed",
+      promptId: "prompt-failed",
+      index: 1,
+      contextTokens: 5,
+      latencyMs: 0,
+      engineArgs: [],
+      requestParams: failedRequestParams,
+      error: {
+        code: "ENGINE_EXECUTION_FAILED",
+        message: "synthetic failure",
+      },
+    });
+
+    completedRequestParams.nested.temperature = 0.9;
+    failedRequestParams.nested.max_tokens = 128;
+
+    store.completeRun(runId, new Date().toISOString());
+
+    const result = store.getRunResult(runId) as {
+      cases?: Array<{
+        requestParams?: {
+          nested?: {
+            temperature?: number;
+            max_tokens?: number;
+          };
+        };
+      }>;
+    } | null;
+
+    const completedCaseParams = result?.cases?.[0]?.requestParams;
+    const failedCaseParams = result?.cases?.[1]?.requestParams;
+    expect(completedCaseParams?.nested?.temperature).toBe(0.2);
+    expect(failedCaseParams?.nested?.max_tokens).toBe(32);
   });
 });

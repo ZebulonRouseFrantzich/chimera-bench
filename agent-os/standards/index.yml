@@ -15,16 +15,26 @@ global:
     description: Source file SLOC budgets, ratcheted legacy caps, and module-level documentation requirements.
   time-based-testing:
     description: Deterministic testing conventions for TTL and timeout logic.
+  ttl-cache-and-inflight-dedupe:
+    description: Bounded TTL cache and in-flight promise deduplication pattern
 
 plugins:
   engine-interface:
     description: Engine plugin contract, lifecycle, and pass-through argument rules.
   llama-cpp-api-key-and-redaction:
     description: llama.cpp per-run API key generation and redaction rules
+  llama-cpp-case-execution:
+    description: llama.cpp chat-completions case execution, prompt-fit preflight, and bounded response parsing
+  llama-cpp-mixed-gpu-guard:
+    description: SSH mixed-GPU guard requiring explicit GPU selector flags
   llama-cpp-model-identifier-validation:
     description: llama.cpp model identifier validation and CHIMERA_MODEL_ROOTS confinement
   llama-cpp-readiness-probe:
     description: llama.cpp readiness probe contract for /health
+  llama-cpp-remote-help-discovery-cache:
+    description: Remote llama-server --help discovery cache (TTL, max entries, in-flight dedupe)
+  llama-cpp-ssh-remote-cleanup:
+    description: llama.cpp SSH remote process cleanup flow, safe match patterns, and exit semantics
   llama-cpp-stop-escalation:
     description: llama.cpp stop escalation (SIGTERM/SIGKILL) and process-group cleanup
   llama-cpp-strict-flag-validation:
@@ -35,6 +45,8 @@ plugins:
 runs:
   artifact-store:
     description: Atomic run result persistence and path safety
+  built-in-workload-hardening:
+    description: Built-in workload determinism, prompt size caps, and regression hash requirements
   orchestrator-cancellation-timeouts:
     description: Run cancellation/timeout orchestration semantics
   result-schema:
@@ -43,6 +55,14 @@ runs:
     description: Run event names, payload rules, and replay policy
   ssh-target-model-identifier-validation:
     description: SSH target model.identifier lexical validation and allowlist root checks
+  sweep-config-validation:
+    description: Sweep config validation limits, safety checks, and stable error behavior
+  sweep-execution-orchestration:
+    description: Restart-per-case sweep orchestration, failure thresholds, and cleanup semantics
+  sweep-expansion-and-case-ids:
+    description: Deterministic sweep expansion order and hash-based case identity rules
+  sweep-result-and-ranking:
+    description: Sweep result.json block and deterministic per-case ranking policy
 
 server:
   api-conventions:
@@ -59,6 +79,8 @@ server:
     description: Server log line format (key=value), sanitization, and redaction
   openapi-and-sdk-artifacts:
     description: Committed OpenAPI/SDK artifacts and drift-check workflow
+  request-param-budgets:
+    description: Bounded request-param size/depth budgets for run and sweep payload validation
   serve-exposure-safety:
     description: Serve-mode security gates for non-loopback binds
   sse-streams:

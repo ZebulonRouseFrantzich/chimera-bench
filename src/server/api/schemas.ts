@@ -26,13 +26,16 @@ export const DEFAULT_WORKLOAD_ID = "starter.v1";
 const MAX_ENGINE_ID_LENGTH = 128;
 const MAX_WORKLOAD_ID_LENGTH = 128;
 const MAX_MODEL_IDENTIFIER_LENGTH = 4096;
-const MAX_SERVER_ARGS = 64;
+export const MAX_SERVER_ARGS = 64;
 const MAX_SERVER_ARG_LENGTH = 4096;
 const MAX_REQUEST_PARAM_TOP_LEVEL_KEYS = 128;
 const MAX_REQUEST_PARAM_KEY_LENGTH = 128;
-const MAX_REQUEST_PARAM_DEPTH = 8;
-const MAX_REQUEST_PARAM_NODES = 512;
+export const MAX_REQUEST_PARAM_DEPTH = 8;
+export const MAX_REQUEST_PARAM_NODES = 512;
 const MAX_REQUEST_PARAM_STRING_LENGTH = 8192;
+export const MAX_SWEEP_CASES = 256;
+export const MAX_SWEEP_AXES_PER_NAMESPACE = 32;
+export const MAX_SWEEP_AXIS_VALUES = MAX_SWEEP_CASES;
 const MAX_CASE_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_RUN_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const RUN_ID_PATTERN =
@@ -43,7 +46,7 @@ const RunIdSchema = z.string().regex(RUN_ID_PATTERN, {
 });
 const DateTimeSchema = z.string().datetime();
 
-const RequestParamsSchema = z
+export const RequestParamsSchema = z
   .record(z.string().max(MAX_REQUEST_PARAM_KEY_LENGTH), z.unknown())
   .superRefine((value, context) => {
     const keys = Object.keys(value);
@@ -99,6 +102,51 @@ export const RunEngineOptionsSchema = z.object({
   requestParams: RequestParamsSchema.optional(),
 });
 
+const SweepAxisKeySchema = z.string().min(1).max(MAX_REQUEST_PARAM_KEY_LENGTH);
+
+const SweepServerArgFragmentSchema = z.array(
+  z.string().min(1).max(MAX_SERVER_ARG_LENGTH),
+).max(MAX_SERVER_ARGS);
+
+const SweepServerArgsAxesSchema = z
+  .record(SweepAxisKeySchema, z.array(SweepServerArgFragmentSchema).max(MAX_SWEEP_AXIS_VALUES))
+  .superRefine((value, context) => {
+    if (Object.keys(value).length > MAX_SWEEP_AXES_PER_NAMESPACE) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `sweep.axes.serverArgs supports at most ${MAX_SWEEP_AXES_PER_NAMESPACE} axes.`,
+      });
+    }
+  });
+
+const SweepRequestParamsAxesSchema = z
+  .record(SweepAxisKeySchema, z.array(z.unknown()).max(MAX_SWEEP_AXIS_VALUES))
+  .superRefine((value, context) => {
+    if (Object.keys(value).length > MAX_SWEEP_AXES_PER_NAMESPACE) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `sweep.axes.requestParams supports at most ${MAX_SWEEP_AXES_PER_NAMESPACE} axes.`,
+      });
+    }
+  });
+
+const SweepAxesSchema = z
+  .object({
+    serverArgs: SweepServerArgsAxesSchema.optional(),
+    requestParams: SweepRequestParamsAxesSchema.optional(),
+  })
+  .strict();
+
+export const SweepConfigSchema = z
+  .object({
+    axes: SweepAxesSchema,
+    repetitions: z.number().int().positive().optional(),
+    maxCases: z.number().int().positive(),
+  })
+  .strict();
+
 export const RunTimeoutsSchema = z
   .object({
     caseMs: z.number().int().positive().max(MAX_CASE_TIMEOUT_MS).optional(),
@@ -124,6 +172,7 @@ export const CreateRunRequestSchema = z.object({
   model: RunModelSchema,
   workloadId: z.string().min(1).max(MAX_WORKLOAD_ID_LENGTH).optional(),
   engine: RunEngineOptionsSchema.optional(),
+  sweep: SweepConfigSchema.optional(),
   validationMode: ValidationModeSchema.optional(),
   timeouts: RunTimeoutsSchema.optional(),
 });
@@ -240,8 +289,18 @@ export interface NormalizedCreateRunRequest {
     serverArgs: string[];
     requestParams: Record<string, unknown>;
   };
+  sweep?: NormalizedSweepConfig;
   validationMode: z.infer<typeof ValidationModeSchema>;
   timeouts: z.infer<typeof RunTimeoutsSchema>;
+}
+
+export interface NormalizedSweepConfig {
+  axes: {
+    serverArgs: Record<string, string[][]>;
+    requestParams: Record<string, unknown[]>;
+  };
+  repetitions: number;
+  maxCases: number;
 }
 
 export function normalizeCreateRunRequest(
@@ -256,11 +315,48 @@ export function normalizeCreateRunRequest(
       serverArgs: request.engine?.serverArgs ?? [],
       requestParams: request.engine?.requestParams ?? {},
     },
+    ...(request.sweep
+      ? {
+          sweep: normalizeSweepConfig(request.sweep),
+        }
+      : {}),
     validationMode: request.validationMode ?? "strict",
     timeouts: {
       caseMs: request.timeouts?.caseMs ?? DEFAULT_CASE_TIMEOUT_MS,
       runMs: request.timeouts?.runMs ?? DEFAULT_RUN_TIMEOUT_MS,
     },
+  };
+}
+
+function normalizeSweepConfig(sweep: z.infer<typeof SweepConfigSchema>): NormalizedSweepConfig {
+  const serverArgsAxes = Object.fromEntries(
+    Object.entries(sweep.axes.serverArgs ?? {}).map(([axisKey, fragments]) => {
+      return [
+        axisKey,
+        fragments.map((fragment) => {
+          return [...fragment];
+        }),
+      ];
+    }),
+  );
+  const requestParamsAxes = Object.fromEntries(
+    Object.entries(sweep.axes.requestParams ?? {}).map(([axisKey, values]) => {
+      return [
+        axisKey,
+        values.map((value) => {
+          return cloneUnknown(value);
+        }),
+      ];
+    }),
+  );
+
+  return {
+    axes: {
+      serverArgs: serverArgsAxes,
+      requestParams: requestParamsAxes,
+    },
+    repetitions: sweep.repetitions ?? 1,
+    maxCases: sweep.maxCases,
   };
 }
 
@@ -334,4 +430,12 @@ function visitRequestParamNode(
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cloneUnknown<T>(value: T): T {
+  try {
+    return structuredClone(value);
+  } catch {
+    throw new Error("Failed to clone sweep axis value. Expected JSON-serializable input.");
+  }
 }

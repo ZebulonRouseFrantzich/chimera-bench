@@ -1,6 +1,6 @@
 # Run Result Schema
 
-Persist benchmark data as JSON first, then derive CSV and markdown exports from JSON.
+Persist benchmark data as JSON first. CSV/markdown exports are derived from JSON when implemented.
 
 ## Required top-level run fields
 
@@ -58,8 +58,11 @@ Persist benchmark data as JSON first, then derive CSV and markdown exports from 
 
 ## Export artifacts
 
-Each run must emit:
+Required now:
 
 - `runs/{runId}/result.json`
+
+Deferred exports (derive from `result.json`; do not assume present yet):
+
 - `runs/{runId}/cases.csv`
 - `runs/{runId}/summary.md`
