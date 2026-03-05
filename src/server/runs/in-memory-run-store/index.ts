@@ -27,6 +27,7 @@ import {
   buildRunResult,
   buildRunSummary,
 } from "./results.ts";
+import { cloneStoredSweepConfig } from "./sweep-config.ts";
 import {
   DEFAULT_MAX_TRACKED_RUNS,
   DEFAULT_TERMINAL_RUN_RETENTION_MS,
@@ -141,6 +142,7 @@ export class InMemoryRunStore {
       modelIdentifier: input.modelIdentifier,
       workloadId: input.workloadId,
       engineArgs: [...(input.engineArgs ?? [])],
+      sweep: input.sweep ? cloneStoredSweepConfig(input.sweep) : null,
       status: "queued",
       createdAt,
       startedAt: null,

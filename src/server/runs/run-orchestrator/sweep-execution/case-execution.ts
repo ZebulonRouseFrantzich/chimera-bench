@@ -59,7 +59,8 @@ export async function executeSweepCase(input: {
   setEngineContext: (context: EngineRuntimeContext | null) => void;
 }): Promise<SweepCaseExecutionResult> {
   const contextTokens = estimateTokenCount(input.sweepCase.prompt);
-  const caseStartMs = input.now();
+  let caseExecutionStartedMs: number | null = null;
+  let caseLatencyMs = 0;
   let caseEngineArgs = [...input.sweepCase.engineArgs];
   let caseRequestParams: Record<string, unknown> = {
     ...input.sweepCase.requestParams,
@@ -111,7 +112,9 @@ export async function executeSweepCase(input: {
         promptId: input.sweepCase.promptId,
         index: input.caseIndex,
         contextTokens,
-        latencyMs: input.now() - caseStartMs,
+        // Validation failed before executeCase() started, so there is no
+        // inference latency to record for this case.
+        latencyMs: 0,
         engineArgs: caseEngineArgs,
         requestParams: caseRequestParams,
         error: failure,
@@ -157,7 +160,9 @@ export async function executeSweepCase(input: {
       promptId: input.sweepCase.promptId,
       index: input.caseIndex,
       contextTokens,
-      latencyMs: input.now() - caseStartMs,
+      // Unexpected validation failures happen before executeCase(), so latency
+      // intentionally remains zero.
+      latencyMs: 0,
       engineArgs: caseEngineArgs,
       requestParams: caseRequestParams,
       error: failure,
@@ -225,6 +230,7 @@ export async function executeSweepCase(input: {
     caseAbortController = new AbortController();
     unlinkCaseAbort = linkAbortSignal(input.abortController.signal, caseAbortController);
 
+    caseExecutionStartedMs = input.now();
     const caseResult = await withTimeout(
       input.plugin.executeCase(
         {
@@ -259,6 +265,7 @@ export async function executeSweepCase(input: {
         caseAbortController?.abort();
       },
     );
+    caseLatencyMs = measureCaseExecutionLatency(caseExecutionStartedMs, input.now);
 
     let metrics: Record<string, unknown> = {};
     try {
@@ -291,7 +298,7 @@ export async function executeSweepCase(input: {
       promptId: input.sweepCase.promptId,
       index: input.caseIndex,
       contextTokens,
-      latencyMs: input.now() - caseStartMs,
+      latencyMs: caseLatencyMs,
       outputText: caseResult.outputText,
       engineArgs: caseEngineArgs,
       requestParams: caseRequestParams,
@@ -320,13 +327,15 @@ export async function executeSweepCase(input: {
       throw new RunCancelledError("Run cancelled during sweep case lifecycle.");
     }
 
+    caseLatencyMs = measureCaseExecutionLatency(caseExecutionStartedMs, input.now);
+
     const failure = toRunFailure(error);
     input.runStore.recordCaseFailed(input.runId, {
       caseId: input.sweepCase.caseId,
       promptId: input.sweepCase.promptId,
       index: input.caseIndex,
       contextTokens,
-      latencyMs: input.now() - caseStartMs,
+      latencyMs: caseLatencyMs,
       engineArgs: caseEngineArgs,
       requestParams: caseRequestParams,
       error: failure,
@@ -359,4 +368,15 @@ export async function executeSweepCase(input: {
       }
     }
   }
+}
+
+function measureCaseExecutionLatency(
+  caseExecutionStartedMs: number | null,
+  now: () => number,
+): number {
+  if (caseExecutionStartedMs === null) {
+    return 0;
+  }
+
+  return Math.max(0, now() - caseExecutionStartedMs);
 }

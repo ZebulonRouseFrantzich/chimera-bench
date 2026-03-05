@@ -139,7 +139,55 @@ They are not required to meet this spec's exit criteria, but they reduce operato
      - Mixed-GPU SSH target without selector -> validation error with detected options.
      - Mixed-GPU SSH target with invalid selector value (example: `--device ROCm`) -> validation error (do not reach engine startup).
      - Mixed-GPU SSH target with `--device ROCm0` -> accepted.
-     - Mixed-GPU SSH target with `--device ROCm0,ROCm1` and `--device none` -> accepted.
+      - Mixed-GPU SSH target with `--device ROCm0,ROCm1` and `--device none` -> accepted.
+
+## Post v0.0.1 follow-ups (workload scenarios + prompt calibration)
+
+These items are intentionally deferred until after v0.0.1.
+They reduce repeated sweep failures when `--ctx-size` is included as a sweep axis,
+and they provide a clean UX for tuning prompt sizes without changing prompts mid-sweep.
+
+7. Add scenario-style prompt variants to workload packs.
+   - Add optional workload metadata to represent prompt-size tiers (example: `small`, `medium`, `large`).
+   - Each scenario selects a fixed prompt/messages bundle with stable identifiers.
+   - Ship tuning workloads with multiple scenario variants designed to fit common context windows.
+
+8. Add prompt calibration policy support for sweeps.
+   - Goal: keep a single fixed prompt per sweep run while avoiding repeated prompt-fit failures.
+   - Provide a default prompt selection policy that chooses the largest scenario that fits:
+     - the minimum `--ctx-size` across planned sweep cases (or a configured baseline),
+     - plus headroom for requested output tokens.
+   - Add a mode that allows pruning:
+     - choose a baseline context window and prune sweep cases with smaller `--ctx-size` values,
+       instead of shrinking the prompt for every case.
+   - Add an explicit override so operators can pin a specific prompt/scenario and skip calibration.
+
+9. Reduce repeated sweep restart churn for guaranteed prompt-overflow cases.
+   - Goal: avoid repeatedly starting/stopping remote engines when a prompt cannot fit a case's
+     configured context window.
+   - Add deterministic preflight bucketing keyed by effective prompt/scenario + `--ctx-size`.
+   - When a bucket fails prompt-fit preflight, mark all matching cases as
+     `VALIDATION_PROMPT_TOO_LARGE` without launching per-case engine sessions.
+   - Preserve stable case ordering and artifact determinism (same `caseId`/rank behavior).
+   - Manual testing steps:
+     - Run a sweep where every case is known oversize and confirm no repeated engine startup loops.
+     - Run a mixed sweep and confirm only fit-capable buckets launch engine sessions.
+
+10. Support per-run timeout overrides (sweep ergonomics).
+   - Goal: allow operators to extend timeouts for slow configurations without changing server defaults.
+   - Extend the create-run request to accept optional timeouts:
+     - `timeouts.caseMs` (positive integer milliseconds; bounded by a server-side max)
+     - `timeouts.runMs` (positive integer milliseconds; bounded by a server-side max)
+     - Validation: when both are provided, require `timeouts.caseMs <= timeouts.runMs`.
+   - Behavior:
+     - Defaults remain unchanged when timeouts are omitted.
+     - Persist resolved timeouts into `runs/{runId}/result.json` so exports capture the run policy.
+     - Sweep execution should cap per-case timeouts to remaining run time.
+   - Manual testing steps:
+     - Start a slow sweep and override timeouts:
+       - `{"timeouts": {"caseMs": 240000, "runMs": 1800000}}`
+     - Verify `runs/{runId}/result.json` records the overridden values under `timeouts`.
+     - Verify a case that previously failed with `RUN_CASE_TIMEOUT` can complete under the extended timeout.
 
 ## Exit criteria
 

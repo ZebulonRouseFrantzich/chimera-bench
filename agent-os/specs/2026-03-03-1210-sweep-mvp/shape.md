@@ -37,6 +37,30 @@
 - Progress semantics:
   - post-gate, when `sweep` is present, `totalCases` must equal `plannedCases` (not workload case count)
 
+- Throughput semantics:
+  - Sweep ranking relies on meaningful per-case `tokensPerSecond` / `latencyMs` values.
+  - This requires the built-in `llama.cpp` plugin `executeCase()` to perform a real
+    `/v1/chat/completions` request instead of returning a stubbed empty output.
+  - v0.0.1 prefers `rawResponse.usage.completion_tokens` when available,
+    falling back to output-text estimation when usage metrics are missing.
+
+- Execution safety semantics (Task 6 hardening):
+  - bound case response body reads before JSON parse to avoid unbounded memory
+    growth from malformed or hostile upstream responses,
+  - preflight prompt token count against configured `--ctx-size` via
+    `/tokenize` (plus conservative chat-overhead buffer) so oversize prompts
+    fail early with explicit validation errors,
+  - strip reserved request-param keys defensively before request dispatch even
+    when validation is expected to catch them,
+  - map upstream context-overflow HTTP errors to stable
+    `VALIDATION_PROMPT_TOO_LARGE` failures,
+  - persist only allowlisted raw response fields in run artifacts to avoid
+    leaking arbitrary upstream payload data,
+  - keep request timeout enforcement orchestrator-owned in v0.0.1 (engine-local
+    fetch timeout knobs deferred),
+  - keep warning diagnostics metadata-focused (status/size/reason) and avoid
+    logging response body excerpts by default.
+
 - Hard safety cap:
   - `MAX_SWEEP_CASES = 256` server-enforced regardless of caller-provided `maxCases`
   - for `maxCases > MAX_SWEEP_CASES`, return immediate `VALIDATION_SWEEP_TOO_LARGE`

@@ -32,6 +32,9 @@ export interface LlamaServerRunState {
   healthUrl: string;
   healthRequestHeaders: Record<string, string>;
   apiKey: string;
+  modelIdentifier: string;
+  contextWindowTokens: number | null;
+  promptFitPreflightSkipLogged?: boolean;
   remotePortReservation?: {
     destinationKey: string;
     remotePort: number;
@@ -139,6 +142,7 @@ export interface StarterLlamaCppPluginDependencies {
   readinessRequestTimeoutMs: number;
   bufferedLogChars: number;
   diagnosticExcerptChars: number;
+  maxCaseResponseBytes: number;
 }
 
 export interface ReadinessProbeSuccess {

@@ -16,6 +16,7 @@ Enable a minimal, server-side sweep execution path for v0.0.1 so operators can t
 - Deterministic sweep expansion order and stable case identities.
 - Engine restarts between sweep cases.
 - A single `runs/{runId}/result.json` containing all cases plus a best-to-worst ranking.
+- Completed sweep cases produce non-stubbed per-case outputs and throughput metrics (not all-zero `tokensPerSecond`).
 
 ## Non-goals
 
@@ -503,9 +504,140 @@ Manual artifact inspection after a sweep completes:
 cat runs/<runId>/result.json
 ```
 
+#### Post-Review Follow-up (2026-03-05)
+
+- Task 5 review dispositions were implemented to reduce duplication and harden
+  ranking determinism without changing ranking semantics.
+- Sweep artifact shaping now uses shared sweep clone helpers, explicit
+  run-route field mapping, and named sweep ranking/result types.
+- Ranking comparison now normalizes `tokensPerSecond` to 3 decimals at compare
+  time as a deterministic guardrail if future producers emit higher precision.
+- Added regression coverage for empty sweep ranking and explicit `result.sweep`
+  presence assertions in integration tests.
+- Two reviewed suggestions were intentionally accepted as no-change decisions:
+  - keep locale-independent manual ASCII `caseId` ordering comparator,
+  - keep ranking `rank` as 1-indexed per Task 5 artifact contract.
+- Full per-finding disposition log is tracked in `review-findings.md` under
+  "Task 5 Review Findings and Decisions (2026-03-05)".
+
+### Task 6: Implement llama-server Case Execution (Non-stubbed TPS)
+
+Manual validation of Task 5 can show `tokensPerSecond: 0` for every case because
+the built-in `llama.cpp` plugin still returns an empty `outputText` and a
+`rawResponse.status: "not-implemented"` placeholder. This task wires real
+OpenAI-compatible case execution so sweep artifacts contain meaningful
+throughput values.
+
+#### Requirements
+
+- Replace the stubbed `executeCase()` implementation in
+  `src/server/engines/starter-engine/index.ts`.
+
+- Execute inference via the running `llama-server` instance:
+  - `POST /v1/chat/completions`
+  - `Authorization: Bearer <apiKey>` (same API key used for health probing)
+  - `Content-Type: application/json`
+  - Request body:
+    - `model: <run model identifier>` (core-owned; do not accept from user request params)
+    - `messages: caseConfig.messages`
+    - `stream: false`
+    - spread sanitized `caseConfig.requestParams` (strip reserved keys like `model`, `messages`, `stream`)
+
+- Prompt-fit preflight (avoid repeated context overflow failures):
+  - When `--ctx-size` is configured, call `POST /tokenize` with:
+    - `{ content: caseConfig.prompt, add_special: true }`
+  - If the prompt token count (plus conservative overhead buffer) exceeds the configured
+    context window, fail the case early with `VALIDATION_PROMPT_TOO_LARGE`.
+  - Note: v0.0.1 treats this as a prompt-only fit check; output token headroom budgeting
+    and scenario-style prompt selection are deferred.
+
+- Response handling:
+  - On non-2xx responses: throw a stable `ENGINE_EXECUTION_FAILED` error (or
+    equivalent existing run failure code) with a safe message; include bounded
+    diagnostics server-side.
+  - On success: parse JSON and extract the first assistant message content as
+    `outputText`.
+  - Persist the full parsed response under `rawResponse` (bounded/sanitized if
+    needed for safety).
+
+- Timing semantics (for meaningful TPS):
+  - For sweep runs, record `latencyMs` as the inference time spent in
+    `executeCase()` (align with the non-sweep run path).
+  - Startup/readiness time may be recorded separately under `metricsExtra` if
+    needed, but must not be mixed into per-case inference latency.
+
+- Throughput:
+  - Ensure completed cases yield non-zero `outputTokens` / `tokensPerSecond`
+    when the model generates output (for example `max_tokens >= 1`).
+  - v0.0.1 may keep token counts as an estimate derived from `outputText` until
+    deeper metrics extraction lands.
+
+#### Manual Testing Steps
+
+1) Run the ranking tests:
+
+```bash
+bun test tests/app-runs.test.ts -t "ranking"
+```
+
+2) Create a sweep run against a real `llama-server` (local or SSH target) and
+inspect `runs/<runId>/result.json`:
+
+- Confirm completed cases persist `rawResponse` as an allowlisted
+  chat-completions subset (for example `id`, `model`, `choices`, `usage`) with
+  no opaque debug fields.
+- Confirm at least one completed case has `outputTokens > 0` and
+  `tokensPerSecond > 0`.
+- If the workload prompt is too large for the configured `--ctx-size`, confirm cases fail
+  with `VALIDATION_PROMPT_TOO_LARGE` (instead of downstream HTTP 400 context-overflow).
+
+#### Post-Review Follow-up (2026-03-05, Task 6)
+
+- Added bounded case-response body reads before JSON parsing (default
+  8 MiB limit) to prevent unbounded memory growth during case execution.
+- Added defense-in-depth reserved-key stripping for runtime case request params
+  before constructing `/v1/chat/completions` payloads.
+- Restored explicit core-owned `model` in runtime `/v1/chat/completions`
+  payloads (taken from run launch model identifier) so OpenAI-compatible
+  backends that require `model` do not return HTTP 400.
+- Added per-case prompt token preflight against configured `--ctx-size` using
+  llama-server `/tokenize` with a conservative chat-overhead buffer, failing
+  cases early with `VALIDATION_PROMPT_TOO_LARGE` instead of opaque downstream
+  HTTP 400 context-overflow errors.
+- Reduced warn-level diagnostics for case execution failures to metadata-only
+  context (status/size/reason), without response-body excerpts by default.
+- Added allowlisted raw-response persistence for chat-completions responses to
+  avoid exposing arbitrary upstream payload fields through `result.json`.
+- Added context-overflow fallback mapping so non-2xx upstream error payloads
+  with context-size overflow semantics surface as `VALIDATION_PROMPT_TOO_LARGE`.
+- Added one-time diagnostic logging when prompt preflight is skipped because
+  `--ctx-size` is not explicitly present in launch args.
+- Updated output token accounting to prefer `rawResponse.usage.completion_tokens`
+  when available (fallback remains text-based token estimation).
+- Updated bounded response buffering to reduce temporary string allocation
+  overhead while preserving byte-limit enforcement behavior.
+- Utility flag parsing now treats the last flag occurrence as authoritative,
+  matching runtime "last wins" CLI behavior.
+- v0.0.1 keeps fetch timeout ownership in orchestrator case/run timeout
+  controls; engine-local fetch timeout knobs are deferred.
+- Tightened response parsing behavior:
+  - prefer `message.role === "assistant"` content when present,
+  - keep tolerant fallback to `choices[0].text` for compatibility,
+  - hard-fail when no assistant output is available.
+- Kept a conservative fixed prompt-overhead buffer in preflight for v0.0.1;
+  scenario/prompt calibration policies remain deferred.
+- Expanded Task 6 regression coverage for:
+  - non-2xx responses,
+  - invalid JSON,
+  - oversized responses,
+  - network throw and AbortError passthrough,
+  - missing assistant output structure,
+  - sweep latency semantics with wider timing margins.
+
 ## Exit criteria
 
 - A sweep run can execute end-to-end over SSH, producing a `runs/{runId}/result.json` with multiple cases and a deterministic ranking.
+- Completed cases include non-stubbed outputs with non-zero throughput metrics (`tokensPerSecond`) when generation occurs.
 
 ## Future follow-ups (tracked)
 
@@ -513,6 +645,10 @@ cat runs/<runId>/result.json
   evaluate a future spec that replaces full canonical-JSON string materialization
   with streaming/incremental hashing for `caseConfigId` generation when payloads
   approach upper bounds.
+
+- Workload scenarios + prompt calibration policies (choose prompt variants per context
+  window, and optionally prune smaller `--ctx-size` cases) are intentionally deferred.
+  Track under `agent-os/specs/2026-02-23-1716-workload-packs-and-exports/`.
 
 ## Dependencies
 

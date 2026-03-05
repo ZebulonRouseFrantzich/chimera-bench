@@ -285,11 +285,403 @@ Assessment of all PR comments for
 
 3. **Inline portability comment on regex whitespace token**
    - Source:
-     `https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22#discussion_r2886994651`
+      `https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22#discussion_r2886994651`
    - Severity: High.
    - Opinion: valid portability/correctness risk for POSIX ERE matching in
      `pkill`/`pgrep` cleanup paths.
    - Decision: implement now.
    - Implemented in:
+      `src/server/engines/starter-engine/run-state/remote-cleanup.ts`,
+      `tests/starter-engine/lifecycle-and-ssh.ts`
+
+## Task 5 Review Findings and Decisions (2026-03-05)
+
+Assessment of Task 5 uncommitted changes after dual-model review. This section
+captures the final disposition for each finding and maps accepted items to
+implementation.
+
+1. **M1: duplicated `cloneUnknown` utility**
+   - Decision: implement now.
+   - Action: centralize sweep value cloning for run-store sweep modules.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/sweep-config.ts`,
+     `src/server/runs/in-memory-run-store/results.ts`
+
+2. **M2: duplicated sweep-axis clone logic**
+   - Decision: implement now.
+   - Action: extract shared `cloneSweepAxes` helper and reuse it for both
+     stored config cloning and persisted result shaping.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/sweep-config.ts`,
+     `src/server/runs/in-memory-run-store/results.ts`
+
+3. **M3: deterministic ranking assumes pre-rounded floats**
+   - Decision: implement now (hardening).
+   - Action: normalize `tokensPerSecond` to 3 decimals at ranking comparison
+     time and document this deterministic-contract guardrail inline.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/results.ts`
+
+4. **M4: silent clone-fallback data-shape risk**
+   - Decision: implement now.
+   - Action: remove JSON stringify/parse fallback in sweep run-store cloning;
+     raise explicit error when sweep value cloning fails.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/sweep-config.ts`
+
+5. **L1: ranking type repeated inline**
+   - Decision: implement now.
+   - Action: add named sweep ranking/result type aliases and consume them in
+     result builders.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/types.ts`,
+     `src/server/runs/in-memory-run-store/results.ts`
+
+6. **L2: `request.sweep` spread may leak future fields**
+   - Decision: implement now.
+   - Action: replace spread with explicit field mapping to the stored sweep
+     shape before queuing runs.
+   - Implemented in:
+     `src/server/routes/run-routes/index.ts`
+
+7. **L3: missing empty-ranking edge-case coverage**
+   - Decision: implement now.
+   - Action: add unit test asserting sweep ranking is an empty array when no
+     case outcomes were recorded.
+   - Implemented in:
+     `tests/in-memory-run-store.test.ts`
+
+8. **L4: integration cast lacks runtime guard**
+   - Decision: implement now.
+   - Action: add explicit assertion that `result.sweep` exists before typed
+     narrowing in ranking integration coverage.
+   - Implemented in:
+     `tests/app-runs/sweep-execution.ts`
+
+9. **L5: manual lexicographic comparator vs `localeCompare`**
+   - Decision: no code change.
+   - Rationale: `caseId` is ASCII-constrained and deterministic ordering is
+     intentionally locale-independent.
+
+10. **L6: rank starts at `1`**
+    - Decision: no code change.
+    - Rationale: this is intentional and aligned with Task 5 artifact examples
+      and ranking semantics.
+
+11. **Manual validation: all-zero TPS due to stubbed `executeCase()`**
+    - Severity: Medium.
+    - Opinion: valid gap; ranking inputs become latency-only when outputs are
+      stubbed.
+    - Decision: add Task 6 to this spec to implement real
+      `/v1/chat/completions` execution and produce non-stubbed throughput
+      metrics.
+    - Tracked in: `agent-os/specs/2026-03-03-1210-sweep-mvp/plan.md`
+
+## Task 6 Implementation Notes (2026-03-05)
+
+1. **llama-server case execution is now wired to real chat-completions calls**
+   - Action: replace the `executeCase()` placeholder with a real
+     `POST /v1/chat/completions` request path using per-run bearer auth,
+     non-streaming responses, and structured output extraction.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`,
+     `src/server/engines/starter-engine/index.ts`,
+     `src/server/engines/starter-engine/utils.ts`
+
+2. **Sweep latency semantics align to inference time**
+   - Action: measure sweep `latencyMs` from `executeCase()` wall time rather
+     than including start/readiness lifecycle overhead.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/case-execution.ts`
+
+3. **Task 6 regression coverage**
+   - Action: add starter-engine tests for successful execution request wiring,
+     non-2xx handling, and invalid-JSON handling; add sweep latency regression
+     coverage that guards against restart-time inflation.
+   - Implemented in:
+      `tests/starter-engine/case-execution.ts`,
+      `tests/app-runs/sweep-execution.ts`
+
+## Task 6 Post-Review Findings and Decisions (2026-03-05)
+
+This section captures follow-up review findings on Task 6 and the disposition
+implemented for each item.
+
+1. **H1: unbounded response body read risk**
+   - Decision: implement now.
+   - Action: replace unbounded `response.text()` usage with bounded stream reads
+     plus `content-length` precheck; fail with `ENGINE_EXECUTION_FAILED` when
+     size limits are exceeded.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`,
+     `src/server/engines/starter-engine/constants.ts`,
+     `src/server/engines/starter-engine/types.ts`,
+     `src/server/engines/starter-engine/dependencies.ts`
+
+2. **H2: reserved request-param defense-in-depth**
+   - Decision: implement now.
+   - Action: strip reserved request-param keys before dispatching runtime
+     `/v1/chat/completions` payloads, even when upstream validation is expected
+     to reject them.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`
+
+3. **H3: diagnostic response excerpt exposure**
+   - Decision: implement now.
+   - Action: keep warn-level diagnostics metadata-focused (status/size/reason)
+     and stop emitting response-body excerpts by default for case execution
+     failures.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`
+
+4. **M1: latency regression test flakiness risk**
+   - Decision: implement now.
+   - Action: increase latency test timing margins so it remains reliable under
+     slower CI schedulers while still proving execute-time latency semantics.
+   - Implemented in:
+     `tests/app-runs/sweep-execution.ts`
+
+5. **M2: executeCase success test lifecycle realism**
+   - Decision: implement now.
+   - Action: require `waitUntilReady()` in success-path execution coverage.
+   - Implemented in:
+     `tests/starter-engine/case-execution.ts`
+
+6. **M3: `isRecord` array acceptance**
+   - Decision: implement now.
+   - Action: tighten object guard to reject arrays.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`
+
+7. **M4: `latencyMs: 0` intent clarity for pre-exec failures**
+   - Decision: implement now (documentation-only).
+   - Action: add inline comments clarifying intentional zero latency when case
+     validation fails before `executeCase()` starts.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/case-execution.ts`
+
+8. **M5: pre-parse response size guard**
+   - Decision: implement now.
+   - Action: enforce explicit size guard before JSON parse as part of bounded
+     response read handling.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`
+
+9. **L1: missing fetch-throw/abort coverage**
+   - Decision: implement now.
+   - Action: add tests for network throw (`ENGINE_EXECUTION_FAILED`) and
+     AbortError passthrough behavior.
+   - Implemented in:
+     `tests/starter-engine/case-execution.ts`
+
+10. **L2: missing assistant-output-shape coverage**
+    - Decision: implement now.
+    - Action: add test for valid JSON with missing assistant output structure.
+    - Implemented in:
+      `tests/starter-engine/case-execution.ts`
+
+11. **L3: URL query/hash stripping rationale clarity**
+    - Decision: implement now (documentation-only).
+    - Action: add inline comment that query/hash stripping is intentional for
+      stable request shaping.
+    - Implemented in:
+      `src/server/engines/starter-engine/utils.ts`
+
+12. **L4: assistant role handling strictness**
+    - Decision: implement now.
+    - Action: prefer `message.role === "assistant"` content when role is
+      present, while keeping fallback compatibility behavior.
+    - Implemented in:
+      `src/server/engines/starter-engine/case-execution.ts`
+
+13. **L5: duplicated latency calculation clarity**
+    - Decision: implement now.
+    - Action: centralize latency computation in a helper used by both success
+      and failure paths.
+    - Implemented in:
+      `src/server/runs/run-orchestrator/sweep-execution/case-execution.ts`
+
+14. **Manual SSH sweep validation: repeated HTTP 400 on case execution**
+    - Severity: High.
+    - Opinion: valid runtime compatibility issue; some OpenAI-compatible
+      backends require `model` in chat-completions request bodies even when a
+      single model is preloaded by server startup args.
+    - Decision: implement now.
+    - Action: set `model` in runtime case request payloads from the core-owned
+      run-state model identifier while keeping user-provided reserved-key
+      stripping in place.
+    - Implemented in:
+      `src/server/engines/starter-engine/case-execution.ts`,
+      `src/server/engines/starter-engine/types.ts`,
+      `src/server/engines/starter-engine/startup.ts`,
+      `src/server/engines/starter-engine/index.ts`,
+      `tests/starter-engine/case-execution.ts`
+
+15. **Manual SSH sweep validation: context-overflow HTTP 400 for tuning prompt**
+    - Severity: High.
+    - Opinion: valid correctness/UX gap; sweep cases should fail with an
+      explicit prompt-vs-context-size error rather than opaque downstream 400s
+      after launch/readiness.
+    - Decision: implement now.
+    - Action: add per-case prompt token preflight using `/tokenize` and compare
+      against configured `--ctx-size` with a conservative chat-overhead buffer;
+      fail early with `VALIDATION_PROMPT_TOO_LARGE` when oversized.
+    - Implemented in:
+      `src/server/engines/starter-engine/prompt-fit-preflight.ts`,
+      `src/server/engines/starter-engine/case-execution.ts`,
+      `src/server/engines/starter-engine/http-response-limit.ts`,
+      `src/server/engines/starter-engine/types.ts`,
+      `src/server/engines/starter-engine/startup.ts`,
+      `src/server/engines/starter-engine/index.ts`,
+      `tests/starter-engine/case-execution.ts`
+
+16. **Scenario-style prompt selection and calibration policy**
+    - Severity: Low.
+    - Opinion: valuable for operator ergonomics, but out of scope for v0.0.1.
+    - Decision: defer.
+    - Rationale: v0.0.1 ships explicit prompt-fit failures (`VALIDATION_PROMPT_TOO_LARGE`) to
+      prevent opaque repeated sweep failures; richer prompt packs / scenarios / calibration
+      modes belong in the workload pack surface.
+    - Tracked in: `agent-os/specs/2026-02-23-1716-workload-packs-and-exports/`
+
+## Task 6 Dual-Review Follow-up (2026-03-05, round 2)
+
+1. **H1: unsanitized rawResponse persistence**
+   - Decision: implement now.
+   - Action: persist an allowlisted chat-completions response projection rather
+     than full upstream payload passthrough.
+   - Implemented in:
+     `src/server/engines/starter-engine/chat-completions-response.ts`,
+     `src/server/engines/starter-engine/case-execution.ts`,
+     `tests/starter-engine/case-execution.ts`,
+     `tests/starter-engine/chat-completions-response.ts`
+
+2. **H2: prompt preflight skipped when `--ctx-size` is absent**
+   - Decision: implement now.
+   - Action: emit one-time per-run diagnostic when preflight is skipped and add
+     fallback mapping of upstream context-overflow HTTP errors to
+     `VALIDATION_PROMPT_TOO_LARGE`.
+   - Implemented in:
+     `src/server/engines/starter-engine/prompt-fit-preflight.ts`,
+     `src/server/engines/starter-engine/case-execution.ts`,
+     `src/server/engines/starter-engine/chat-completions-response.ts`,
+     `tests/starter-engine/case-execution.ts`,
+     `tests/starter-engine/chat-completions-response.ts`
+
+3. **H3: temporary memory overhead in bounded response reads**
+   - Decision: implement now.
+   - Action: replace chunk-by-chunk string buffering with bounded byte
+     accumulation + single decode pass.
+   - Implemented in:
+     `src/server/engines/starter-engine/http-response-limit.ts`,
+     `tests/starter-engine/http-response-limit.ts`
+
+4. **M1: redundant post-read size check**
+   - Decision: implement now.
+   - Action: remove dead post-read guard after bounded reader already enforces
+     size limits.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`
+
+5. **M2: output token count quality**
+   - Decision: implement now.
+   - Action: prefer `usage.completion_tokens` for completed cases when present,
+     with existing text-estimation fallback.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/case-outcomes.ts`,
+     `tests/in-memory-run-store.test.ts`
+
+6. **M3: throughput metric semantics clarity**
+   - Decision: implement now (documentation-only).
+   - Action: document that v0.0.1 TPS remains end-to-end latency based.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/case-outcomes.ts`,
+     `agent-os/specs/2026-03-03-1210-sweep-mvp/shape.md`
+
+7. **M4: advisory nature of Content-Length precheck**
+   - Decision: implement now (documentation-only).
+   - Action: add inline comment clarifying header precheck is optimization-only;
+     streaming byte accounting is authoritative.
+   - Implemented in:
+     `src/server/engines/starter-engine/http-response-limit.ts`
+
+8. **M5: per-fetch timeout gap**
+   - Decision: no code change (v0.0.1).
+   - Rationale: orchestrator case/run timeouts already bound execution and
+     abort in-flight work. Engine-local fetch timeout knobs are deferred.
+
+9. **L1: duplicated helper guards**
+   - Decision: implement now.
+   - Action: consolidate `isRecord` / `isAbortError` into shared starter-engine
+     utils and reuse across case-execution + prompt preflight.
+   - Implemented in:
+     `src/server/engines/starter-engine/utils.ts`,
+     `src/server/engines/starter-engine/case-execution.ts`,
+     `src/server/engines/starter-engine/prompt-fit-preflight.ts`
+
+10. **L2: multipart content join semantics**
+    - Decision: implement now (documentation-only).
+    - Action: add explicit inline comment explaining separator-free join behavior.
+    - Implemented in:
+      `src/server/engines/starter-engine/case-execution.ts`
+
+11. **L3: dedicated module-level test coverage**
+    - Decision: implement now.
+    - Action: add focused tests for response shaping, bounded reader behavior,
+      and utility flag parsing semantics.
+    - Implemented in:
+      `tests/starter-engine/chat-completions-response.ts`,
+      `tests/starter-engine/http-response-limit.ts`,
+      `tests/starter-engine/utils.ts`,
+      `tests/starter-engine/index.ts`
+
+12. **L4: duplicate-flag parsing order**
+    - Decision: implement now.
+    - Action: use last-occurrence semantics for flag value extraction to match
+      effective CLI behavior.
+    - Implemented in:
+      `src/server/engines/starter-engine/utils.ts`,
+      `tests/starter-engine/utils.ts`
+
+13. **L5: fixed prompt-overhead constant rationale**
+    - Decision: no behavioral change (v0.0.1), clarify intent.
+    - Action: document conservative-overhead rationale inline and in spec notes.
+    - Implemented in:
+      `src/server/engines/starter-engine/prompt-fit-preflight.ts`,
+      `agent-os/specs/2026-03-03-1210-sweep-mvp/plan.md`
+
+## Task 6 Manual Validation Follow-up (2026-03-05, round 3)
+
+1. **SSH cleanup misclassification when command success omits `exitCode`**
+   - Severity: Medium.
+   - Opinion: valid regression; `executeSshCommand()` omits `exitCode` for
+     exit-0 success and cleanup paths treated this as indeterminate.
+   - Decision: implement now.
+   - Action: normalize SSH cleanup and liveness exit interpretation so
+     `undefined` maps to success (`0`) while `null` remains indeterminate.
+   - Implemented in:
      `src/server/engines/starter-engine/run-state/remote-cleanup.ts`,
+     `tests/starter-engine/run-state.ts`,
+     `tests/starter-engine/lifecycle-and-ssh.ts`
+
+2. **Optimization: skip repeated startup for known prompt-overflow buckets**
+   - Severity: Low.
+   - Opinion: enhancement, not required for v0.0.1 correctness.
+   - Decision: defer.
+   - Tracking:
+     `agent-os/specs/2026-02-23-1716-workload-packs-and-exports/plan.md`
+
+## Task 6 Manual Validation Follow-up (2026-03-05, round 4)
+
+1. **Unexpected SSH session exits could skip remote cleanup and leak remote llama-server processes**
+   - Severity: High.
+   - Opinion: valid lifecycle leak; when the local SSH wrapper exited while run
+     state was still active, termination handling only logged diagnostics and did
+     not invoke stop/cleanup, leaving remote processes alive.
+   - Decision: implement now.
+   - Action: on active runtime termination observer events, invoke
+     `stopRunState()` with an `unexpected-exit` reason so SSH cleanup and remote
+     port release still run.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state.ts`,
      `tests/starter-engine/lifecycle-and-ssh.ts`

@@ -322,6 +322,19 @@ export function registerRunRoutes(
       modelIdentifier: request.model.identifier,
       workloadId: request.workloadId,
       engineArgs: request.engine.serverArgs,
+      ...(request.sweep && sweepCases
+        ? {
+            sweep: {
+              axes: {
+                serverArgs: request.sweep.axes.serverArgs,
+                requestParams: request.sweep.axes.requestParams,
+              },
+              repetitions: request.sweep.repetitions,
+              maxCases: request.sweep.maxCases,
+              plannedCases: sweepCases.length,
+            },
+          }
+        : {}),
       totalCases: sweepCases?.length ?? workload.cases.length,
       caseTimeoutMs,
       runTimeoutMs,

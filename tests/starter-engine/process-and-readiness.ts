@@ -426,4 +426,5 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     expect(waitCalls).toBe(0);
     expect(signalCalls.includes("SIGKILL")).toBe(false);
   });
+
 });

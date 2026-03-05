@@ -22,7 +22,7 @@ const STARTER_PROMPT_3_ID = "starter.prompt-3";
 const TUNING_WORKLOAD_ID = "tuning.v0_0_1";
 const TUNING_CASE_ID = "tuning.v0_0_1.case-1";
 const TUNING_PROMPT_ID = "tuning.v0_0_1.prompt-1";
-const TUNING_RECORD_COUNT = 256;
+const TUNING_RECORD_COUNT = 32;
 const TUNING_PAYLOAD_TOKENS_PER_RECORD = 30;
 const MAX_BUILT_IN_PROMPT_BYTES = 128 * 1024;
 const KNUTH_HASH_MULTIPLIER = 2_654_435_761;
@@ -172,7 +172,7 @@ function registerBuiltInWorkloads(
   return byId;
 }
 
-// Intentionally generated once at module load (~70KiB) for stable shared prompt text.
+// Intentionally generated once at module load for stable shared prompt text.
 const TUNING_WORKLOAD: StarterWorkload = {
   workloadId: TUNING_WORKLOAD_ID,
   cases: [
