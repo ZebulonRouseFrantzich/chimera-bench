@@ -28,6 +28,8 @@ function createBaseSshRunState(overrides: Partial<LlamaServerRunState> = {}): Ll
     healthUrl: "http://127.0.0.1:18080/health",
     healthRequestHeaders: {},
     apiKey: TEST_API_KEY,
+    modelIdentifier: "/models/model.gguf",
+    contextWindowTokens: null,
     remotePortReservation: {
       destinationKey: "ubuntu@10.0.0.10:22",
       remotePort: 28080,

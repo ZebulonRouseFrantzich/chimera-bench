@@ -264,6 +264,48 @@ describe("InMemoryRunStore", () => {
     expect(result.sweep?.ranking).toEqual([]);
   });
 
+  test("uses completion_tokens from rawResponse when available", () => {
+    const store = new InMemoryRunStore();
+    const runId = store.tryCreateQueuedRun({
+      ...RUN_INPUT,
+      totalCases: 1,
+    });
+
+    expect(typeof runId).toBe("string");
+    if (!runId) {
+      throw new Error("Expected run to be created.");
+    }
+
+    store.markRunRunning(runId, new Date().toISOString());
+    store.recordCaseCompleted(runId, {
+      caseId: "case-usage",
+      promptId: "prompt-usage",
+      index: 0,
+      contextTokens: 10,
+      latencyMs: 84,
+      outputText: "fallback text not used",
+      engineArgs: [],
+      requestParams: {},
+      rawResponse: {
+        usage: {
+          completion_tokens: 42,
+        },
+      },
+    });
+
+    store.completeRun(runId, new Date().toISOString());
+
+    const result = store.getRunResult(runId) as {
+      cases?: Array<{
+        outputTokens?: number;
+        tokensPerSecond?: number;
+      }>;
+    } | null;
+    const firstCase = result?.cases?.[0];
+    expect(firstCase?.outputTokens).toBe(42);
+    expect(firstCase?.tokensPerSecond).toBe(500);
+  });
+
   test("prunes terminal runs that exceed retention window", () => {
     const store = new InMemoryRunStore({
       maxTrackedRuns: 1,

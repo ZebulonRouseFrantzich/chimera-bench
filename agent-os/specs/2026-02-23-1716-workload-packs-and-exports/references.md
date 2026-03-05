@@ -12,6 +12,10 @@
 - Run result schema: `agent-os/standards/runs/result-schema.md`
 - Run artifact persistence: `agent-os/specs/2026-02-23-1715-server-plugin-llama-cpp-foundation/plan.md`
 - SSH mixed-GPU validation context (v0.0.1): `agent-os/specs/2026-03-03-1200-tuning-workload-mvp/plan.md`
+- Sweep MVP prompt-fit validation context (v0.0.1): `agent-os/specs/2026-03-03-1210-sweep-mvp/review-findings.md`
+- llama-server prompt token preflight reference (uses `/tokenize`):
+  - `src/server/engines/starter-engine/prompt-fit-preflight.ts`
+  - `src/server/engines/starter-engine/utils.ts`
 - Engine validation + SSH GPU hints (implementation):
   - `src/server/engines/starter-engine/mixed-gpu-guard.ts`
   - `src/server/engines/starter-engine/help-discovery.ts`

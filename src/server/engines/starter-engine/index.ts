@@ -309,6 +309,8 @@ export function createStarterLlamaCppPlugin(
             healthUrl: buildHealthUrl(launchArgs),
             healthRequestHeaders: buildHealthRequestHeaders(apiKey),
             apiKey,
+            modelIdentifier: extractRequiredFlagValue(launchArgs, "--model"),
+            contextWindowTokens: parseFlagIntValue(launchArgs, "--ctx-size"),
             startupDiagnosticData: {
               ...(parseFlagIntValue(launchArgs, "--port") !== null
                 ? {

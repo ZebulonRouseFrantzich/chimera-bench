@@ -538,9 +538,18 @@ throughput values.
   - `Authorization: Bearer <apiKey>` (same API key used for health probing)
   - `Content-Type: application/json`
   - Request body:
+    - `model: <run model identifier>` (core-owned; do not accept from user request params)
     - `messages: caseConfig.messages`
     - `stream: false`
-    - spread `caseConfig.requestParams` (reserved keys remain core/plugin-owned)
+    - spread sanitized `caseConfig.requestParams` (strip reserved keys like `model`, `messages`, `stream`)
+
+- Prompt-fit preflight (avoid repeated context overflow failures):
+  - When `--ctx-size` is configured, call `POST /tokenize` with:
+    - `{ content: caseConfig.prompt, add_special: true }`
+  - If the prompt token count (plus conservative overhead buffer) exceeds the configured
+    context window, fail the case early with `VALIDATION_PROMPT_TOO_LARGE`.
+  - Note: v0.0.1 treats this as a prompt-only fit check; output token headroom budgeting
+    and scenario-style prompt selection are deferred.
 
 - Response handling:
   - On non-2xx responses: throw a stable `ENGINE_EXECUTION_FAILED` error (or
@@ -574,9 +583,13 @@ bun test tests/app-runs.test.ts -t "ranking"
 2) Create a sweep run against a real `llama-server` (local or SSH target) and
 inspect `runs/<runId>/result.json`:
 
-- Confirm `cases[*].rawResponse.status` is not `"not-implemented"`.
+- Confirm completed cases persist `rawResponse` as an allowlisted
+  chat-completions subset (for example `id`, `model`, `choices`, `usage`) with
+  no opaque debug fields.
 - Confirm at least one completed case has `outputTokens > 0` and
   `tokensPerSecond > 0`.
+- If the workload prompt is too large for the configured `--ctx-size`, confirm cases fail
+  with `VALIDATION_PROMPT_TOO_LARGE` (instead of downstream HTTP 400 context-overflow).
 
 #### Post-Review Follow-up (2026-03-05, Task 6)
 
@@ -584,12 +597,35 @@ inspect `runs/<runId>/result.json`:
   8 MiB limit) to prevent unbounded memory growth during case execution.
 - Added defense-in-depth reserved-key stripping for runtime case request params
   before constructing `/v1/chat/completions` payloads.
+- Restored explicit core-owned `model` in runtime `/v1/chat/completions`
+  payloads (taken from run launch model identifier) so OpenAI-compatible
+  backends that require `model` do not return HTTP 400.
+- Added per-case prompt token preflight against configured `--ctx-size` using
+  llama-server `/tokenize` with a conservative chat-overhead buffer, failing
+  cases early with `VALIDATION_PROMPT_TOO_LARGE` instead of opaque downstream
+  HTTP 400 context-overflow errors.
 - Reduced warn-level diagnostics for case execution failures to metadata-only
   context (status/size/reason), without response-body excerpts by default.
+- Added allowlisted raw-response persistence for chat-completions responses to
+  avoid exposing arbitrary upstream payload fields through `result.json`.
+- Added context-overflow fallback mapping so non-2xx upstream error payloads
+  with context-size overflow semantics surface as `VALIDATION_PROMPT_TOO_LARGE`.
+- Added one-time diagnostic logging when prompt preflight is skipped because
+  `--ctx-size` is not explicitly present in launch args.
+- Updated output token accounting to prefer `rawResponse.usage.completion_tokens`
+  when available (fallback remains text-based token estimation).
+- Updated bounded response buffering to reduce temporary string allocation
+  overhead while preserving byte-limit enforcement behavior.
+- Utility flag parsing now treats the last flag occurrence as authoritative,
+  matching runtime "last wins" CLI behavior.
+- v0.0.1 keeps fetch timeout ownership in orchestrator case/run timeout
+  controls; engine-local fetch timeout knobs are deferred.
 - Tightened response parsing behavior:
   - prefer `message.role === "assistant"` content when present,
   - keep tolerant fallback to `choices[0].text` for compatibility,
   - hard-fail when no assistant output is available.
+- Kept a conservative fixed prompt-overhead buffer in preflight for v0.0.1;
+  scenario/prompt calibration policies remain deferred.
 - Expanded Task 6 regression coverage for:
   - non-2xx responses,
   - invalid JSON,
@@ -609,6 +645,10 @@ inspect `runs/<runId>/result.json`:
   evaluate a future spec that replaces full canonical-JSON string materialization
   with streaming/incremental hashing for `caseConfigId` generation when payloads
   approach upper bounds.
+
+- Workload scenarios + prompt calibration policies (choose prompt variants per context
+  window, and optionally prune smaller `--ctx-size` cases) are intentionally deferred.
+  Track under `agent-os/specs/2026-02-23-1716-workload-packs-and-exports/`.
 
 ## Dependencies
 

@@ -13,6 +13,9 @@
 - llama.cpp plugin case execution (Task 6):
   - `src/server/engines/starter-engine/index.ts`
   - `src/server/engines/starter-engine/case-execution.ts`
+  - `src/server/engines/starter-engine/chat-completions-response.ts`
+  - `src/server/engines/starter-engine/http-response-limit.ts`
+  - `src/server/engines/starter-engine/prompt-fit-preflight.ts`
 
 - Run orchestration (single-run baseline): `src/server/runs/run-orchestrator/`
 - Run store + per-case outcomes: `src/server/runs/in-memory-run-store/`
@@ -34,6 +37,8 @@
 
 - Full sweep orchestration (post-v0.0.1): `agent-os/specs/2026-02-23-1717-sweep-engine-run-orchestration/`
 - Engine + server foundation: `agent-os/specs/2026-02-23-1715-server-plugin-llama-cpp-foundation/`
+- Workload prompt packs + exports (future scenarios/prompt calibration surface):
+  `agent-os/specs/2026-02-23-1716-workload-packs-and-exports/`
 
 ## Review notes
 

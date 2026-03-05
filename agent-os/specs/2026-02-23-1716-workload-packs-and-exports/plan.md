@@ -139,7 +139,28 @@ They are not required to meet this spec's exit criteria, but they reduce operato
      - Mixed-GPU SSH target without selector -> validation error with detected options.
      - Mixed-GPU SSH target with invalid selector value (example: `--device ROCm`) -> validation error (do not reach engine startup).
      - Mixed-GPU SSH target with `--device ROCm0` -> accepted.
-     - Mixed-GPU SSH target with `--device ROCm0,ROCm1` and `--device none` -> accepted.
+      - Mixed-GPU SSH target with `--device ROCm0,ROCm1` and `--device none` -> accepted.
+
+## Post v0.0.1 follow-ups (workload scenarios + prompt calibration)
+
+These items are intentionally deferred until after v0.0.1.
+They reduce repeated sweep failures when `--ctx-size` is included as a sweep axis,
+and they provide a clean UX for tuning prompt sizes without changing prompts mid-sweep.
+
+7. Add scenario-style prompt variants to workload packs.
+   - Add optional workload metadata to represent prompt-size tiers (example: `small`, `medium`, `large`).
+   - Each scenario selects a fixed prompt/messages bundle with stable identifiers.
+   - Ship tuning workloads with multiple scenario variants designed to fit common context windows.
+
+8. Add prompt calibration policy support for sweeps.
+   - Goal: keep a single fixed prompt per sweep run while avoiding repeated prompt-fit failures.
+   - Provide a default prompt selection policy that chooses the largest scenario that fits:
+     - the minimum `--ctx-size` across planned sweep cases (or a configured baseline),
+     - plus headroom for requested output tokens.
+   - Add a mode that allows pruning:
+     - choose a baseline context window and prune sweep cases with smaller `--ctx-size` values,
+       instead of shrinking the prompt for every case.
+   - Add an explicit override so operators can pin a specific prompt/scenario and skip calibration.
 
 ## Exit criteria
 

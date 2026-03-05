@@ -41,7 +41,8 @@ export function recordCompletedCaseOutcome(
   input: RecordCaseCompletedInput,
 ): void {
   const latencyMs = normalizeNonNegativeInteger(input.latencyMs, 0);
-  const outputTokens = estimateTokenCount(input.outputText);
+  const outputTokens =
+    extractUsageCompletionTokens(input.rawResponse) ?? estimateTokenCount(input.outputText);
 
   run.caseOutcomes.push({
     runId,
@@ -57,6 +58,8 @@ export function recordCompletedCaseOutcome(
     latencyMs,
     ttftMs: null,
     outputTokens,
+    // Keep v0.0.1 throughput semantics end-to-end: output tokens over full
+    // case-execution latency (including prompt processing and network overhead).
     tokensPerSecond: estimateTokensPerSecond(outputTokens, latencyMs),
     promptEvalTokensPerSecond: null,
     acceptanceRatio: null,
@@ -102,4 +105,22 @@ export function recordFailedCaseOutcome(
   reconcileTotalCases(run);
 
   return sanitizedError;
+}
+
+function extractUsageCompletionTokens(rawResponse: unknown): number | null {
+  if (!rawResponse || typeof rawResponse !== "object") {
+    return null;
+  }
+
+  const usage = (rawResponse as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== "object") {
+    return null;
+  }
+
+  const completionTokens = (usage as Record<string, unknown>).completion_tokens;
+  if (typeof completionTokens !== "number" || !Number.isFinite(completionTokens)) {
+    return null;
+  }
+
+  return normalizeNonNegativeInteger(completionTokens, 0);
 }

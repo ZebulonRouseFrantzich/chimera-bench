@@ -1,3 +1,9 @@
+/**
+ * Shared utility helpers for starter-engine runtime wiring.
+ *
+ * Covers launch-arg parsing, endpoint construction, redaction, and common
+ * runtime type guards used across startup/execution modules.
+ */
 import { REDACTED_VALUE } from "./constants.ts";
 
 export function buildHealthUrl(launchArgs: string[]): string {
@@ -15,6 +21,14 @@ export function buildChatCompletionsUrl(healthUrl: string): string {
   endpoint.pathname = "/v1/chat/completions";
   // Drop search/hash from the health probe URL so request shaping is stable and
   // never forwards accidental probe-specific suffixes to the generation path.
+  endpoint.search = "";
+  endpoint.hash = "";
+  return endpoint.toString();
+}
+
+export function buildTokenizeUrl(healthUrl: string): string {
+  const endpoint = new URL(healthUrl);
+  endpoint.pathname = "/tokenize";
   endpoint.search = "";
   endpoint.hash = "";
   return endpoint.toString();
@@ -50,6 +64,8 @@ export function extractRequiredFlagValue(args: string[], flag: string): string {
 }
 
 export function extractFlagValue(args: string[], flag: string): string | null {
+  let latestMatch: string | null = null;
+
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (!argument) {
@@ -58,15 +74,16 @@ export function extractFlagValue(args: string[], flag: string): string | null {
 
     if (argument === flag) {
       const value = args[index + 1];
-      return value ?? null;
+      latestMatch = value ?? null;
+      continue;
     }
 
     if (argument.startsWith(`${flag}=`)) {
-      return argument.slice(flag.length + 1);
+      latestMatch = argument.slice(flag.length + 1);
     }
   }
 
-  return null;
+  return latestMatch;
 }
 
 export function extractFlagToken(argument: string): string {
@@ -180,4 +197,12 @@ export function toError(value: unknown): Error {
   }
 
   return new Error(`Unexpected non-error value: ${String(value)}`);
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }

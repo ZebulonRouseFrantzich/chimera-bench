@@ -500,3 +500,152 @@ implemented for each item.
       and failure paths.
     - Implemented in:
       `src/server/runs/run-orchestrator/sweep-execution/case-execution.ts`
+
+14. **Manual SSH sweep validation: repeated HTTP 400 on case execution**
+    - Severity: High.
+    - Opinion: valid runtime compatibility issue; some OpenAI-compatible
+      backends require `model` in chat-completions request bodies even when a
+      single model is preloaded by server startup args.
+    - Decision: implement now.
+    - Action: set `model` in runtime case request payloads from the core-owned
+      run-state model identifier while keeping user-provided reserved-key
+      stripping in place.
+    - Implemented in:
+      `src/server/engines/starter-engine/case-execution.ts`,
+      `src/server/engines/starter-engine/types.ts`,
+      `src/server/engines/starter-engine/startup.ts`,
+      `src/server/engines/starter-engine/index.ts`,
+      `tests/starter-engine/case-execution.ts`
+
+15. **Manual SSH sweep validation: context-overflow HTTP 400 for tuning prompt**
+    - Severity: High.
+    - Opinion: valid correctness/UX gap; sweep cases should fail with an
+      explicit prompt-vs-context-size error rather than opaque downstream 400s
+      after launch/readiness.
+    - Decision: implement now.
+    - Action: add per-case prompt token preflight using `/tokenize` and compare
+      against configured `--ctx-size` with a conservative chat-overhead buffer;
+      fail early with `VALIDATION_PROMPT_TOO_LARGE` when oversized.
+    - Implemented in:
+      `src/server/engines/starter-engine/prompt-fit-preflight.ts`,
+      `src/server/engines/starter-engine/case-execution.ts`,
+      `src/server/engines/starter-engine/http-response-limit.ts`,
+      `src/server/engines/starter-engine/types.ts`,
+      `src/server/engines/starter-engine/startup.ts`,
+      `src/server/engines/starter-engine/index.ts`,
+      `tests/starter-engine/case-execution.ts`
+
+16. **Scenario-style prompt selection and calibration policy**
+    - Severity: Low.
+    - Opinion: valuable for operator ergonomics, but out of scope for v0.0.1.
+    - Decision: defer.
+    - Rationale: v0.0.1 ships explicit prompt-fit failures (`VALIDATION_PROMPT_TOO_LARGE`) to
+      prevent opaque repeated sweep failures; richer prompt packs / scenarios / calibration
+      modes belong in the workload pack surface.
+    - Tracked in: `agent-os/specs/2026-02-23-1716-workload-packs-and-exports/`
+
+## Task 6 Dual-Review Follow-up (2026-03-05, round 2)
+
+1. **H1: unsanitized rawResponse persistence**
+   - Decision: implement now.
+   - Action: persist an allowlisted chat-completions response projection rather
+     than full upstream payload passthrough.
+   - Implemented in:
+     `src/server/engines/starter-engine/chat-completions-response.ts`,
+     `src/server/engines/starter-engine/case-execution.ts`,
+     `tests/starter-engine/case-execution.ts`,
+     `tests/starter-engine/chat-completions-response.ts`
+
+2. **H2: prompt preflight skipped when `--ctx-size` is absent**
+   - Decision: implement now.
+   - Action: emit one-time per-run diagnostic when preflight is skipped and add
+     fallback mapping of upstream context-overflow HTTP errors to
+     `VALIDATION_PROMPT_TOO_LARGE`.
+   - Implemented in:
+     `src/server/engines/starter-engine/prompt-fit-preflight.ts`,
+     `src/server/engines/starter-engine/case-execution.ts`,
+     `src/server/engines/starter-engine/chat-completions-response.ts`,
+     `tests/starter-engine/case-execution.ts`,
+     `tests/starter-engine/chat-completions-response.ts`
+
+3. **H3: temporary memory overhead in bounded response reads**
+   - Decision: implement now.
+   - Action: replace chunk-by-chunk string buffering with bounded byte
+     accumulation + single decode pass.
+   - Implemented in:
+     `src/server/engines/starter-engine/http-response-limit.ts`,
+     `tests/starter-engine/http-response-limit.ts`
+
+4. **M1: redundant post-read size check**
+   - Decision: implement now.
+   - Action: remove dead post-read guard after bounded reader already enforces
+     size limits.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`
+
+5. **M2: output token count quality**
+   - Decision: implement now.
+   - Action: prefer `usage.completion_tokens` for completed cases when present,
+     with existing text-estimation fallback.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/case-outcomes.ts`,
+     `tests/in-memory-run-store.test.ts`
+
+6. **M3: throughput metric semantics clarity**
+   - Decision: implement now (documentation-only).
+   - Action: document that v0.0.1 TPS remains end-to-end latency based.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/case-outcomes.ts`,
+     `agent-os/specs/2026-03-03-1210-sweep-mvp/shape.md`
+
+7. **M4: advisory nature of Content-Length precheck**
+   - Decision: implement now (documentation-only).
+   - Action: add inline comment clarifying header precheck is optimization-only;
+     streaming byte accounting is authoritative.
+   - Implemented in:
+     `src/server/engines/starter-engine/http-response-limit.ts`
+
+8. **M5: per-fetch timeout gap**
+   - Decision: no code change (v0.0.1).
+   - Rationale: orchestrator case/run timeouts already bound execution and
+     abort in-flight work. Engine-local fetch timeout knobs are deferred.
+
+9. **L1: duplicated helper guards**
+   - Decision: implement now.
+   - Action: consolidate `isRecord` / `isAbortError` into shared starter-engine
+     utils and reuse across case-execution + prompt preflight.
+   - Implemented in:
+     `src/server/engines/starter-engine/utils.ts`,
+     `src/server/engines/starter-engine/case-execution.ts`,
+     `src/server/engines/starter-engine/prompt-fit-preflight.ts`
+
+10. **L2: multipart content join semantics**
+    - Decision: implement now (documentation-only).
+    - Action: add explicit inline comment explaining separator-free join behavior.
+    - Implemented in:
+      `src/server/engines/starter-engine/case-execution.ts`
+
+11. **L3: dedicated module-level test coverage**
+    - Decision: implement now.
+    - Action: add focused tests for response shaping, bounded reader behavior,
+      and utility flag parsing semantics.
+    - Implemented in:
+      `tests/starter-engine/chat-completions-response.ts`,
+      `tests/starter-engine/http-response-limit.ts`,
+      `tests/starter-engine/utils.ts`,
+      `tests/starter-engine/index.ts`
+
+12. **L4: duplicate-flag parsing order**
+    - Decision: implement now.
+    - Action: use last-occurrence semantics for flag value extraction to match
+      effective CLI behavior.
+    - Implemented in:
+      `src/server/engines/starter-engine/utils.ts`,
+      `tests/starter-engine/utils.ts`
+
+13. **L5: fixed prompt-overhead constant rationale**
+    - Decision: no behavioral change (v0.0.1), clarify intent.
+    - Action: document conservative-overhead rationale inline and in spec notes.
+    - Implemented in:
+      `src/server/engines/starter-engine/prompt-fit-preflight.ts`,
+      `agent-os/specs/2026-03-03-1210-sweep-mvp/plan.md`

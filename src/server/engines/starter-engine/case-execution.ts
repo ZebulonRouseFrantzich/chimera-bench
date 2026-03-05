@@ -18,8 +18,19 @@ import { RESERVED_REQUEST_PARAM_KEYS } from "./constants.ts";
 import {
   buildChatCompletionsUrl,
   createCodeError,
+  isAbortError,
+  isRecord,
   redactSecret,
 } from "./utils.ts";
+import {
+  readResponseBodyWithLimit,
+  ResponseBodyTooLargeError,
+} from "./http-response-limit.ts";
+import { assertPromptFitsContextWindow } from "./prompt-fit-preflight.ts";
+import {
+  parsePromptTooLargeError,
+  sanitizeChatCompletionRawResponse,
+} from "./chat-completions-response.ts";
 
 export async function executeLlamaServerCase(input: {
   context: EngineRuntimeContext;
@@ -51,9 +62,17 @@ export async function executeLlamaServerCase(input: {
     });
   }
 
+  await assertPromptFitsContextWindow({
+    context: input.context,
+    caseConfig: input.caseConfig,
+    runState,
+    dependencies: input.dependencies,
+  });
+
   const caseExecutionUrl = buildChatCompletionsUrl(runState.healthUrl);
   const requestBody = {
     ...sanitizedRequestParams,
+    model: runState.modelIdentifier,
     messages: input.caseConfig.messages,
     stream: false,
   };
@@ -154,16 +173,18 @@ export async function executeLlamaServerCase(input: {
       },
     });
 
+    const promptTooLarge = parsePromptTooLargeError(response.status, responseBodyText);
+    if (promptTooLarge) {
+      throw createCodeError(
+        "VALIDATION_PROMPT_TOO_LARGE",
+        promptTooLarge.message,
+        promptTooLarge.details,
+      );
+    }
+
     throw createCodeError(
       "ENGINE_EXECUTION_FAILED",
       `llama-server case execution failed with HTTP ${response.status}.`,
-    );
-  }
-
-  if (responseBodyBytes > input.dependencies.maxCaseResponseBytes) {
-    throw createCodeError(
-      "ENGINE_EXECUTION_FAILED",
-      `llama-server case execution response exceeded ${input.dependencies.maxCaseResponseBytes} bytes.`,
     );
   }
 
@@ -206,7 +227,7 @@ export async function executeLlamaServerCase(input: {
 
   return {
     outputText,
-    rawResponse,
+    rawResponse: sanitizeChatCompletionRawResponse(rawResponse),
   };
 }
 
@@ -273,6 +294,8 @@ function normalizeAssistantMessageContent(content: unknown): string | null {
     return null;
   }
 
+  // Keep OpenAI-style content part ordering exactly as emitted; segments are
+  // already pre-delimited text fragments and should not receive separators.
   const textSegments = content.flatMap((segment) => {
     if (isRecord(segment) && typeof segment.text === "string") {
       return [segment.text];
@@ -285,93 +308,4 @@ function normalizeAssistantMessageContent(content: unknown): string | null {
   }
 
   return textSegments.join("");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
-}
-
-class ResponseBodyTooLargeError extends Error {
-  constructor(
-    readonly maxBytes: number,
-    readonly observedBytes: number,
-  ) {
-    super(`Case response exceeded ${maxBytes} bytes.`);
-    this.name = "ResponseBodyTooLargeError";
-  }
-}
-
-async function readResponseBodyWithLimit(
-  response: Response,
-  maxBytes: number,
-): Promise<{
-  text: string;
-  byteLength: number;
-}> {
-  const declaredContentLength = parseContentLengthHeader(response.headers.get("content-length"));
-  if (declaredContentLength !== null && declaredContentLength > maxBytes) {
-    throw new ResponseBodyTooLargeError(maxBytes, declaredContentLength);
-  }
-
-  if (!response.body) {
-    return {
-      text: "",
-      byteLength: 0,
-    };
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  const chunks: string[] = [];
-  let observedBytes = 0;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-
-      if (!value) {
-        continue;
-      }
-
-      observedBytes += value.byteLength;
-      if (observedBytes > maxBytes) {
-        try {
-          await reader.cancel();
-        } catch {
-          // Best-effort stream cancellation; preserve the limit error.
-        }
-        throw new ResponseBodyTooLargeError(maxBytes, observedBytes);
-      }
-
-      chunks.push(decoder.decode(value, { stream: true }));
-    }
-
-    chunks.push(decoder.decode());
-    return {
-      text: chunks.join(""),
-      byteLength: observedBytes,
-    };
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-function parseContentLengthHeader(value: string | null): number | null {
-  if (!value) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return null;
-  }
-
-  return parsed;
 }
