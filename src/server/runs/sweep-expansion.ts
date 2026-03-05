@@ -29,7 +29,7 @@ export class SweepCaseCanonicalizationError extends Error {
     readonly path: string,
     message: string,
   ) {
-    super(`${message} (path=${path}).`);
+    super(message);
     this.name = "SweepCaseCanonicalizationError";
   }
 }

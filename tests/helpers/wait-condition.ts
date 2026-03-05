@@ -1,5 +1,5 @@
-const DEFAULT_WAIT_MAX_ATTEMPTS = 50;
-const DEFAULT_WAIT_INTERVAL_MS = 10;
+const DEFAULT_WAIT_MAX_ATTEMPTS = 100;
+const DEFAULT_WAIT_INTERVAL_MS = 50;
 
 export async function waitForCondition(
   predicate: () => boolean,

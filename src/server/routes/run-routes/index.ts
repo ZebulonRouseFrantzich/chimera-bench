@@ -12,6 +12,7 @@ import {
 } from "../../api/envelope.ts";
 import {
   CreateRunRequestSchema,
+  MAX_SERVER_ARGS,
   normalizeCreateRunRequest,
 } from "../../api/schemas.ts";
 import type { EngineCatalog } from "../../engines/engine-catalog.ts";
@@ -30,6 +31,7 @@ import {
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../../runs/defaults.ts";
 import {
+  computeMaxSweepAdditionalServerArgs,
   validateAndPlanSweepConfig,
 } from "../../runs/sweep-validation.ts";
 import {
@@ -252,6 +254,30 @@ export function registerRunRoutes(
     request.engine.serverArgs = validationResult.normalized.serverArgs;
     request.engine.requestParams = validationResult.normalized.requestParams;
     request.model.identifier = validationResult.normalized.modelIdentifier;
+
+    if (request.sweep) {
+      const baseServerArgsCount = request.engine.serverArgs.length;
+      const sweepMaxAdditionalServerArgs = computeMaxSweepAdditionalServerArgs(request.sweep);
+      const maxMergedServerArgs = baseServerArgsCount + sweepMaxAdditionalServerArgs;
+
+      if (maxMergedServerArgs > MAX_SERVER_ARGS) {
+        return jsonError(context, 400, {
+          code: "VALIDATION_SWEEP_INVALID",
+          message: "Sweep configuration is invalid.",
+          details: {
+            issues: [
+              {
+                code: "VALIDATION_SWEEP_INVALID",
+                message:
+                  `Merged serverArgs can exceed ${MAX_SERVER_ARGS} tokens (` +
+                  `base=${baseServerArgsCount}, sweepAdditional=${sweepMaxAdditionalServerArgs}).`,
+                path: "sweep.axes.serverArgs",
+              },
+            ],
+          },
+        });
+      }
+    }
 
     let sweepCases: ExpandedSweepCase[] | undefined;
     if (request.sweep) {

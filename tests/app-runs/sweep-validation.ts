@@ -190,6 +190,50 @@ describe("run routes", () => {
     expect(payload.error.code).toBe("VALIDATION_BODY_INVALID");
   });
 
+  test("rejects sweep when merged base+sweep serverArgs can exceed the server token ceiling", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+    });
+
+    const nearLimitServerArgs = Array.from({ length: 64 }, (_value, index) => {
+      return `--arg-${index}`;
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        createSweepRequestBody({
+          engine: {
+            serverArgs: nearLimitServerArgs,
+            requestParams: {},
+          },
+          sweep: {
+            axes: {
+              serverArgs: {
+                threads: [["--threads", "4"]],
+              },
+              requestParams: {},
+            },
+            maxCases: 8,
+            repetitions: 1,
+          },
+        }),
+      ),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_SWEEP_INVALID");
+    expect(payload.error.details.issues[0].path).toBe("sweep.axes.serverArgs");
+    expect(payload.error.details.issues[0].message).toContain("Merged serverArgs can exceed 64");
+  });
+
   test("still accepts non-sweep run creation", async () => {
     const { app } = buildApp({
       auth: {
