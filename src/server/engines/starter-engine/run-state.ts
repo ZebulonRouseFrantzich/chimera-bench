@@ -10,6 +10,7 @@ import type {
   StarterLlamaCppPluginDependencies,
   StopRunStateInput,
 } from "./types.ts";
+import { cleanupRemoteSshRuntime } from "./run-state/remote-cleanup.ts";
 import { waitForTermination } from "./spawn.ts";
 import { redactSecret, toError } from "./utils.ts";
 
@@ -172,6 +173,32 @@ export async function stopRunState(
   runState: LlamaServerRunState,
   input: StopRunStateInput,
 ): Promise<void> {
+  if (runState.stopCompleted) {
+    return;
+  }
+
+  if (runState.stopPromise) {
+    return runState.stopPromise;
+  }
+
+  const stopPromise = stopRunStateInternal(runState, input).then(() => {
+    runState.stopCompleted = true;
+  });
+  runState.stopPromise = stopPromise;
+
+  try {
+    await stopPromise;
+  } finally {
+    if (runState.stopPromise === stopPromise) {
+      delete runState.stopPromise;
+    }
+  }
+}
+
+async function stopRunStateInternal(
+  runState: LlamaServerRunState,
+  input: StopRunStateInput,
+): Promise<void> {
   runState.removeAbortListener();
 
   try {
@@ -230,6 +257,11 @@ export async function stopRunState(
         `${input.dependencies.stopGracePeriodMs + input.dependencies.killWaitTimeoutMs}ms after SIGTERM/SIGKILL.`,
     });
   } finally {
+    // Worst-case SSH cleanup latency per run is bounded by roughly:
+    //   TERM timeout + grace + pgrep timeout + KILL timeout
+    // while still preferring leak prevention over fast shutdown.
+    await cleanupRemoteSshRuntime(runState, input);
+
     if (runState.remotePortReservation) {
       input.dependencies.releaseRemoteSshPort(
         runState.remotePortReservation.destinationKey,

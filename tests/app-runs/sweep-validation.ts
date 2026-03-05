@@ -29,7 +29,7 @@ function createSweepRequestBody(overrides: Record<string, unknown> = {}): Record
 }
 
 describe("run routes", () => {
-  test("temporarily rejects valid sweep requests until tasks 3/4 are implemented", async () => {
+  test("accepts valid sweep requests after deterministic expansion and execution wiring", async () => {
     const { app } = buildApp({
       auth: {
         enabled: false,
@@ -45,9 +45,9 @@ describe("run routes", () => {
       body: JSON.stringify(createSweepRequestBody()),
     });
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(202);
     const payload = await response.json();
-    expect(payload.error.code).toBe("VALIDATION_SWEEP_NOT_SUPPORTED");
+    expect(typeof payload.data?.runId).toBe("string");
   });
 
   test("still returns sweep validation failures before temporary rejection", async () => {
@@ -215,5 +215,30 @@ describe("run routes", () => {
     });
 
     expect(response.status).toBe(202);
+  });
+
+  test("rejects sweep requests for workloads with multiple workload cases", async () => {
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        createSweepRequestBody({
+          workloadId: "starter.v1",
+        }),
+      ),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error.code).toBe("VALIDATION_SWEEP_WORKLOAD_NOT_SUPPORTED");
   });
 });

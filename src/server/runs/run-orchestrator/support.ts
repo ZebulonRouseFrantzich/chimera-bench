@@ -23,6 +23,7 @@ interface FailRunWithRemainingCasesInput {
   runStore: InMemoryRunStore;
   runId: string;
   workload: StarterWorkload;
+  engineArgs: readonly string[];
   requestParams: Record<string, unknown>;
   startIndex: number;
   failure: RunFailureDetails;
@@ -46,6 +47,7 @@ export function failRunWithRemainingCases(input: FailRunWithRemainingCasesInput)
       index,
       contextTokens: estimateTokenCount(workloadCase.prompt),
       latencyMs: 0,
+      engineArgs: [...input.engineArgs],
       requestParams: input.requestParams,
       error: input.failure,
     });

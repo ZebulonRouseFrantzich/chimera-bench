@@ -25,6 +25,15 @@ export function createStarterLlamaCppPlugin(
   overrides: Partial<StarterLlamaCppPluginDependencies> = {},
 ) {
   return createStarterLlamaCppPluginImpl({
+    executeSshCommand: async () => ({
+      argv: ["ssh", "noop"],
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      exitCode: 1,
+      signal: null,
+    }),
     discoverRemoteGpuSelectionHints: async () => ({
       gpuDeviceCount: 1,
       mainGpuIndices: [0],

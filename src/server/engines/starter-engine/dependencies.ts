@@ -23,6 +23,8 @@ import {
   DEFAULT_DIAGNOSTIC_EXCERPT_CHARS,
   DEFAULT_KILL_WAIT_TIMEOUT_MS,
   DEFAULT_MAX_HELP_OUTPUT_CHARS,
+  DEFAULT_REMOTE_CLEANUP_COMMAND_TIMEOUT_MS,
+  DEFAULT_REMOTE_CLEANUP_GRACE_PERIOD_MS,
   DEFAULT_READINESS_POLL_INTERVAL_MS,
   DEFAULT_READINESS_REQUEST_TIMEOUT_MS,
   DEFAULT_READINESS_TIMEOUT_MS,
@@ -361,6 +363,11 @@ export function createDependencies(
     releaseRemoteSshPort: overrides.releaseRemoteSshPort ?? releaseRemoteSshPort,
     stopGracePeriodMs: overrides.stopGracePeriodMs ?? DEFAULT_STOP_GRACE_PERIOD_MS,
     killWaitTimeoutMs: overrides.killWaitTimeoutMs ?? DEFAULT_KILL_WAIT_TIMEOUT_MS,
+    remoteCleanupCommandTimeoutMs:
+      overrides.remoteCleanupCommandTimeoutMs ??
+      DEFAULT_REMOTE_CLEANUP_COMMAND_TIMEOUT_MS,
+    remoteCleanupGracePeriodMs:
+      overrides.remoteCleanupGracePeriodMs ?? DEFAULT_REMOTE_CLEANUP_GRACE_PERIOD_MS,
     readinessPollIntervalMs:
       overrides.readinessPollIntervalMs ?? DEFAULT_READINESS_POLL_INTERVAL_MS,
     readinessTimeoutMs: overrides.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS,

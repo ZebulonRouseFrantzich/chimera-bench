@@ -79,3 +79,217 @@ the decision taken for each finding, and where implementation landed.
       through sweep validation so they reference
       `sweep.axes.requestParams.<key>[<index>]` instead of `engine.requestParams`.
     - Implemented in: `src/server/runs/sweep-validation/index.ts`
+
+## Tasks 3-4 Review Findings and Decisions (2026-03-04)
+
+This section captures follow-up review findings after Tasks 3-4 implementation,
+the chosen disposition for each item, and whether it was implemented now or
+deferred.
+
+1. **Finally-block error masking in sweep case cleanup (H1)**
+   - Decision: implement now.
+   - Action: preserve primary cancellation/timeout failure when case-level
+     cleanup stop fails; log cleanup stop failure instead of replacing the
+     primary error.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/case-execution.ts`
+
+2. **Sweep stop lifecycle guard parity with non-sweep path (H2)**
+   - Decision: implement now.
+   - Action: add `engineStopCompleted` semantics to sweep stop orchestration and
+     avoid clearing active engine context on failed stop attempts.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/index.ts`
+
+3. **Floating timeout stop call during start/readiness (H3)**
+   - Decision: implement now.
+   - Action: remove floating timeout stop calls from sweep case start/readiness
+     timeout callbacks and rely on deterministic awaited cleanup in the case
+     `finally` path.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/case-execution.ts`
+
+4. **Defensive server-case cap during full expansion (M1)**
+   - Decision: implement now as defense-in-depth.
+   - Action: enforce a hard internal expansion ceiling (`MAX_SWEEP_CASES`) while
+     materializing expanded cases.
+   - Implemented in:
+     `src/server/runs/sweep-expansion.ts`
+
+5. **Run-level sweep metrics context (M2)**
+   - Decision: implement now.
+   - Action: include the associated case id alongside last-completed-case
+     metrics at run level for sweep runs.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/index.ts`
+
+6. **Silent JSON clone fallback mutation risk (M3)**
+   - Decision: implement now.
+   - Action: remove `JSON.stringify/parse` fallback in sweep clone helper and
+     raise explicit canonicalization error when safe cloning fails.
+   - Implemented in:
+     `src/server/runs/sweep-expansion.ts`
+
+7. **Consecutive lifecycle failure threshold coverage gap (M4)**
+   - Decision: implement now.
+   - Action: add test coverage for
+     `MAX_CONSECUTIVE_ENGINE_LIFECYCLE_FAILURES = 3` behavior.
+   - Implemented in:
+     `tests/app-runs/sweep-execution.ts`
+
+8. **Redundant `markRunRunning` in sweep fail helper (M5 + L1)**
+   - Decision: implement now.
+   - Action: call `markRunRunning` only for pre-run failure paths
+     (`startIndex === 0`), removing redundant mid-run transition calls.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/failure-utils.ts`
+
+9. **Potential cross-run `caseConfigId` collision concern (M6)**
+   - Decision: no behavior change needed; document invariant.
+   - Rationale: artifacts are persisted under run-scoped paths
+     (`runs/<runId>/result.json`), so identical `caseConfigId` values across
+     runs do not cause storage collisions.
+   - Documented in: `src/server/runs/sweep-expansion.ts`
+
+10. **Polling budget fragility in sweep tests (L2)**
+    - Decision: implement now.
+    - Action: increase default polling budget and make helper polling options
+      configurable.
+    - Implemented in: `tests/app-runs/helpers.ts`
+
+11. **Missing sweep run-timeout regression coverage (L3)**
+    - Decision: implement now.
+    - Action: add test asserting sweep run timeout surfaces as
+      `RUN_TIMEOUT_EXCEEDED`.
+    - Implemented in: `tests/app-runs/sweep-execution.ts`
+
+12. **Repetition indexing clarity (L4)**
+    - Decision: document now (no behavior change).
+    - Action: add explicit field doc that `repetitionIndex` is zero-based while
+      caseId repetition suffixes are one-based.
+    - Implemented in: `src/server/runs/sweep-expansion.ts`
+
+13. **Canonicalization allocation optimization (L5)**
+    - Decision: defer to a future spec (tracked, not lost).
+    - Scope: consider streaming/incremental hashing to reduce peak string
+      allocations when canonicalizing unusually large case config payloads.
+    - Tracking: noted in this spec's `plan.md` future follow-up section.
+
+## SSH Sweep Shutdown Follow-up Findings (2026-03-04)
+
+This section tracks post-merge hardening work for SSH-managed sweep cleanup and
+maps each review finding to the implemented disposition.
+
+1. **Cleanup `pkill -f` pattern precision**
+   - Decision: implement now.
+   - Action: harden cleanup pattern matching by anchoring to `llama-server`
+     command boundaries, escaping regex literals (including loopback host), and
+     requiring run-unique `--api-key` + `--no-webui` markers in the match.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state.ts`
+
+2. **`exitCode ?? 0` null-coalescing in cleanup**
+   - Decision: implement now.
+   - Action: treat `exitCode: null` (or signal-only termination) as an
+     indeterminate cleanup result rather than success.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state.ts`
+
+3. **Unconditional SIGKILL shortly after TERM**
+   - Decision: implement now.
+   - Action: replace TERM->fixed-KILL flow with TERM->grace->`pgrep` liveness
+     check->conditional KILL.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state.ts`
+
+4. **Duplicate remote port state across fields**
+   - Decision: implement now.
+   - Action: remove duplicate `remotePort` from `sshManagedRuntime`; keep
+     remote port authority in `remotePortReservation` and derive cleanup port
+     from that reservation.
+   - Implemented in:
+     `src/server/engines/starter-engine/types.ts`,
+     `src/server/engines/starter-engine/startup.ts`,
+     `src/server/engines/starter-engine/run-state.ts`
+
+5. **Cleanup test coverage gaps**
+   - Decision: implement now.
+   - Action: add tests for remote cleanup throw handling, TERM non-match skip,
+     and missing SSH runtime metadata.
+   - Implemented in:
+     `tests/starter-engine/lifecycle-and-ssh.ts`,
+     `tests/starter-engine/run-state.ts`
+
+6. **Signal naming consistency (`TERM` vs `SIGTERM`)**
+   - Decision: implement now.
+   - Action: standardize internal signal names (`SIGTERM` / `SIGKILL`) and map
+     explicitly to `pkill` CLI flags (`-TERM` / `-KILL`).
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state.ts`
+
+7. **Potential duplicate cleanup on repeated stop calls**
+   - Decision: implement now.
+   - Action: add idempotent stop lifecycle guards (`stopPromise` +
+     `stopCompleted`) so concurrent stop calls share one cleanup sequence.
+   - Implemented in:
+     `src/server/engines/starter-engine/types.ts`,
+     `src/server/engines/starter-engine/run-state.ts`,
+     `tests/starter-engine/run-state.ts`
+
+8. **Hardcoded remote cleanup timing values**
+   - Decision: implement now.
+   - Action: add dependency-level tuning knobs for remote cleanup command
+     timeout and grace period, with safe defaults from constants.
+   - Implemented in:
+     `src/server/engines/starter-engine/constants.ts`,
+     `src/server/engines/starter-engine/types.ts`,
+     `src/server/engines/starter-engine/dependencies.ts`,
+     `src/server/engines/starter-engine/run-state.ts`
+
+9. **Shutdown latency tradeoff documentation**
+   - Decision: document now.
+   - Action: add inline code documentation for bounded worst-case SSH cleanup
+     latency and rationale (prefer leak prevention over fastest shutdown).
+   - Documented in:
+      `src/server/engines/starter-engine/run-state.ts`
+
+10. **POSIX regex portability for `pkill -f` / `pgrep -f` whitespace matching**
+    - Decision: implement now.
+    - Severity: High.
+    - Action: replace non-portable `\\s` tokens in cleanup regex patterns with
+      POSIX ERE-safe whitespace class (`[[:space:]]`) and add explicit test
+      coverage that the generated cleanup pattern includes the POSIX class.
+    - Implemented in:
+      `src/server/engines/starter-engine/run-state/remote-cleanup.ts`,
+      `tests/starter-engine/lifecycle-and-ssh.ts`
+
+## PR #22 Comment Assessment (2026-03-05)
+
+Assessment of all PR comments for
+`https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22`.
+
+1. **Review summary comment**
+   - Source:
+     `https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22#pullrequestreview-3892669944`
+   - Severity: Low.
+   - Opinion: informational summary only; no actionable defect.
+   - Decision: no code change.
+
+2. **Review wrapper comment**
+   - Source:
+     `https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22#pullrequestreview-3892975248`
+   - Severity: Low.
+   - Opinion: informational wrapper only; actionable content is in inline
+     review comments.
+   - Decision: no code change.
+
+3. **Inline portability comment on regex whitespace token**
+   - Source:
+     `https://github.com/ZebulonRouseFrantzich/chimera-bench/pull/22#discussion_r2886994651`
+   - Severity: High.
+   - Opinion: valid portability/correctness risk for POSIX ERE matching in
+     `pkill`/`pgrep` cleanup paths.
+   - Decision: implement now.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state/remote-cleanup.ts`,
+     `tests/starter-engine/lifecycle-and-ssh.ts`
