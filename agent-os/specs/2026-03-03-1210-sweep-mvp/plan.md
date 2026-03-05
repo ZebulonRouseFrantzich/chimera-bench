@@ -634,6 +634,19 @@ inspect `runs/<runId>/result.json`:
   - missing assistant output structure,
   - sweep latency semantics with wider timing margins.
 
+#### Final Pre-PR Ruthless Review Follow-up (2026-03-05)
+
+- Removed API key material from SSH remote cleanup process-match patterns.
+- Made sweep request-param axis cloning fail-fast (removed JSON stringify/parse
+  fallback).
+- Deep-cloned persisted per-case `requestParams` in run-store outcome/result
+  paths to prevent nested-reference aliasing.
+- Added explicit rationale notes for the compact deterministic
+  `tuning.v0_0_1` prompt contract and its stable regression hash.
+- Findings intentionally accepted as no-change are tracked in
+  `review-findings.md` under
+  "Final Pre-PR Ruthless Review Findings (2026-03-05, round 5)".
+
 ## Exit criteria
 
 - A sweep run can execute end-to-end over SSH, producing a `runs/{runId}/result.json` with multiple cases and a deterministic ranking.

@@ -38,6 +38,7 @@ describe("tuning workload prompt", () => {
     expect(endDatasetIndex).toBeGreaterThan(beginDatasetIndex);
 
     const datasetLines = lines.slice(beginDatasetIndex + 1, endDatasetIndex);
+    // v0.0.1 keeps the built-in tuning prompt intentionally compact.
     expect(datasetLines).toHaveLength(32);
     expect(datasetLines[0]?.startsWith("rec-001|")).toBe(true);
     expect(datasetLines[31]?.startsWith("rec-032|")).toBe(true);
@@ -53,6 +54,7 @@ describe("tuning workload prompt", () => {
   test("matches the stable prompt regression hash", () => {
     const prompt = buildTuningPrompt();
     const hash = createHash("sha256").update(prompt).digest("hex");
+    // Hash locks the deterministic 32-record tuning prompt contract.
     expect(hash).toBe("5d191c59e33fe4e4a8d813cf1c8ea5d2a3a261de1f528ff19be005b339e07dfc");
   });
 });

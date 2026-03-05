@@ -8,6 +8,7 @@ import {
   TEST_API_KEY,
   TEST_MODEL_IDENTIFIER,
 } from "./helpers.ts";
+import { waitForCondition } from "../helpers/wait-condition.ts";
 
 describe("starter llama.cpp plugin process lifecycle", () => {
   test("forces loopback launch args and per-run API key", async () => {
@@ -368,13 +369,9 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     await plugin.start(context);
     processHandle.emitExit(255, null);
 
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      if (cleanupCommands.length > 0 && releasedRemotePorts.length > 0) {
-        break;
-      }
-
-      await Bun.sleep(10);
-    }
+    await waitForCondition(() => {
+      return cleanupCommands.length > 0 && releasedRemotePorts.length > 0;
+    });
 
     expect(cleanupCommands).toHaveLength(1);
     expect(cleanupCommands[0]).toEqual([
@@ -454,22 +451,22 @@ describe("starter llama.cpp plugin process lifecycle", () => {
       "pkill",
       "-TERM",
       "-f",
-      expect.stringContaining("--host 127\\.0\\.0\\.1 --port 28080 --api-key"),
+      expect.stringContaining("--host 127\\.0\\.0\\.1 --port 28080 --no-webui"),
     ]);
     expect(cleanupCommands[1]).toEqual([
       "pgrep",
       "-f",
-      expect.stringContaining("--host 127\\.0\\.0\\.1 --port 28080 --api-key"),
+      expect.stringContaining("--host 127\\.0\\.0\\.1 --port 28080 --no-webui"),
     ]);
     expect(cleanupCommands[2]).toEqual([
       "pkill",
       "-KILL",
       "-f",
-      expect.stringContaining("--host 127\\.0\\.0\\.1 --port 28080 --api-key"),
+      expect.stringContaining("--host 127\\.0\\.0\\.1 --port 28080 --no-webui"),
     ]);
     const cleanupPattern = cleanupCommands[0]?.[3];
     expect(cleanupPattern?.includes("--no-webui")).toBe(true);
-    expect(cleanupPattern?.includes(TEST_API_KEY)).toBe(true);
+    expect(cleanupPattern?.includes(TEST_API_KEY)).toBe(false);
     expect(cleanupPattern?.includes("[[:space:]]")).toBe(true);
   });
 

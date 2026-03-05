@@ -89,7 +89,7 @@ export async function executeLlamaServerCase(input: {
       signal: input.context.abortSignal,
     });
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
+    if (isAbortError(error)) {
       throw error;
     }
 

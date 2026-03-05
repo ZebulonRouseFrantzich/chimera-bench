@@ -78,9 +78,7 @@ export function buildRunResult(run: RunRecord): StoredRunResult {
       index: caseOutcome.index,
       contextTokens: caseOutcome.contextTokens,
       engineArgs: [...caseOutcome.engineArgs],
-      requestParams: {
-        ...caseOutcome.requestParams,
-      },
+      requestParams: cloneRequestParams(caseOutcome.requestParams),
       status: caseOutcome.status,
       latencyMs: caseOutcome.latencyMs,
       ttftMs: caseOutcome.ttftMs,
@@ -202,4 +200,14 @@ function compareLexicographic(left: string, right: string): number {
 
 function normalizeRankingTokensPerSecond(tokensPerSecond: number): number {
   return Number(tokensPerSecond.toFixed(3));
+}
+
+function cloneRequestParams(value: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return structuredClone(value);
+  } catch {
+    return {
+      ...value,
+    };
+  }
 }

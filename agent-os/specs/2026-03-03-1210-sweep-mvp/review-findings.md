@@ -685,3 +685,114 @@ implemented for each item.
    - Implemented in:
      `src/server/engines/starter-engine/run-state.ts`,
      `tests/starter-engine/lifecycle-and-ssh.ts`
+
+## Final Pre-PR Ruthless Review Findings (2026-03-05, round 5)
+
+This section captures the final dual-model pre-merge review dispositions and the
+implementation choices accepted in this branch.
+
+1. **H1: remote cleanup process-match pattern includes plaintext API key**
+   - Decision: implement now.
+   - Action: remove `--api-key` from remote cleanup `pkill -f` / `pgrep -f`
+     pattern generation and keep non-secret matching via host+port+`--no-webui`.
+     Also pass API key redactions through SSH command execution as
+     defense-in-depth.
+   - Implemented in:
+     `src/server/engines/starter-engine/run-state/remote-cleanup.ts`,
+     `tests/starter-engine/lifecycle-and-ssh.ts`
+
+2. **H2: schema `cloneUnknown` JSON fallback can silently alter values**
+   - Decision: implement now.
+   - Action: remove JSON stringify/parse fallback and fail fast when sweep axis
+     values cannot be safely cloned.
+   - Implemented in:
+     `src/server/api/schemas.ts`,
+     `tests/api-schemas.test.ts`
+
+3. **H3: potential race in remote cleanup sequencing**
+   - Decision: no code change.
+   - Rationale: stop deduplication already serializes concurrent run shutdown
+     calls via `stopPromise`; remote cleanup metadata/pattern is captured once per
+     stop flow.
+   - Verified in:
+     `src/server/engines/starter-engine/run-state.ts`,
+     `tests/starter-engine/run-state.ts`
+
+4. **M1: unbounded recursion depth in sweep expansion**
+   - Decision: no code change.
+   - Rationale: sweep axes are schema-capped (`MAX_SWEEP_AXES_PER_NAMESPACE =
+     32`), so recursion depth is explicitly bounded.
+   - Verified in:
+     `src/server/api/schemas.ts`,
+     `src/server/runs/sweep-expansion.ts`
+
+5. **M2: integer overflow risk in planned-case multiplication**
+   - Decision: no code change.
+   - Rationale: `computePlannedCases()` already uses bounded multiplication with
+     early ceiling checks against `maxAllowedCases`.
+   - Verified in:
+     `src/server/runs/sweep-validation/index.ts`
+
+6. **M3: shallow request-params cloning in persisted case outcomes/results**
+   - Decision: implement now.
+   - Action: deep-clone persisted `requestParams` at run-store recording and
+     result publication boundaries.
+   - Implemented in:
+     `src/server/runs/in-memory-run-store/case-outcomes.ts`,
+     `src/server/runs/in-memory-run-store/results.ts`,
+     `tests/in-memory-run-store.test.ts`
+
+7. **M4: stop deduplication failure semantics**
+   - Decision: no code change.
+   - Rationale: concurrent callers already await the same stop promise and share
+     rejection semantics; retry behavior after failure is intentional.
+   - Verified in:
+     `src/server/engines/starter-engine/run-state.ts`
+
+8. **M5: coupling to upstream llama context-overflow error shape**
+   - Decision: no code change.
+   - Rationale: parser already supports both typed upstream errors and context
+     overflow message matching fallback.
+   - Verified in:
+     `src/server/engines/starter-engine/chat-completions-response.ts`
+
+9. **L1: ranking TPS normalization uses `toFixed(3)` round-trip**
+   - Decision: no code change (v0.0.1).
+   - Rationale: existing behavior is deterministic and currently covered by
+     ranking tests.
+
+10. **L2: fixed prompt-overhead token constant may be conservative**
+    - Decision: no behavior change (v0.0.1).
+    - Rationale: conservative guardrail is intentional for prompt-fit safety;
+      configurability remains future work.
+    - Verified in:
+      `src/server/engines/starter-engine/prompt-fit-preflight.ts`
+
+11. **L3: tuning workload regression hash change lacked explicit rationale**
+    - Decision: document now.
+    - Action: add inline rationale and test-note commentary for the deterministic
+      compact (32-record) tuning prompt contract.
+    - Implemented in:
+      `src/server/runs/starter-workload.ts`,
+      `tests/starter-workload.test.ts`
+
+12. **L4: hardcoded synthetic ports in starter-engine tests**
+    - Decision: no code change.
+    - Rationale: these tests mock fetch/process and do not bind sockets; ports
+      are synthetic request-shaping fixtures.
+    - Verified in:
+      `tests/starter-engine/case-execution.ts`
+
+13. **L5: regex escaping in remote cleanup pattern might over-escape**
+    - Decision: no code change.
+    - Rationale: current escaping is intentional for literal matching safety in
+      POSIX ERE process-match patterns.
+    - Verified in:
+      `src/server/engines/starter-engine/run-state/remote-cleanup.ts`
+
+14. **L6: deterministic sweep hash collision/ordering concern**
+    - Decision: no code change.
+    - Rationale: case ID generation already canonicalizes JSON and sorts object
+      keys before hashing.
+    - Verified in:
+      `src/server/runs/sweep-expansion.ts`

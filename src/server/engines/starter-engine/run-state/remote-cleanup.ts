@@ -90,6 +90,11 @@ async function runRemoteCleanupSignal(input: {
       overallTimeoutMs: stopInput.dependencies.remoteCleanupCommandTimeoutMs,
       maxBufferedChars: REMOTE_CLEANUP_MAX_BUFFERED_CHARS,
       diagnosticExcerptChars: REMOTE_CLEANUP_DIAGNOSTIC_EXCERPT_CHARS,
+      ...(runStateApiKey.length > 0
+        ? {
+            redactions: [runStateApiKey],
+          }
+        : {}),
     });
 
     const exitCode = normalizeSshCommandExitCode(result.exitCode);
@@ -180,6 +185,11 @@ async function checkRemoteLlamaServerAlive(input: {
       overallTimeoutMs: input.stopInput.dependencies.remoteCleanupCommandTimeoutMs,
       maxBufferedChars: REMOTE_CLEANUP_MAX_BUFFERED_CHARS,
       diagnosticExcerptChars: REMOTE_CLEANUP_DIAGNOSTIC_EXCERPT_CHARS,
+      ...(input.runStateApiKey.length > 0
+        ? {
+            redactions: [input.runStateApiKey],
+          }
+        : {}),
     });
 
     const exitCode = normalizeSshCommandExitCode(result.exitCode);
@@ -265,25 +275,24 @@ function resolveRemoteCleanupMetadata(
     remotePort,
     pattern: buildRemoteLlamaServerPattern({
       remotePort,
-      apiKey: runState.apiKey,
     }),
   };
 }
 
 function buildRemoteLlamaServerPattern(input: {
   remotePort: number;
-  apiKey: string;
 }): string {
   const escapedHost = escapeRegex(LOOPBACK_HOST);
   const escapedPort = escapeRegex(String(input.remotePort));
-  const escapedApiKey = escapeRegex(input.apiKey);
   const whitespaceClass = "[[:space:]]";
 
   // `pkill -f` and `pgrep -f` generally evaluate POSIX ERE patterns, where
   // `\s` is not a portable whitespace token.
+  // Intentionally omit `--api-key` matching so secrets are not copied into
+  // remote process-match argv/audit surfaces.
   return (
     `(^|/)llama-server(${whitespaceClass}|$).*` +
-    `--host ${escapedHost} --port ${escapedPort} --api-key ${escapedApiKey} --no-webui(${whitespaceClass}|$)`
+    `--host ${escapedHost} --port ${escapedPort} --no-webui(${whitespaceClass}|$)`
   );
 }
 

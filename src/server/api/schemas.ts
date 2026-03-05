@@ -436,10 +436,6 @@ function cloneUnknown<T>(value: T): T {
   try {
     return structuredClone(value);
   } catch {
-    try {
-      return JSON.parse(JSON.stringify(value)) as T;
-    } catch {
-      throw new Error("Failed to clone sweep axis value. Expected JSON-serializable input.");
-    }
+    throw new Error("Failed to clone sweep axis value. Expected JSON-serializable input.");
   }
 }

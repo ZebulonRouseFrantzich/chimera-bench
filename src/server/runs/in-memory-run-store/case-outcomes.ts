@@ -52,9 +52,7 @@ export function recordCompletedCaseOutcome(
     status: "completed",
     contextTokens: normalizeNonNegativeInteger(input.contextTokens, 0),
     engineArgs: [...input.engineArgs],
-    requestParams: {
-      ...input.requestParams,
-    },
+    requestParams: cloneRequestParams(input.requestParams),
     latencyMs,
     ttftMs: null,
     outputTokens,
@@ -90,9 +88,7 @@ export function recordFailedCaseOutcome(
     status: "failed",
     contextTokens: normalizeNonNegativeInteger(input.contextTokens, 0),
     engineArgs: [...input.engineArgs],
-    requestParams: {
-      ...input.requestParams,
-    },
+    requestParams: cloneRequestParams(input.requestParams),
     latencyMs: normalizeNonNegativeInteger(input.latencyMs, 0),
     ttftMs: null,
     outputTokens: 0,
@@ -105,6 +101,16 @@ export function recordFailedCaseOutcome(
   reconcileTotalCases(run);
 
   return sanitizedError;
+}
+
+function cloneRequestParams(value: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return structuredClone(value);
+  } catch {
+    return {
+      ...value,
+    };
+  }
 }
 
 function extractUsageCompletionTokens(rawResponse: unknown): number | null {

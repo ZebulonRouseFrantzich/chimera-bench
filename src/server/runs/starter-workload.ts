@@ -22,6 +22,8 @@ const STARTER_PROMPT_3_ID = "starter.prompt-3";
 const TUNING_WORKLOAD_ID = "tuning.v0_0_1";
 const TUNING_CASE_ID = "tuning.v0_0_1.case-1";
 const TUNING_PROMPT_ID = "tuning.v0_0_1.prompt-1";
+// Keep the built-in tuning prompt compact enough for v0.0.1 sweep defaults
+// while preserving deterministic structure/hash guarantees.
 const TUNING_RECORD_COUNT = 32;
 const TUNING_PAYLOAD_TOKENS_PER_RECORD = 30;
 const MAX_BUILT_IN_PROMPT_BYTES = 128 * 1024;

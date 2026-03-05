@@ -374,4 +374,76 @@ describe("InMemoryRunStore", () => {
       | undefined;
     expect(failureDetails?.details?.nested?.code).toBe("initial");
   });
+
+  test("deep-clones nested requestParams for persisted case outcomes", () => {
+    const store = new InMemoryRunStore();
+    const runId = store.tryCreateQueuedRun({
+      ...RUN_INPUT,
+      totalCases: 2,
+    });
+
+    expect(typeof runId).toBe("string");
+    if (!runId) {
+      throw new Error("Expected run to be created.");
+    }
+
+    const completedRequestParams = {
+      nested: {
+        temperature: 0.2,
+      },
+    };
+    const failedRequestParams = {
+      nested: {
+        max_tokens: 32,
+      },
+    };
+
+    store.markRunRunning(runId, new Date().toISOString());
+
+    store.recordCaseCompleted(runId, {
+      caseId: "case-completed",
+      promptId: "prompt-completed",
+      index: 0,
+      contextTokens: 10,
+      latencyMs: 100,
+      outputText: "hello world",
+      engineArgs: [],
+      requestParams: completedRequestParams,
+    });
+
+    store.recordCaseFailed(runId, {
+      caseId: "case-failed",
+      promptId: "prompt-failed",
+      index: 1,
+      contextTokens: 5,
+      latencyMs: 0,
+      engineArgs: [],
+      requestParams: failedRequestParams,
+      error: {
+        code: "ENGINE_EXECUTION_FAILED",
+        message: "synthetic failure",
+      },
+    });
+
+    completedRequestParams.nested.temperature = 0.9;
+    failedRequestParams.nested.max_tokens = 128;
+
+    store.completeRun(runId, new Date().toISOString());
+
+    const result = store.getRunResult(runId) as {
+      cases?: Array<{
+        requestParams?: {
+          nested?: {
+            temperature?: number;
+            max_tokens?: number;
+          };
+        };
+      }>;
+    } | null;
+
+    const completedCaseParams = result?.cases?.[0]?.requestParams;
+    const failedCaseParams = result?.cases?.[1]?.requestParams;
+    expect(completedCaseParams?.nested?.temperature).toBe(0.2);
+    expect(failedCaseParams?.nested?.max_tokens).toBe(32);
+  });
 });
