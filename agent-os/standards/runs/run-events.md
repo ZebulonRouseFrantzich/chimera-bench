@@ -17,6 +17,10 @@ Payload rules:
 
 - Payload is a JSON object.
 - Payload always includes `runId`.
+- Case events include case identity fields (`caseId`, `promptId`, `index`).
+- Case events include progress counters: `totalCases`, `completedCases`, `failedCases`.
+- Terminal run events include progress counters.
+- Keep event payloads small: do **not** include per-case `engineArgs`, `requestParams`, or full model output/raw response blobs.
 - Listener failures must not interrupt run state transitions.
 
 Replay policy:

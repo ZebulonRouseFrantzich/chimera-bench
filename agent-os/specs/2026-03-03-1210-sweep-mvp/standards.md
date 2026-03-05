@@ -9,9 +9,16 @@ High relevance:
 - `agent-os/standards/runs/run-events.md`
 - `agent-os/standards/runs/orchestrator-cancellation-timeouts.md`
 - `agent-os/standards/runs/artifact-store.md`
+- `agent-os/standards/runs/sweep-config-validation.md`
+- `agent-os/standards/runs/sweep-expansion-and-case-ids.md`
+- `agent-os/standards/runs/sweep-execution-orchestration.md`
+- `agent-os/standards/runs/sweep-result-and-ranking.md`
 - `agent-os/standards/plugins/llama-cpp-mixed-gpu-guard.md`
 - `agent-os/standards/plugins/llama-cpp-remote-help-discovery-cache.md`
+- `agent-os/standards/plugins/llama-cpp-case-execution.md`
+- `agent-os/standards/plugins/llama-cpp-ssh-remote-cleanup.md`
 - `agent-os/standards/server/json-request-validation.md`
+- `agent-os/standards/server/request-param-budgets.md`
 - `agent-os/standards/server/sse-streams.md`
 - `agent-os/standards/global/sanitization-and-safe-errors.md`
 - `agent-os/standards/server/openapi-and-sdk-artifacts.md`
