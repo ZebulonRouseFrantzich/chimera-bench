@@ -16,6 +16,7 @@ Enable a minimal, server-side sweep execution path for v0.0.1 so operators can t
 - Deterministic sweep expansion order and stable case identities.
 - Engine restarts between sweep cases.
 - A single `runs/{runId}/result.json` containing all cases plus a best-to-worst ranking.
+- Completed sweep cases produce non-stubbed per-case outputs and throughput metrics (not all-zero `tokensPerSecond`).
 
 ## Non-goals
 
@@ -519,9 +520,88 @@ cat runs/<runId>/result.json
 - Full per-finding disposition log is tracked in `review-findings.md` under
   "Task 5 Review Findings and Decisions (2026-03-05)".
 
+### Task 6: Implement llama-server Case Execution (Non-stubbed TPS)
+
+Manual validation of Task 5 can show `tokensPerSecond: 0` for every case because
+the built-in `llama.cpp` plugin still returns an empty `outputText` and a
+`rawResponse.status: "not-implemented"` placeholder. This task wires real
+OpenAI-compatible case execution so sweep artifacts contain meaningful
+throughput values.
+
+#### Requirements
+
+- Replace the stubbed `executeCase()` implementation in
+  `src/server/engines/starter-engine/index.ts`.
+
+- Execute inference via the running `llama-server` instance:
+  - `POST /v1/chat/completions`
+  - `Authorization: Bearer <apiKey>` (same API key used for health probing)
+  - `Content-Type: application/json`
+  - Request body:
+    - `messages: caseConfig.messages`
+    - `stream: false`
+    - spread `caseConfig.requestParams` (reserved keys remain core/plugin-owned)
+
+- Response handling:
+  - On non-2xx responses: throw a stable `ENGINE_EXECUTION_FAILED` error (or
+    equivalent existing run failure code) with a safe message; include bounded
+    diagnostics server-side.
+  - On success: parse JSON and extract the first assistant message content as
+    `outputText`.
+  - Persist the full parsed response under `rawResponse` (bounded/sanitized if
+    needed for safety).
+
+- Timing semantics (for meaningful TPS):
+  - For sweep runs, record `latencyMs` as the inference time spent in
+    `executeCase()` (align with the non-sweep run path).
+  - Startup/readiness time may be recorded separately under `metricsExtra` if
+    needed, but must not be mixed into per-case inference latency.
+
+- Throughput:
+  - Ensure completed cases yield non-zero `outputTokens` / `tokensPerSecond`
+    when the model generates output (for example `max_tokens >= 1`).
+  - v0.0.1 may keep token counts as an estimate derived from `outputText` until
+    deeper metrics extraction lands.
+
+#### Manual Testing Steps
+
+1) Run the ranking tests:
+
+```bash
+bun test tests/app-runs.test.ts -t "ranking"
+```
+
+2) Create a sweep run against a real `llama-server` (local or SSH target) and
+inspect `runs/<runId>/result.json`:
+
+- Confirm `cases[*].rawResponse.status` is not `"not-implemented"`.
+- Confirm at least one completed case has `outputTokens > 0` and
+  `tokensPerSecond > 0`.
+
+#### Post-Review Follow-up (2026-03-05, Task 6)
+
+- Added bounded case-response body reads before JSON parsing (default
+  8 MiB limit) to prevent unbounded memory growth during case execution.
+- Added defense-in-depth reserved-key stripping for runtime case request params
+  before constructing `/v1/chat/completions` payloads.
+- Reduced warn-level diagnostics for case execution failures to metadata-only
+  context (status/size/reason), without response-body excerpts by default.
+- Tightened response parsing behavior:
+  - prefer `message.role === "assistant"` content when present,
+  - keep tolerant fallback to `choices[0].text` for compatibility,
+  - hard-fail when no assistant output is available.
+- Expanded Task 6 regression coverage for:
+  - non-2xx responses,
+  - invalid JSON,
+  - oversized responses,
+  - network throw and AbortError passthrough,
+  - missing assistant output structure,
+  - sweep latency semantics with wider timing margins.
+
 ## Exit criteria
 
 - A sweep run can execute end-to-end over SSH, producing a `runs/{runId}/result.json` with multiple cases and a deterministic ranking.
+- Completed cases include non-stubbed outputs with non-zero throughput metrics (`tokensPerSecond`) when generation occurs.
 
 ## Future follow-ups (tracked)
 

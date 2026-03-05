@@ -21,6 +21,7 @@ import {
   API_KEY_ENTROPY_BYTES,
   DEFAULT_BUFFERED_LOG_CHARS,
   DEFAULT_DIAGNOSTIC_EXCERPT_CHARS,
+  DEFAULT_MAX_CASE_RESPONSE_BYTES,
   DEFAULT_KILL_WAIT_TIMEOUT_MS,
   DEFAULT_MAX_HELP_OUTPUT_CHARS,
   DEFAULT_REMOTE_CLEANUP_COMMAND_TIMEOUT_MS,
@@ -374,8 +375,8 @@ export function createDependencies(
     readinessRequestTimeoutMs:
       overrides.readinessRequestTimeoutMs ?? DEFAULT_READINESS_REQUEST_TIMEOUT_MS,
     bufferedLogChars: overrides.bufferedLogChars ?? DEFAULT_BUFFERED_LOG_CHARS,
-    diagnosticExcerptChars:
-      overrides.diagnosticExcerptChars ?? DEFAULT_DIAGNOSTIC_EXCERPT_CHARS,
+    diagnosticExcerptChars: overrides.diagnosticExcerptChars ?? DEFAULT_DIAGNOSTIC_EXCERPT_CHARS,
+    maxCaseResponseBytes: overrides.maxCaseResponseBytes ?? DEFAULT_MAX_CASE_RESPONSE_BYTES,
   };
 }
 

@@ -367,3 +367,136 @@ implementation.
     - Decision: no code change.
     - Rationale: this is intentional and aligned with Task 5 artifact examples
       and ranking semantics.
+
+11. **Manual validation: all-zero TPS due to stubbed `executeCase()`**
+    - Severity: Medium.
+    - Opinion: valid gap; ranking inputs become latency-only when outputs are
+      stubbed.
+    - Decision: add Task 6 to this spec to implement real
+      `/v1/chat/completions` execution and produce non-stubbed throughput
+      metrics.
+    - Tracked in: `agent-os/specs/2026-03-03-1210-sweep-mvp/plan.md`
+
+## Task 6 Implementation Notes (2026-03-05)
+
+1. **llama-server case execution is now wired to real chat-completions calls**
+   - Action: replace the `executeCase()` placeholder with a real
+     `POST /v1/chat/completions` request path using per-run bearer auth,
+     non-streaming responses, and structured output extraction.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`,
+     `src/server/engines/starter-engine/index.ts`,
+     `src/server/engines/starter-engine/utils.ts`
+
+2. **Sweep latency semantics align to inference time**
+   - Action: measure sweep `latencyMs` from `executeCase()` wall time rather
+     than including start/readiness lifecycle overhead.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/case-execution.ts`
+
+3. **Task 6 regression coverage**
+   - Action: add starter-engine tests for successful execution request wiring,
+     non-2xx handling, and invalid-JSON handling; add sweep latency regression
+     coverage that guards against restart-time inflation.
+   - Implemented in:
+      `tests/starter-engine/case-execution.ts`,
+      `tests/app-runs/sweep-execution.ts`
+
+## Task 6 Post-Review Findings and Decisions (2026-03-05)
+
+This section captures follow-up review findings on Task 6 and the disposition
+implemented for each item.
+
+1. **H1: unbounded response body read risk**
+   - Decision: implement now.
+   - Action: replace unbounded `response.text()` usage with bounded stream reads
+     plus `content-length` precheck; fail with `ENGINE_EXECUTION_FAILED` when
+     size limits are exceeded.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`,
+     `src/server/engines/starter-engine/constants.ts`,
+     `src/server/engines/starter-engine/types.ts`,
+     `src/server/engines/starter-engine/dependencies.ts`
+
+2. **H2: reserved request-param defense-in-depth**
+   - Decision: implement now.
+   - Action: strip reserved request-param keys before dispatching runtime
+     `/v1/chat/completions` payloads, even when upstream validation is expected
+     to reject them.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`
+
+3. **H3: diagnostic response excerpt exposure**
+   - Decision: implement now.
+   - Action: keep warn-level diagnostics metadata-focused (status/size/reason)
+     and stop emitting response-body excerpts by default for case execution
+     failures.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`
+
+4. **M1: latency regression test flakiness risk**
+   - Decision: implement now.
+   - Action: increase latency test timing margins so it remains reliable under
+     slower CI schedulers while still proving execute-time latency semantics.
+   - Implemented in:
+     `tests/app-runs/sweep-execution.ts`
+
+5. **M2: executeCase success test lifecycle realism**
+   - Decision: implement now.
+   - Action: require `waitUntilReady()` in success-path execution coverage.
+   - Implemented in:
+     `tests/starter-engine/case-execution.ts`
+
+6. **M3: `isRecord` array acceptance**
+   - Decision: implement now.
+   - Action: tighten object guard to reject arrays.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`
+
+7. **M4: `latencyMs: 0` intent clarity for pre-exec failures**
+   - Decision: implement now (documentation-only).
+   - Action: add inline comments clarifying intentional zero latency when case
+     validation fails before `executeCase()` starts.
+   - Implemented in:
+     `src/server/runs/run-orchestrator/sweep-execution/case-execution.ts`
+
+8. **M5: pre-parse response size guard**
+   - Decision: implement now.
+   - Action: enforce explicit size guard before JSON parse as part of bounded
+     response read handling.
+   - Implemented in:
+     `src/server/engines/starter-engine/case-execution.ts`
+
+9. **L1: missing fetch-throw/abort coverage**
+   - Decision: implement now.
+   - Action: add tests for network throw (`ENGINE_EXECUTION_FAILED`) and
+     AbortError passthrough behavior.
+   - Implemented in:
+     `tests/starter-engine/case-execution.ts`
+
+10. **L2: missing assistant-output-shape coverage**
+    - Decision: implement now.
+    - Action: add test for valid JSON with missing assistant output structure.
+    - Implemented in:
+      `tests/starter-engine/case-execution.ts`
+
+11. **L3: URL query/hash stripping rationale clarity**
+    - Decision: implement now (documentation-only).
+    - Action: add inline comment that query/hash stripping is intentional for
+      stable request shaping.
+    - Implemented in:
+      `src/server/engines/starter-engine/utils.ts`
+
+12. **L4: assistant role handling strictness**
+    - Decision: implement now.
+    - Action: prefer `message.role === "assistant"` content when role is
+      present, while keeping fallback compatibility behavior.
+    - Implemented in:
+      `src/server/engines/starter-engine/case-execution.ts`
+
+13. **L5: duplicated latency calculation clarity**
+    - Decision: implement now.
+    - Action: centralize latency computation in a helper used by both success
+      and failure paths.
+    - Implemented in:
+      `src/server/runs/run-orchestrator/sweep-execution/case-execution.ts`

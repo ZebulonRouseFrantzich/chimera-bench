@@ -10,6 +10,10 @@
 - Reserved/denylisted server args + reserved request param keys (llama.cpp plugin): `src/server/engines/starter-engine/run-config-validation.ts`
 - Reserved/denylisted flag sets: `src/server/engines/starter-engine/constants.ts`
 
+- llama.cpp plugin case execution (Task 6):
+  - `src/server/engines/starter-engine/index.ts`
+  - `src/server/engines/starter-engine/case-execution.ts`
+
 - Run orchestration (single-run baseline): `src/server/runs/run-orchestrator/`
 - Run store + per-case outcomes: `src/server/runs/in-memory-run-store/`
   - Case outcome recording: `src/server/runs/in-memory-run-store/case-outcomes.ts`

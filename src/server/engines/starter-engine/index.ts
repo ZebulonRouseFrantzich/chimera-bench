@@ -59,6 +59,7 @@ import {
   redactSecret,
   replaceRequiredFlagValue,
 } from "./utils.ts";
+import { executeLlamaServerCase } from "./case-execution.ts";
 
 export type { StarterLlamaCppPluginDependencies } from "./types.ts";
 
@@ -417,16 +418,15 @@ export function createStarterLlamaCppPlugin(
       });
     },
     async executeCase(
-      _context: EngineRuntimeContext,
+      context: EngineRuntimeContext,
       caseConfig: EngineCaseConfig,
     ): Promise<EngineCaseResult> {
-      return {
-        outputText: "",
-        rawResponse: {
-          caseId: caseConfig.caseId,
-          status: "not-implemented",
-        },
-      };
+      return executeLlamaServerCase({
+        context,
+        caseConfig,
+        runStates,
+        dependencies,
+      });
     },
     async collectMetrics(_context: EngineRuntimeContext): Promise<Record<string, unknown>> {
       return {};

@@ -10,6 +10,16 @@ export function buildHealthUrl(launchArgs: string[]): string {
   return `http://${host}:${port}/health`;
 }
 
+export function buildChatCompletionsUrl(healthUrl: string): string {
+  const endpoint = new URL(healthUrl);
+  endpoint.pathname = "/v1/chat/completions";
+  // Drop search/hash from the health probe URL so request shaping is stable and
+  // never forwards accidental probe-specific suffixes to the generation path.
+  endpoint.search = "";
+  endpoint.hash = "";
+  return endpoint.toString();
+}
+
 export function buildHealthRequestHeaders(apiKey: string): Record<string, string> {
   return {
     Authorization: `Bearer ${apiKey}`,

@@ -299,6 +299,77 @@ describe("run routes", () => {
     );
   });
 
+  test("sweep per-case latency reflects executeCase time, not restart lifecycle time", async () => {
+    const startupDelayMs = 1_000;
+    const executeDelayMs = 20;
+
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      engines: createEngineCatalog([
+        createTestPlugin({
+          start: async () => {
+            await Bun.sleep(startupDelayMs);
+          },
+          waitUntilReady: async () => {
+            await Bun.sleep(startupDelayMs);
+          },
+          executeCase: async () => {
+            await Bun.sleep(executeDelayMs);
+            return {
+              outputText: "one two three four five six seven eight",
+            };
+          },
+        }),
+      ]),
+    });
+
+    const runId = await createSweepRun(
+      app,
+      createSweepRequestBody({
+        sweep: {
+          axes: {
+            serverArgs: {
+              ctxSize: [["--ctx-size", "4096"]],
+            },
+            requestParams: {
+              max_tokens: [128],
+            },
+          },
+          maxCases: 4,
+          repetitions: 1,
+        },
+      }),
+    );
+    const status = await waitForTerminalRunStatus(app, runId);
+    expect(status).toBe("completed");
+
+    const resultResponse = await app.request(`http://localhost/runs/${runId}/result`);
+    expect(resultResponse.status).toBe(200);
+    const resultPayload = await resultResponse.json();
+    const firstCase = resultPayload.data.result.cases[0] as {
+      latencyMs?: unknown;
+      tokensPerSecond?: unknown;
+    };
+
+    expect(typeof firstCase.latencyMs).toBe("number");
+    if (typeof firstCase.latencyMs !== "number") {
+      throw new Error("Expected first case latencyMs to be present.");
+    }
+
+    expect(firstCase.latencyMs).toBeGreaterThanOrEqual(executeDelayMs - 10);
+    expect(firstCase.latencyMs).toBeLessThan(Math.floor(startupDelayMs / 2));
+
+    expect(typeof firstCase.tokensPerSecond).toBe("number");
+    if (typeof firstCase.tokensPerSecond !== "number") {
+      throw new Error("Expected first case tokensPerSecond to be present.");
+    }
+
+    expect(firstCase.tokensPerSecond).toBeGreaterThan(0);
+  });
+
   test("persists sweep ranking deterministically in result.json", async () => {
     const sweep = {
       axes: {

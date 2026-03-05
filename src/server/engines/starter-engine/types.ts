@@ -139,6 +139,7 @@ export interface StarterLlamaCppPluginDependencies {
   readinessRequestTimeoutMs: number;
   bufferedLogChars: number;
   diagnosticExcerptChars: number;
+  maxCaseResponseBytes: number;
 }
 
 export interface ReadinessProbeSuccess {
