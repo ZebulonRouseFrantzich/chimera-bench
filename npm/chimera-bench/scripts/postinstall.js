@@ -20,7 +20,7 @@ void main().catch((error) => {
 });
 
 async function main() {
-  ensureFetchSupport();
+  ensureNodeRuntimeSupport();
 
   const releaseRepository = resolveReleaseRepository();
   const packageRoot = path.resolve(__dirname, "..");
@@ -88,12 +88,19 @@ function resolveReleaseRepository() {
   return customReleaseRepository;
 }
 
-function ensureFetchSupport() {
+function ensureNodeRuntimeSupport() {
+  const [majorVersionSegment] = process.versions.node.split(".");
+  const majorVersion = Number.parseInt(majorVersionSegment, 10);
+
+  if (!Number.isInteger(majorVersion) || majorVersion < 20) {
+    throw new Error("Node.js 20 or newer is required to install chimera-bench.");
+  }
+
   if (typeof fetch === "function") {
     return;
   }
 
-  throw new Error("Global fetch is unavailable. Please use Node.js 18 or newer.");
+  throw new Error("Global fetch is unavailable. Please use Node.js 20 or newer.");
 }
 
 async function readPackageVersion(packageJsonPath) {

@@ -3,6 +3,7 @@
 This npm package installs a prebuilt `chimera-bench` binary from GitHub Releases during `postinstall`.
 
 - Supported platforms: macOS and Linux (`x64`, `arm64`)
+- Requires Node.js 20+
 - Install globally: `npm i -g chimera-bench`
 - Bun global install: `bun add -g chimera-bench`
 

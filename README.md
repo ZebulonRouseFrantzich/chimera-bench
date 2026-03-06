@@ -32,6 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/ZebulonRouseFrantzich/chimera-bench
 
 Notes:
 
+- npm-based installs require Node.js 20 or newer.
 - Current binary releases target macOS (`arm64`, `x64`) and Linux glibc (`x64 baseline`, `arm64`).
 - Windows is covered in CI, but Windows release binaries are not published yet.
 - Homebrew and AUR/paru support are planned as future additions.
