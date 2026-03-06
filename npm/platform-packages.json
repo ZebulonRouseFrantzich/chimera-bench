@@ -1,0 +1,20 @@
+{
+  "platformPackages": [
+    {
+      "name": "chimera-bench-darwin-arm64",
+      "assetName": "chimera-bench-darwin-arm64"
+    },
+    {
+      "name": "chimera-bench-darwin-x64",
+      "assetName": "chimera-bench-darwin-x64"
+    },
+    {
+      "name": "chimera-bench-linux-arm64",
+      "assetName": "chimera-bench-linux-arm64"
+    },
+    {
+      "name": "chimera-bench-linux-x64-baseline",
+      "assetName": "chimera-bench-linux-x64-baseline"
+    }
+  ]
+}

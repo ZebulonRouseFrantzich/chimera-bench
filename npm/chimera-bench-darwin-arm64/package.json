@@ -1,0 +1,27 @@
+{
+  "name": "chimera-bench-darwin-arm64",
+  "version": "0.0.5",
+  "description": "macOS arm64 binary for chimera-bench",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZebulonRouseFrantzich/chimera-bench.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

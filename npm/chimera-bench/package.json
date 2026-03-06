@@ -1,24 +1,22 @@
 {
   "name": "chimera-bench",
-  "version": "0.0.3",
+  "version": "0.0.5",
   "description": "Binary-first installer shim for chimera-bench",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ZebulonRouseFrantzich/chimera-bench"
+    "url": "git+https://github.com/ZebulonRouseFrantzich/chimera-bench.git"
   },
   "bin": {
     "chimera-bench": "./bin/chimera-bench.js"
   },
   "files": [
     "bin/",
-    "scripts/",
     "LICENSE",
     "README.md"
   ],
   "scripts": {
-    "prepack": "node ./scripts/sync-root-publish-files.js",
-    "postinstall": "node ./scripts/postinstall.js"
+    "prepack": "node ./scripts/sync-root-publish-files.js"
   },
   "publishConfig": {
     "access": "public"
@@ -33,5 +31,11 @@
   "cpu": [
     "x64",
     "arm64"
-  ]
+  ],
+  "optionalDependencies": {
+    "chimera-bench-darwin-arm64": "0.0.5",
+    "chimera-bench-darwin-x64": "0.0.5",
+    "chimera-bench-linux-arm64": "0.0.5",
+    "chimera-bench-linux-x64-baseline": "0.0.5"
+  }
 }

@@ -1,6 +1,62 @@
 #!/usr/bin/env bun
 
-import { main } from "../src/cli.ts";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const exitCode = await main(process.argv.slice(2));
-process.exit(exitCode);
+const REPO_ROOT = resolve(fileURLToPath(new URL("../", import.meta.url)));
+const NODE_MODULES_PATH = join(REPO_ROOT, "node_modules");
+
+if (!existsSync(NODE_MODULES_PATH)) {
+  printInstallGuidance("local dependencies are not installed (missing node_modules).");
+  process.exit(1);
+}
+
+try {
+  const { main } = await import("../src/cli.ts");
+  const exitCode = await main(process.argv.slice(2));
+  process.exit(exitCode);
+} catch (error) {
+  if (isLikelyMissingDependencyError(error)) {
+    printInstallGuidance(getErrorMessage(error));
+    process.exit(1);
+  }
+
+  throw error;
+}
+
+function isLikelyMissingDependencyError(error: unknown): boolean {
+  const code = isRecord(error) ? error.code : null;
+  if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
+    return true;
+  }
+
+  const message = getErrorMessage(error);
+  return (
+    message.includes("Cannot find module") ||
+    message.includes("Cannot resolve module") ||
+    message.includes("Module not found")
+  );
+}
+
+function printInstallGuidance(reason: string): void {
+  console.warn(`[chimera-bench] ${reason}`);
+  console.warn(
+    "[chimera-bench] local dev CLI did not start. Run `just install` in the repository root and try again.",
+  );
+  console.warn(
+    "[chimera-bench] release binary access is explicit-only via `chimera-bench-release`.",
+  );
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}

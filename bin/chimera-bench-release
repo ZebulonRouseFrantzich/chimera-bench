@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+release_bin="${CHIMERA_BENCH_RELEASE_BIN:-$HOME/.chimera-bench/bin/chimera-bench}"
+
+if [[ ! -x "$release_bin" ]]; then
+  echo "chimera-bench-release: release binary not found at $release_bin" >&2
+  echo "Install a release binary first (for example: curl -fsSL https://raw.githubusercontent.com/ZebulonRouseFrantzich/chimera-bench/main/install | bash)" >&2
+  exit 127
+fi
+
+exec "$release_bin" "$@"

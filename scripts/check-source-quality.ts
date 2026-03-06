@@ -4,13 +4,15 @@
  * This check enforces SLOC budgets (with ratcheted legacy caps) and requires
  * a leading module doc for larger source modules.
  */
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
 
 const SOURCE_MAX_SLOC = 450;
 const TEST_MAX_SLOC = 700;
 const MODULE_DOC_MIN_SLOC = 200;
+const PLATFORM_PACKAGE_BIN_MAX_BYTES = 1024 * 1024;
+const PLATFORM_PACKAGE_MANIFEST_PATH = "npm/platform-packages.json";
 
 const LEGACY_MAX_SLOC: Readonly<Record<string, number>> = {};
 
@@ -63,6 +65,7 @@ async function main(): Promise<void> {
 
   issues.push(...collectLegacyCapMaintenanceIssues(fileSet, slocByPath));
   issues.push(...collectFlatSplitModuleIssues(fileSet));
+  issues.push(...(await collectPlatformPackageBinaryIssues()));
 
   if (issues.length > 0) {
     console.error("[chimera-bench] Source quality checks failed:");
@@ -244,6 +247,80 @@ function collectFlatSplitModuleIssues(fileSet: ReadonlySet<string>): QualityIssu
   }
 
   return issues;
+}
+
+async function collectPlatformPackageBinaryIssues(): Promise<QualityIssue[]> {
+  const issues: QualityIssue[] = [];
+  const binaryPaths = await loadPlatformPackageBinaryPaths();
+
+  for (const binaryPath of binaryPaths) {
+    try {
+      const fileStats = await stat(binaryPath);
+      if (!fileStats.isFile()) {
+        issues.push({
+          path: binaryPath,
+          message: "Expected a tracked placeholder binary file.",
+        });
+        continue;
+      }
+
+      if (fileStats.size > PLATFORM_PACKAGE_BIN_MAX_BYTES) {
+        issues.push({
+          path: binaryPath,
+          message:
+            `File size ${fileStats.size} exceeds ${PLATFORM_PACKAGE_BIN_MAX_BYTES}. ` +
+            "Do not commit release binaries; stage publish artifacts in dist/npm-staging instead.",
+        });
+      }
+    } catch (error) {
+      if (isNodeErrorWithCode(error, "ENOENT")) {
+        issues.push({
+          path: binaryPath,
+          message: "Missing platform package placeholder binary file.",
+        });
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  return issues;
+}
+
+async function loadPlatformPackageBinaryPaths(): Promise<readonly string[]> {
+  const rawManifest = await readFile(PLATFORM_PACKAGE_MANIFEST_PATH, "utf8");
+  const parsedManifest = JSON.parse(rawManifest) as {
+    platformPackages?: unknown;
+  };
+
+  if (!Array.isArray(parsedManifest.platformPackages) || parsedManifest.platformPackages.length === 0) {
+    throw new Error(
+      `${PLATFORM_PACKAGE_MANIFEST_PATH} is missing a non-empty platformPackages array.`,
+    );
+  }
+
+  const binaryPaths: string[] = [];
+  for (const candidate of parsedManifest.platformPackages) {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      typeof (candidate as { name?: unknown }).name !== "string"
+    ) {
+      throw new Error(
+        `${PLATFORM_PACKAGE_MANIFEST_PATH} has an invalid platform package entry (expected { name: string }).`,
+      );
+    }
+
+    const packageName = (candidate as { name: string }).name.trim();
+    if (packageName.length === 0) {
+      throw new Error(`${PLATFORM_PACKAGE_MANIFEST_PATH} contains an empty package name.`);
+    }
+
+    binaryPaths.push(`npm/${packageName}/bin/chimera-bench`);
+  }
+
+  return binaryPaths;
 }
 
 async function listProjectTypeScriptFiles(): Promise<string[]> {

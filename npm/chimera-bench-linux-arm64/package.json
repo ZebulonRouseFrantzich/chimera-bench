@@ -1,0 +1,27 @@
+{
+  "name": "chimera-bench-linux-arm64",
+  "version": "0.0.5",
+  "description": "Linux arm64 binary for chimera-bench",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZebulonRouseFrantzich/chimera-bench.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
