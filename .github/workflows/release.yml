@@ -78,17 +78,14 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Ensure npm token is configured
+      - name: Ensure npm supports trusted publishing
         run: |
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "::error::Missing NPM_TOKEN secret. Configure NPM_TOKEN to publish the chimera-bench npm package."
-            exit 1
-          fi
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm install -g npm@^11.5.1
+          node --version
+          npm --version
 
       - name: Sync npm package version
         run: |
@@ -104,5 +101,4 @@ jobs:
         run: npm publish --access public
         working-directory: npm/chimera-bench
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
