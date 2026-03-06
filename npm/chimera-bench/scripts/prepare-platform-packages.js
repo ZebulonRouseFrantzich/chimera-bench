@@ -3,7 +3,7 @@
 "use strict";
 
 const { createHash } = require("node:crypto");
-const { createReadStream } = require("node:fs");
+const { createReadStream, readFileSync } = require("node:fs");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
@@ -15,30 +15,24 @@ const MAX_BINARY_SIZE_BYTES = 250 * 1024 * 1024;
 const mainPackageDirectory = path.resolve(__dirname, "..");
 const repositoryRoot = path.resolve(mainPackageDirectory, "../..");
 const releaseArtifactsDirectory = path.join(repositoryRoot, "dist", "release");
+const npmStagingRootDirectory = path.join(repositoryRoot, "dist", "npm-staging");
 const rootLicensePath = path.join(repositoryRoot, "LICENSE");
+const rootReadmePath = path.join(repositoryRoot, "README.md");
+const platformPackagesManifestPath = path.join(repositoryRoot, "npm", "platform-packages.json");
 
-const platformPackages = [
-  {
-    name: "chimera-bench-darwin-arm64",
-    assetName: "chimera-bench-darwin-arm64",
-    directory: path.join(repositoryRoot, "npm", "chimera-bench-darwin-arm64"),
-  },
-  {
-    name: "chimera-bench-darwin-x64",
-    assetName: "chimera-bench-darwin-x64",
-    directory: path.join(repositoryRoot, "npm", "chimera-bench-darwin-x64"),
-  },
-  {
-    name: "chimera-bench-linux-arm64",
-    assetName: "chimera-bench-linux-arm64",
-    directory: path.join(repositoryRoot, "npm", "chimera-bench-linux-arm64"),
-  },
-  {
-    name: "chimera-bench-linux-x64-baseline",
-    assetName: "chimera-bench-linux-x64-baseline",
-    directory: path.join(repositoryRoot, "npm", "chimera-bench-linux-x64-baseline"),
-  },
-];
+const mainShimPackage = {
+  name: "chimera-bench",
+  sourceDirectory: path.join(repositoryRoot, "npm", "chimera-bench"),
+  stagingDirectory: path.join(npmStagingRootDirectory, "chimera-bench"),
+};
+
+const platformPackages = loadPlatformPackageDefinitions().map((platformPackage) => {
+  return {
+    ...platformPackage,
+    sourceDirectory: path.join(repositoryRoot, "npm", platformPackage.name),
+    stagingDirectory: path.join(npmStagingRootDirectory, platformPackage.name),
+  };
+});
 
 void main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
@@ -50,7 +44,15 @@ async function main() {
   const releaseVersion = resolveReleaseVersion();
   const artifactChecksums = await readArtifactChecksums();
 
-  await prepareMainPackage(releaseVersion);
+  await fs.rm(npmStagingRootDirectory, {
+    recursive: true,
+    force: true,
+  });
+  await fs.mkdir(npmStagingRootDirectory, {
+    recursive: true,
+  });
+
+  await prepareMainShimPackage(releaseVersion);
 
   for (const platformPackage of platformPackages) {
     await preparePlatformPackage(platformPackage, releaseVersion, artifactChecksums);
@@ -59,6 +61,7 @@ async function main() {
   await verifyPreparedPackageVersions(releaseVersion);
 
   console.log(`[chimera-bench] Prepared npm packages for release ${releaseVersion}.`);
+  console.log(`[chimera-bench] Staging directory: ${npmStagingRootDirectory}`);
 }
 
 function resolveReleaseVersion() {
@@ -79,27 +82,87 @@ function resolveReleaseVersion() {
   return normalizedVersion;
 }
 
-async function prepareMainPackage(releaseVersion) {
-  const packageJsonPath = path.join(mainPackageDirectory, "package.json");
-  const packageJson = await readPackageJson(packageJsonPath);
+function loadPlatformPackageDefinitions() {
+  const rawManifest = readFileSync(platformPackagesManifestPath, "utf8");
+  const parsedManifest = JSON.parse(rawManifest);
+  const candidatePackages = parsedManifest?.platformPackages;
 
+  if (!Array.isArray(candidatePackages) || candidatePackages.length === 0) {
+    throw new Error(
+      `Invalid platform package manifest at ${platformPackagesManifestPath}: expected non-empty platformPackages array.`,
+    );
+  }
+
+  const seenPackageNames = new Set();
+  const packageDefinitions = [];
+
+  for (const candidate of candidatePackages) {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      typeof candidate.name !== "string" ||
+      typeof candidate.assetName !== "string"
+    ) {
+      throw new Error(
+        `Invalid platform package entry in ${platformPackagesManifestPath}; expected { name, assetName } strings.`,
+      );
+    }
+
+    const normalizedName = candidate.name.trim();
+    const normalizedAssetName = candidate.assetName.trim();
+    if (normalizedName.length === 0 || normalizedAssetName.length === 0) {
+      throw new Error(
+        `Invalid platform package entry in ${platformPackagesManifestPath}; name and assetName must be non-empty.`,
+      );
+    }
+
+    if (seenPackageNames.has(normalizedName)) {
+      throw new Error(`Duplicate platform package name '${normalizedName}' in ${platformPackagesManifestPath}.`);
+    }
+
+    seenPackageNames.add(normalizedName);
+    packageDefinitions.push({
+      name: normalizedName,
+      assetName: normalizedAssetName,
+    });
+  }
+
+  return packageDefinitions;
+}
+
+async function prepareMainShimPackage(releaseVersion) {
+  await stagePackageSkeleton(mainShimPackage.sourceDirectory, mainShimPackage.stagingDirectory, [
+    "bin",
+    "scripts",
+    "package.json",
+  ]);
+
+  const packageJsonPath = path.join(mainShimPackage.stagingDirectory, "package.json");
+  const packageJson = await readPackageJson(packageJsonPath);
   packageJson.version = releaseVersion;
   packageJson.optionalDependencies = Object.fromEntries(
     platformPackages.map((platformPackage) => [platformPackage.name, releaseVersion]),
   );
-
   await writePackageJson(packageJsonPath, packageJson);
+
+  await fs.copyFile(rootReadmePath, path.join(mainShimPackage.stagingDirectory, "README.md"));
+  await fs.copyFile(rootLicensePath, path.join(mainShimPackage.stagingDirectory, "LICENSE"));
 }
 
 async function preparePlatformPackage(platformPackage, releaseVersion, artifactChecksums) {
-  const packageJsonPath = path.join(platformPackage.directory, "package.json");
-  const platformPackageJson = await readPackageJson(packageJsonPath);
+  await stagePackageSkeleton(platformPackage.sourceDirectory, platformPackage.stagingDirectory, [
+    "package.json",
+    "README.md",
+    "LICENSE",
+  ]);
 
+  const packageJsonPath = path.join(platformPackage.stagingDirectory, "package.json");
+  const platformPackageJson = await readPackageJson(packageJsonPath);
   platformPackageJson.version = releaseVersion;
   await writePackageJson(packageJsonPath, platformPackageJson);
 
   const sourceBinaryPath = path.join(releaseArtifactsDirectory, platformPackage.assetName);
-  const targetBinaryPath = path.join(platformPackage.directory, "bin", "chimera-bench");
+  const targetBinaryPath = path.join(platformPackage.stagingDirectory, "bin", "chimera-bench");
 
   await assertFileExists(sourceBinaryPath, platformPackage.assetName);
   await validateArtifactBinary(sourceBinaryPath, platformPackage.assetName);
@@ -111,16 +174,52 @@ async function preparePlatformPackage(platformPackage, releaseVersion, artifactC
   await fs.copyFile(sourceBinaryPath, targetBinaryPath);
   await fs.chmod(targetBinaryPath, 0o755);
 
-  await fs.copyFile(rootLicensePath, path.join(platformPackage.directory, "LICENSE"));
+  await fs.copyFile(rootLicensePath, path.join(platformPackage.stagingDirectory, "LICENSE"));
+}
+
+async function stagePackageSkeleton(sourceDirectory, stagingDirectory, entries) {
+  await fs.mkdir(stagingDirectory, {
+    recursive: true,
+  });
+
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceDirectory, entry);
+    const targetPath = path.join(stagingDirectory, entry);
+    await assertFileExists(sourcePath, `${entry} in ${sourceDirectory}`);
+
+    const sourceStats = await fs.lstat(sourcePath);
+    if (sourceStats.isSymbolicLink()) {
+      throw new Error(
+        `Refusing to stage symbolic link '${sourcePath}'. Package skeleton inputs must be regular files or directories.`,
+      );
+    }
+
+    if (sourceStats.isDirectory()) {
+      await fs.cp(sourcePath, targetPath, {
+        recursive: true,
+        force: true,
+        dereference: false,
+        verbatimSymlinks: true,
+      });
+      continue;
+    }
+
+    const targetParentDirectory = path.dirname(targetPath);
+    if (targetParentDirectory !== stagingDirectory) {
+      await fs.mkdir(targetParentDirectory, {
+        recursive: true,
+      });
+    }
+
+    await fs.copyFile(sourcePath, targetPath);
+  }
 }
 
 async function assertFileExists(filePath, label) {
   try {
     await fs.access(filePath);
   } catch {
-    throw new Error(
-      `Missing release artifact '${label}' at ${filePath}. Build release artifacts first.`,
-    );
+    throw new Error(`Missing required file '${label}' at ${filePath}.`);
   }
 }
 
@@ -145,15 +244,11 @@ async function readArtifactChecksums() {
 async function validateArtifactBinary(filePath, label) {
   const stats = await fs.stat(filePath);
   if (stats.size < MIN_BINARY_SIZE_BYTES) {
-    throw new Error(
-      `Release artifact '${label}' is unexpectedly small (${stats.size} bytes).`,
-    );
+    throw new Error(`Release artifact '${label}' is unexpectedly small (${stats.size} bytes).`);
   }
 
   if (stats.size > MAX_BINARY_SIZE_BYTES) {
-    throw new Error(
-      `Release artifact '${label}' is unexpectedly large (${stats.size} bytes).`,
-    );
+    throw new Error(`Release artifact '${label}' is unexpectedly large (${stats.size} bytes).`);
   }
 }
 
@@ -189,7 +284,7 @@ async function computeSha256(filePath) {
 }
 
 async function verifyPreparedPackageVersions(releaseVersion) {
-  const mainPackageJson = await readPackageJson(path.join(mainPackageDirectory, "package.json"));
+  const mainPackageJson = await readPackageJson(path.join(mainShimPackage.stagingDirectory, "package.json"));
   if (mainPackageJson.version !== releaseVersion) {
     throw new Error(
       `Main npm shim package version '${mainPackageJson.version}' does not match release version '${releaseVersion}'.`,
@@ -205,7 +300,7 @@ async function verifyPreparedPackageVersions(releaseVersion) {
     }
 
     const platformPackageJson = await readPackageJson(
-      path.join(platformPackage.directory, "package.json"),
+      path.join(platformPackage.stagingDirectory, "package.json"),
     );
     if (platformPackageJson.version !== releaseVersion) {
       throw new Error(

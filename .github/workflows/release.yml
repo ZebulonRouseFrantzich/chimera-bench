@@ -81,7 +81,9 @@ jobs:
     needs: release-artifacts
     permissions:
       contents: read
-      id-token: write
+      id-token: write # Required for npm trusted publishing OIDC auth
+    env:
+      CHIMERA_BENCH_REPOSITORY_ROOT: ${{ github.workspace }}
 
     steps:
       - name: Checkout
@@ -101,6 +103,7 @@ jobs:
 
       - name: Ensure npm supports trusted publishing
         run: |
+          # npm trusted publishing requires npm >= 11.5.1 and Node >= 22.14.
           npm install -g npm@^11.5.1
           node --version
           npm --version
@@ -112,50 +115,51 @@ jobs:
 
       - name: Pack npm package (darwin-arm64)
         run: npm pack --dry-run
-        working-directory: npm/chimera-bench-darwin-arm64
+        working-directory: dist/npm-staging/chimera-bench-darwin-arm64
 
       - name: Pack npm package (darwin-x64)
         run: npm pack --dry-run
-        working-directory: npm/chimera-bench-darwin-x64
+        working-directory: dist/npm-staging/chimera-bench-darwin-x64
 
       - name: Pack npm package (linux-arm64)
         run: npm pack --dry-run
-        working-directory: npm/chimera-bench-linux-arm64
+        working-directory: dist/npm-staging/chimera-bench-linux-arm64
 
       - name: Pack npm package (linux-x64-baseline)
         run: npm pack --dry-run
-        working-directory: npm/chimera-bench-linux-x64-baseline
+        working-directory: dist/npm-staging/chimera-bench-linux-x64-baseline
 
       - name: Pack npm package (shim)
         run: npm pack --dry-run
-        working-directory: npm/chimera-bench
+        working-directory: dist/npm-staging/chimera-bench
 
       - name: Publish npm package (darwin-arm64)
+        # Trusted publishing uses OIDC from id-token permission; no npm token secret.
         run: npm publish --access public
-        working-directory: npm/chimera-bench-darwin-arm64
+        working-directory: dist/npm-staging/chimera-bench-darwin-arm64
         env:
           NPM_CONFIG_PROVENANCE: "true"
 
       - name: Publish npm package (darwin-x64)
         run: npm publish --access public
-        working-directory: npm/chimera-bench-darwin-x64
+        working-directory: dist/npm-staging/chimera-bench-darwin-x64
         env:
           NPM_CONFIG_PROVENANCE: "true"
 
       - name: Publish npm package (linux-arm64)
         run: npm publish --access public
-        working-directory: npm/chimera-bench-linux-arm64
+        working-directory: dist/npm-staging/chimera-bench-linux-arm64
         env:
           NPM_CONFIG_PROVENANCE: "true"
 
       - name: Publish npm package (linux-x64-baseline)
         run: npm publish --access public
-        working-directory: npm/chimera-bench-linux-x64-baseline
+        working-directory: dist/npm-staging/chimera-bench-linux-x64-baseline
         env:
           NPM_CONFIG_PROVENANCE: "true"
 
       - name: Publish npm package (shim)
         run: npm publish --access public
-        working-directory: npm/chimera-bench
+        working-directory: dist/npm-staging/chimera-bench
         env:
           NPM_CONFIG_PROVENANCE: "true"

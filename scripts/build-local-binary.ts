@@ -21,7 +21,7 @@ async function main(): Promise<void> {
   });
 
   const buildResult = await Bun.build({
-    entrypoints: ["./src/cli.ts"],
+    entrypoints: ["./src/cli-entry.ts"],
     compile: {
       outfile: OUTPUT_BINARY_PATH,
     },

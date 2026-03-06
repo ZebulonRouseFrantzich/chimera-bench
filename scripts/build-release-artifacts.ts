@@ -122,7 +122,7 @@ async function buildTargetArtifact(
   const outputPath = join(RELEASE_OUTPUT_DIRECTORY, target.assetName);
 
   const buildResult = await Bun.build({
-    entrypoints: ["./src/cli.ts"],
+    entrypoints: ["./src/cli-entry.ts"],
     compile: {
       target: target.compileTarget,
       outfile: outputPath,

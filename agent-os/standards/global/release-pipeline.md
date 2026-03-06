@@ -69,7 +69,12 @@ Rules:
     - `chimera-bench-linux-arm64`
     - `chimera-bench-linux-x64-baseline`
   - release workflow prepares platform package binaries from `dist/release/*`
-    before publish using `npm/chimera-bench/scripts/prepare-platform-packages.js`.
+    into `dist/npm-staging/*` before publish using
+    `npm/chimera-bench/scripts/prepare-platform-packages.js`.
+  - platform package definitions source of truth lives in
+    `npm/platform-packages.json`.
+  - do not overwrite tracked placeholder files under `npm/chimera-bench-*/bin/`
+    during publish prep.
   - npm package README and LICENSE source of truth are repo-root `README.md` and
     `LICENSE`, synced via `npm/chimera-bench/scripts/sync-root-publish-files.js`
     during `prepack`/publish.
@@ -91,6 +96,7 @@ When changing release targets, artifact names, or download URLs, update all depe
 - `npm/chimera-bench/bin/chimera-bench.js`
 - `npm/chimera-bench/scripts/prepare-platform-packages.js`
 - `npm/chimera-bench/scripts/sync-root-publish-files.js`
+- `npm/platform-packages.json`
 - user-facing install docs (`README.md`)
 
 Do not ship partial pipeline updates that break installer or npm channel compatibility.
