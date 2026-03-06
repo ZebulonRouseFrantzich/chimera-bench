@@ -23,7 +23,7 @@ describe("resolveServeConfig", () => {
     expect(config.auth.username).toBe("chimera");
     expect(config.devMode).toBe(false);
     expect(config.startupWarnings.length).toBe(1);
-    expect(config.version).toBe("0.0.1");
+    expect(config.version).toBe("0.0.3");
   });
 
   test("enables dev mode when CHIMERA_BENCH_DEV is set", async () => {

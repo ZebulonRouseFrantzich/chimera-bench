@@ -4,7 +4,7 @@
 
 A multi-ability LLM benchmark runner
 
-## Install (v0.0.1+)
+## Install (v0.0.3+)
 
 - curl installer:
 
@@ -27,7 +27,7 @@ A multi-ability LLM benchmark runner
 Optional installer version pin:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ZebulonRouseFrantzich/chimera-bench/v0.0.1/install | bash -s -- --version 0.0.1
+curl -fsSL https://raw.githubusercontent.com/ZebulonRouseFrantzich/chimera-bench/v0.0.3/install | bash -s -- --version 0.0.3
 ```
 
 Notes:

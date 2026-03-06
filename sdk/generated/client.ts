@@ -3,7 +3,7 @@
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
-export const API_VERSION = "0.0.1";
+export const API_VERSION = "0.0.3";
 
 export const operations = {
   "getDoc": {
