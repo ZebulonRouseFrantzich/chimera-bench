@@ -56,6 +56,18 @@ jobs:
         env:
           CHIMERA_BENCH_RELEASE_VERSION: ${{ github.ref_name }}
 
+      - name: Upload release artifacts for npm publish
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chimera-bench-release-artifacts
+          if-no-files-found: error
+          path: |
+            dist/release/chimera-bench-darwin-arm64
+            dist/release/chimera-bench-darwin-x64
+            dist/release/chimera-bench-linux-arm64
+            dist/release/chimera-bench-linux-x64-baseline
+            dist/release/chimera-bench-sha256sums.txt
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe # v2.4.2
         with:
@@ -81,24 +93,68 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Download release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: chimera-bench-release-artifacts
+          path: dist/release
+
       - name: Ensure npm supports trusted publishing
         run: |
           npm install -g npm@^11.5.1
           node --version
           npm --version
 
-      - name: Sync npm package version
+      - name: Prepare npm packages
         run: |
-          # npm shim package version source of truth is the release tag.
           release_version="${GITHUB_REF_NAME#v}"
-          npm version "$release_version" --no-git-tag-version --allow-same-version
-        working-directory: npm/chimera-bench
+          node ./npm/chimera-bench/scripts/prepare-platform-packages.js "$release_version"
 
-      - name: Pack npm package
+      - name: Pack npm package (darwin-arm64)
+        run: npm pack --dry-run
+        working-directory: npm/chimera-bench-darwin-arm64
+
+      - name: Pack npm package (darwin-x64)
+        run: npm pack --dry-run
+        working-directory: npm/chimera-bench-darwin-x64
+
+      - name: Pack npm package (linux-arm64)
+        run: npm pack --dry-run
+        working-directory: npm/chimera-bench-linux-arm64
+
+      - name: Pack npm package (linux-x64-baseline)
+        run: npm pack --dry-run
+        working-directory: npm/chimera-bench-linux-x64-baseline
+
+      - name: Pack npm package (shim)
         run: npm pack --dry-run
         working-directory: npm/chimera-bench
 
-      - name: Publish npm package
+      - name: Publish npm package (darwin-arm64)
+        run: npm publish --access public
+        working-directory: npm/chimera-bench-darwin-arm64
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+
+      - name: Publish npm package (darwin-x64)
+        run: npm publish --access public
+        working-directory: npm/chimera-bench-darwin-x64
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+
+      - name: Publish npm package (linux-arm64)
+        run: npm publish --access public
+        working-directory: npm/chimera-bench-linux-arm64
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+
+      - name: Publish npm package (linux-x64-baseline)
+        run: npm publish --access public
+        working-directory: npm/chimera-bench-linux-x64-baseline
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+
+      - name: Publish npm package (shim)
         run: npm publish --access public
         working-directory: npm/chimera-bench
         env:

@@ -61,7 +61,15 @@ Rules:
 
 - GitHub Releases: primary distribution source.
 - curl installer (`install`): download binary + checksum from release, validate checksum, install to user bin directory.
-- npm package (`npm/chimera-bench`): postinstall downloads exact release-tag binary and verifies checksum.
+- npm package (`npm/chimera-bench`): wrapper resolves a platform binary from
+  optional dependency packages.
+  - required optional dependency packages:
+    - `chimera-bench-darwin-arm64`
+    - `chimera-bench-darwin-x64`
+    - `chimera-bench-linux-arm64`
+    - `chimera-bench-linux-x64-baseline`
+  - release workflow prepares platform package binaries from `dist/release/*`
+    before publish using `npm/chimera-bench/scripts/prepare-platform-packages.js`.
   - npm package README and LICENSE source of truth are repo-root `README.md` and
     `LICENSE`, synced via `npm/chimera-bench/scripts/sync-root-publish-files.js`
     during `prepack`/publish.
@@ -80,7 +88,8 @@ When changing release targets, artifact names, or download URLs, update all depe
 - `.github/workflows/release.yml`
 - `scripts/build-release-artifacts.ts`
 - `install`
-- `npm/chimera-bench/scripts/postinstall.js`
+- `npm/chimera-bench/bin/chimera-bench.js`
+- `npm/chimera-bench/scripts/prepare-platform-packages.js`
 - `npm/chimera-bench/scripts/sync-root-publish-files.js`
 - user-facing install docs (`README.md`)
 

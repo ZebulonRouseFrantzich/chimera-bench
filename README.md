@@ -39,12 +39,23 @@ Notes:
 
 ## Install troubleshooting
 
-- To surface full npm postinstall logs, run `npm i -g chimera-bench --foreground-scripts`.
-- npm installs use Node's built-in `fetch`; proxy-restricted environments may require npm/node proxy configuration.
-- Custom release repositories are blocked by default. For explicit internal-testing opt-in, set:
+- Update to latest npm package:
 
   ```bash
-  CHIMERA_BENCH_ALLOW_CUSTOM_REPO=1 CHIMERA_BENCH_RELEASE_REPO=owner/repo npm i -g chimera-bench
+  npm update -g chimera-bench
+  # or
+  bun add -g chimera-bench@latest
+  ```
+
+- If your shell still points to a removed global shim path after uninstalling a
+  different install method, refresh command lookup with `hash -r` or open a new
+  shell.
+
+- Custom release repositories are blocked by default for the curl installer.
+  For explicit internal-testing opt-in, set:
+
+  ```bash
+  CHIMERA_BENCH_ALLOW_CUSTOM_REPO=1 CHIMERA_BENCH_RELEASE_REPO=owner/repo curl -fsSL https://raw.githubusercontent.com/ZebulonRouseFrantzich/chimera-bench/main/install | bash
   ```
 
 ## Nix (optional)

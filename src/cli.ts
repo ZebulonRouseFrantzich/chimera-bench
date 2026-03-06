@@ -8,21 +8,29 @@ import {
   runTargetsCommand,
   TargetsCommandUsageError,
 } from "./cli/targets-command/index.ts";
-import { ServeConfigurationError } from "./server/config.ts";
+import { resolveAppVersion, ServeConfigurationError } from "./server/config.ts";
 import { sanitizeControlCharacters } from "./server/http/sanitize.ts";
 
 function printGeneralHelp(): void {
   console.log("chimera-bench commands:");
   console.log("  serve   Start the benchmark server");
   console.log("  targets Manage SSH target profiles and SSH checks");
+  console.log("  version Print the current application version");
   console.log("  help    Show this help message");
   console.log("");
+  console.log("Use `chimera-bench --version` or `chimera-bench version` for version info.");
   console.log("Use `chimera-bench serve --help` for serve command options.");
   console.log("Use `chimera-bench targets --help` for targets subcommands.");
 }
 
 export async function main(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
+
+  if (command === "--version" || command === "-v" || command === "version") {
+    const version = await resolveAppVersion();
+    console.log(version);
+    return 0;
+  }
 
   if (!command || command === "help" || command === "--help" || command === "-h") {
     printGeneralHelp();

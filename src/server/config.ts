@@ -36,6 +36,10 @@ let cachedAppVersion: string | null = null;
 
 export class ServeConfigurationError extends Error {}
 
+export async function resolveAppVersion(): Promise<string> {
+  return await getAppVersion();
+}
+
 export async function resolveServeConfig(
   flags: ServeCliFlags,
   env: NodeJS.ProcessEnv,
@@ -46,7 +50,7 @@ export async function resolveServeConfig(
   const devMode = parseBooleanEnv(env.CHIMERA_BENCH_DEV);
   const startupWarnings: string[] = [];
   const nonLoopback = !(await isLoopbackHost(flags.hostname));
-  const appVersion = await getAppVersion();
+  const appVersion = await resolveAppVersion();
 
   if (!password) {
     startupWarnings.push(

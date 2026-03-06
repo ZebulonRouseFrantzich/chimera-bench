@@ -260,7 +260,7 @@ main() {
   fi
 
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "$tmp_dir"' EXIT
+  trap 'if [[ -n "${tmp_dir:-}" ]]; then rm -rf "${tmp_dir}"; fi' EXIT
 
   binary_path="$tmp_dir/$APP_NAME"
   checksum_path="$tmp_dir/$checksum_file"
