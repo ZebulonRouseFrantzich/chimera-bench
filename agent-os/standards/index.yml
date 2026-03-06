@@ -9,6 +9,8 @@ cli:
     description: SIGINT/SIGTERM handling and shutdown flow
 
 global:
+  release-pipeline:
+    description: Tag-driven binary release workflow, artifact contract, and distribution channel policy.
   sanitization-and-safe-errors:
     description: Shared sanitization and safe API error exposure conventions.
   source-code-size-and-documentation:

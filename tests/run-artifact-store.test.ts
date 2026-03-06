@@ -94,7 +94,8 @@ describe("RunArtifactStore", () => {
 
         const writeError = error as RunArtifactWriteError;
         expect(writeError.message).not.toContain(blockedRoot);
-        expect(writeError.logReason).toContain(blockedRoot);
+        expect(writeError.logReason).toContain("run_11111111-1111-4111-8111-111111111111");
+        expect(writeError.logReason).toContain("result.json");
       }
 
       const resultDir = join(tempDir, "run_11111111-1111-4111-8111-111111111111");
@@ -111,7 +112,8 @@ describe("RunArtifactStore", () => {
 
         const readError = error as RunArtifactReadError;
         expect(readError.message).not.toContain(tempDir);
-        expect(readError.logReason).toContain(tempDir);
+        expect(readError.logReason).toContain("run_11111111-1111-4111-8111-111111111111");
+        expect(readError.logReason).toContain("result.json");
       }
     } finally {
       rmSync(tempDir, {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   createRunConfig,
   createStarterLlamaCppPlugin,
@@ -25,7 +25,7 @@ describe("starter llama.cpp plugin process lifecycle", () => {
     );
     expect(strictKnownResult.ok).toBe(true);
     if (strictKnownResult.ok) {
-      expect(strictKnownResult.normalized.modelIdentifier).toBe(TEST_MODEL_IDENTIFIER);
+      expect(strictKnownResult.normalized.modelIdentifier).toBe(resolve(TEST_MODEL_IDENTIFIER));
     }
 
     const strictUnknownResult = await plugin.validateRunConfig(

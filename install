@@ -57,38 +57,10 @@ resolve_release_repository() {
   printf "%s" "$candidate_repository"
 }
 
-main() {
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    -v|--version)
-      if [[ -z "${2:-}" ]]; then
-        echo "Error: --version requires a value" >&2
-        exit 1
-      fi
-      REQUESTED_VERSION="$2"
-      shift 2
-      ;;
-    --no-modify-path)
-      NO_MODIFY_PATH=true
-      shift
-      ;;
-    *)
-      echo "Error: unknown option '$1'" >&2
-      usage
-      exit 1
-      ;;
-  esac
-done
-
-RELEASE_REPOSITORY="$(resolve_release_repository)"
-
 normalize_version() {
   local version="$1"
   version="${version#v}"
+
   if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
     echo "Error: invalid version '$1'. Expected semver like 0.0.1." >&2
     exit 1
@@ -236,56 +208,94 @@ configure_path() {
   esac
 }
 
-ASSET_NAME="$(detect_asset_name)"
-CHECKSUM_FILE="chimera-bench-sha256sums.txt"
+main() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -v|--version)
+        if [[ -z "${2:-}" ]]; then
+          echo "Error: --version requires a value" >&2
+          exit 1
+        fi
+        REQUESTED_VERSION="$2"
+        shift 2
+        ;;
+      --no-modify-path)
+        NO_MODIFY_PATH=true
+        shift
+        ;;
+      *)
+        echo "Error: unknown option '$1'" >&2
+        usage
+        exit 1
+        ;;
+    esac
+  done
 
-BASE_URL="https://github.com/$RELEASE_REPOSITORY/releases/latest/download"
-RELEASE_LABEL="latest"
+  RELEASE_REPOSITORY="$(resolve_release_repository)"
 
-if [[ -n "$REQUESTED_VERSION" ]]; then
-  NORMALIZED_VERSION="$(normalize_version "$REQUESTED_VERSION")"
-  BASE_URL="https://github.com/$RELEASE_REPOSITORY/releases/download/v$NORMALIZED_VERSION"
-  RELEASE_LABEL="v$NORMALIZED_VERSION"
-fi
+  local asset_name
+  local checksum_file
+  local base_url
+  local release_label
+  local normalized_version
+  local tmp_dir
+  local binary_path
+  local checksum_path
+  local expected_checksum
+  local actual_checksum
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+  asset_name="$(detect_asset_name)"
+  checksum_file="chimera-bench-sha256sums.txt"
+  base_url="https://github.com/$RELEASE_REPOSITORY/releases/latest/download"
+  release_label="latest"
 
-BINARY_PATH="$TMP_DIR/$APP_NAME"
-CHECKSUM_PATH="$TMP_DIR/$CHECKSUM_FILE"
+  if [[ -n "$REQUESTED_VERSION" ]]; then
+    normalized_version="$(normalize_version "$REQUESTED_VERSION")"
+    base_url="https://github.com/$RELEASE_REPOSITORY/releases/download/v$normalized_version"
+    release_label="v$normalized_version"
+  fi
 
-echo "Installing $APP_NAME ($RELEASE_LABEL) for asset '$ASSET_NAME'..."
-curl -fsSL "$BASE_URL/$CHECKSUM_FILE" -o "$CHECKSUM_PATH"
-curl -fsSL "$BASE_URL/$ASSET_NAME" -o "$BINARY_PATH"
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "$tmp_dir"' EXIT
 
-EXPECTED_CHECKSUM="$(awk -v asset="$ASSET_NAME" '$2 == asset { print $1 }' "$CHECKSUM_PATH")"
-if [[ -z "$EXPECTED_CHECKSUM" ]]; then
-  echo "Error: checksum entry for '$ASSET_NAME' not found in $CHECKSUM_FILE." >&2
-  exit 1
-fi
+  binary_path="$tmp_dir/$APP_NAME"
+  checksum_path="$tmp_dir/$checksum_file"
 
-ACTUAL_CHECKSUM="$(sha256_file "$BINARY_PATH")"
-if [[ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]]; then
-  echo "Error: checksum mismatch for downloaded binary." >&2
-  echo "Expected: $EXPECTED_CHECKSUM" >&2
-  echo "Actual:   $ACTUAL_CHECKSUM" >&2
-  exit 1
-fi
+  echo "Installing $APP_NAME ($release_label) for asset '$asset_name'..."
+  curl -fsSL "$base_url/$checksum_file" -o "$checksum_path"
+  curl -fsSL "$base_url/$asset_name" -o "$binary_path"
 
-mkdir -p "$INSTALL_DIR"
-install -m 755 "$BINARY_PATH" "$INSTALL_DIR/$APP_NAME"
+  expected_checksum="$(awk -v asset="$asset_name" '$2 == asset { print $1 }' "$checksum_path")"
+  if [[ -z "$expected_checksum" ]]; then
+    echo "Error: checksum entry for '$asset_name' not found in $checksum_file." >&2
+    exit 1
+  fi
 
-configure_path
+  actual_checksum="$(sha256_file "$binary_path")"
+  if [[ "$actual_checksum" != "$expected_checksum" ]]; then
+    echo "Error: checksum mismatch for downloaded binary." >&2
+    echo "Expected: $expected_checksum" >&2
+    echo "Actual:   $actual_checksum" >&2
+    exit 1
+  fi
 
-echo "Installed $APP_NAME to $INSTALL_DIR/$APP_NAME"
+  mkdir -p "$INSTALL_DIR"
+  install -m 755 "$binary_path" "$INSTALL_DIR/$APP_NAME"
 
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-  echo "Add this directory to your PATH if needed:"
-  echo "  export PATH=$INSTALL_DIR:\$PATH"
-fi
+  configure_path
 
-echo "Run '$APP_NAME help' to get started."
+  echo "Installed $APP_NAME to $INSTALL_DIR/$APP_NAME"
 
+  if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+    echo "Add this directory to your PATH if needed:"
+    echo "  export PATH=$INSTALL_DIR:\$PATH"
+  fi
+
+  echo "Run '$APP_NAME help' to get started."
 }
 
 main "$@"

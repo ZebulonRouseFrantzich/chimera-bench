@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import {
   createContext,
   createRunConfig,
@@ -25,7 +26,7 @@ describe("starter llama.cpp plugin process lifecycle", () => {
 
     expect(launchConfig.command).toBe("llama-server");
     expect(launchConfig.args).toContain("--model");
-    expect(launchConfig.args).toContain(TEST_MODEL_IDENTIFIER);
+    expect(launchConfig.args).toContain(resolve(TEST_MODEL_IDENTIFIER));
     expect(launchConfig.args).toContain("--host");
     expect(launchConfig.args).toContain("127.0.0.1");
     expect(launchConfig.args).toContain("--port");

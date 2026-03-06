@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import {
   createContext,
   createRunConfig,
@@ -161,7 +162,7 @@ describe("starter llama.cpp plugin case execution", () => {
         content: "What is 2 + 2?",
       },
     ]);
-    expect(requestBody.model).toBe(TEST_MODEL_IDENTIFIER);
+    expect(requestBody.model).toBe(resolve(TEST_MODEL_IDENTIFIER));
     expect(requestBody.stream).toBe(false);
     expect(requestBody.max_tokens).toBe(16);
     expect(requestBody.temperature).toBe(0);
