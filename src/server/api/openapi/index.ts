@@ -9,6 +9,7 @@ import {
   OpenApiGeneratorV31,
 } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
+import { SERVER_API_VERSION } from "../../version-metadata.ts";
 import {
   DeleteTargetProfileEnvelopeSchema,
   CancelRunEnvelopeSchema,
@@ -30,11 +31,7 @@ import { registerGlobalAndEnginePaths } from "./register-global-engine-paths.ts"
 import { registerRunPaths } from "./register-run-paths.ts";
 import { registerTargetPaths } from "./register-target-paths.ts";
 
-interface OpenApiInput {
-  version: string;
-}
-
-export function createOpenApiDocument(input: OpenApiInput): object {
+export function createOpenApiDocument(): object {
   const registry = new OpenAPIRegistry();
 
   const healthResponse = registry.register("HealthResponse", HealthEnvelopeSchema);
@@ -109,7 +106,7 @@ export function createOpenApiDocument(input: OpenApiInput): object {
     openapi: "3.1.0",
     info: {
       title: "chimera-bench server API",
-      version: input.version,
+      version: SERVER_API_VERSION,
     },
   });
 

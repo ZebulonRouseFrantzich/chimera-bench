@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { delimiter } from "node:path";
+import { TEST_APP_VERSION } from "./helpers/app-version.ts";
 import {
   resolveServeConfig,
   ServeConfigurationError,
@@ -23,7 +24,7 @@ describe("resolveServeConfig", () => {
     expect(config.auth.username).toBe("chimera");
     expect(config.devMode).toBe(false);
     expect(config.startupWarnings.length).toBe(1);
-    expect(config.version).toBe("0.0.3");
+    expect(config.version).toBe(TEST_APP_VERSION);
   });
 
   test("enables dev mode when CHIMERA_BENCH_DEV is set", async () => {

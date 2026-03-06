@@ -7,6 +7,7 @@ import type { ServerLogger } from "../../src/server/logging.ts";
 import type { EngineEnvironmentValidationSettings } from "../../src/server/routes/engine-routes.ts";
 import { RuntimeControl } from "../../src/server/runtime-control.ts";
 import type { BasicAuthSettings } from "../../src/server/types.ts";
+import { TEST_APP_VERSION } from "./app-version.ts";
 
 interface BuildAppInput {
   auth: BasicAuthSettings;
@@ -43,7 +44,7 @@ export function buildApp(input: BuildAppInput): {
   return {
     runtime,
     app: createApp({
-      version: "0.0.3",
+      version: TEST_APP_VERSION,
       auth: input.auth,
       corsAllowlist: input.corsAllowlist ?? [],
       runtime,

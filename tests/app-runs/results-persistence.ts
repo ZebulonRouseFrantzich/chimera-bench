@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEngineCatalog } from "../../src/server/engines/engine-catalog.ts";
 import { EngineStartFailedError } from "../../src/server/engines/engine-plugin.ts";
+import { TEST_APP_VERSION } from "../helpers/app-version.ts";
 import {
   buildApp,
   createRun,
@@ -178,7 +179,7 @@ describe("run routes", () => {
       };
 
       expect(artifact.runId).toBe(runId);
-      expect(artifact.orchestratorVersion).toBe("0.0.3");
+      expect(artifact.orchestratorVersion).toBe(TEST_APP_VERSION);
       expect(artifact.engineId).toBe("llama-cpp");
       expect(artifact.engineVersion).toBe("test");
       expect(artifact.target).toBe("local");

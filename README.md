@@ -4,7 +4,7 @@
 
 A multi-ability LLM benchmark runner
 
-## Install (v0.0.3+)
+## Install
 
 - curl installer:
 
@@ -27,7 +27,7 @@ A multi-ability LLM benchmark runner
 Optional installer version pin:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ZebulonRouseFrantzich/chimera-bench/v0.0.3/install | bash -s -- --version 0.0.3
+curl -fsSL https://raw.githubusercontent.com/ZebulonRouseFrantzich/chimera-bench/v<VERSION>/install | bash -s -- --version <VERSION>
 ```
 
 Notes:
@@ -36,6 +36,16 @@ Notes:
 - Current binary releases target macOS (`arm64`, `x64`) and Linux glibc (`x64 baseline`, `arm64`).
 - Windows is covered in CI, but Windows release binaries are not published yet.
 - Homebrew and AUR/paru support are planned as future additions.
+
+## Install troubleshooting
+
+- To surface full npm postinstall logs, run `npm i -g chimera-bench --foreground-scripts`.
+- npm installs use Node's built-in `fetch`; proxy-restricted environments may require npm/node proxy configuration.
+- Custom release repositories are blocked by default. For explicit internal-testing opt-in, set:
+
+  ```bash
+  CHIMERA_BENCH_ALLOW_CUSTOM_REPO=1 CHIMERA_BENCH_RELEASE_REPO=owner/repo npm i -g chimera-bench
+  ```
 
 ## Nix (optional)
 

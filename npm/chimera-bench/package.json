@@ -17,6 +17,7 @@
     "README.md"
   ],
   "scripts": {
+    "prepack": "node ./scripts/sync-root-publish-files.js",
     "postinstall": "node ./scripts/postinstall.js"
   },
   "publishConfig": {

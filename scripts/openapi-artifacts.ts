@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createOpenApiDocument } from "../src/server/api/openapi/index.ts";
+import { SERVER_API_VERSION } from "../src/server/version-metadata.ts";
 
 type HttpMethod =
   | "GET"
@@ -38,7 +39,6 @@ interface GeneratedArtifacts {
 }
 
 const PROJECT_ROOT_PATH = fileURLToPath(new URL("../", import.meta.url));
-const PACKAGE_JSON_PATH = new URL("../package.json", import.meta.url);
 
 export const OPENAPI_OUTPUT_PATH = new URL("../openapi/openapi.json", import.meta.url);
 export const SDK_CLIENT_OUTPUT_PATH = new URL("../sdk/generated/client.ts", import.meta.url);
@@ -55,18 +55,16 @@ const HTTP_METHOD_ORDER = [
 ] as const;
 
 export async function buildGeneratedArtifacts(): Promise<GeneratedArtifacts> {
-  const packageVersion = await readPackageVersion();
-  const openApiDocumentCandidate: unknown = createOpenApiDocument({
-    version: packageVersion,
-  });
+  const openApiDocumentCandidate: unknown = createOpenApiDocument();
   assertOpenApiDocumentLike(openApiDocumentCandidate);
 
   const openApiDocument = openApiDocumentCandidate;
+  // API version source of truth is SERVER_API_VERSION (independent from app releases).
   const openApiVersion =
     typeof openApiDocument.info?.version === "string" &&
     openApiDocument.info.version.length > 0
       ? openApiDocument.info.version
-      : packageVersion;
+      : SERVER_API_VERSION;
   const operations = extractSdkOperations(openApiDocument);
   if (operations.length === 0) {
     throw new Error("OpenAPI document did not include any operations.");
@@ -130,18 +128,6 @@ export async function readArtifactFile(fileUrl: URL): Promise<string | null> {
 
     throw error;
   }
-}
-
-async function readPackageVersion(): Promise<string> {
-  const packageJson = (await Bun.file(PACKAGE_JSON_PATH).json()) as {
-    version?: unknown;
-  };
-
-  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
-    throw new Error("package.json is missing a non-empty version string.");
-  }
-
-  return packageJson.version;
 }
 
 function extractSdkOperations(document: OpenApiDocumentLike): SdkOperation[] {
