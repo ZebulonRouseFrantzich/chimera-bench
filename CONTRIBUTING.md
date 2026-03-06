@@ -65,7 +65,7 @@ CHIMERA_BENCH_DEV=1 chimera-bench serve
 
 - `main` is the trunk branch and should stay releasable.
 - Use short-lived feature branches for regular development and merge via pull requests.
-- Create versioned releases from `main` using tags only (for example, `v0.0.1`).
+- Create versioned releases from `main` using tags only (for example, `v0.0.3`).
 - Keep git tags aligned with `package.json#version`; the release workflow enforces this.
 
 Release flow:
@@ -74,8 +74,8 @@ Release flow:
 2. Push a matching annotated tag:
 
    ```bash
-   git tag -a v0.0.1 -m "Release v0.0.1"
-   git push origin v0.0.1
+   git tag -a v0.0.3 -m "Release v0.0.3"
+   git push origin v0.0.3
    ```
 
 3. GitHub Actions publishes release binaries and the npm package automatically.

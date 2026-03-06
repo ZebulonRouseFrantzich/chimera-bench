@@ -1,6 +1,6 @@
 {
   "name": "chimera-bench",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "description": "Binary-first installer shim for chimera-bench",
   "license": "MIT",
   "repository": {
