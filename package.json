@@ -1,7 +1,10 @@
 {
   "name": "chimera-bench",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "bin": {
     "chimera-bench": "./bin/chimera-bench"
@@ -12,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "quality:check": "bun run ./scripts/check-source-quality.ts",
     "lint": "bun run typecheck && bun run quality:check",
+    "release:build": "bun run ./scripts/build-release-artifacts.ts",
     "openapi:generate": "bun run ./scripts/generate-openapi.ts",
     "sdk:generate": "bun run ./scripts/generate-sdk.ts",
     "openapi:check": "bun run ./scripts/check-openapi-drift.ts"

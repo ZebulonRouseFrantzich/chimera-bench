@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_NAME="chimera-bench"
+DEFAULT_RELEASE_REPOSITORY="ZebulonRouseFrantzich/chimera-bench"
+CUSTOM_RELEASE_REPOSITORY="${CHIMERA_BENCH_RELEASE_REPO:-}"
+ALLOW_CUSTOM_RELEASE_REPOSITORY="${CHIMERA_BENCH_ALLOW_CUSTOM_REPO:-0}"
+RELEASE_REPOSITORY="$DEFAULT_RELEASE_REPOSITORY"
+INSTALL_DIR="${CHIMERA_BENCH_INSTALL_DIR:-$HOME/.chimera-bench/bin}"
+REQUESTED_VERSION="${CHIMERA_BENCH_VERSION:-}"
+NO_MODIFY_PATH=false
+
+usage() {
+  cat <<EOF
+chimera-bench installer
+
+Usage: install [options]
+
+Options:
+  -h, --help              Show this help message
+  -v, --version <version> Install a specific version (for example: 0.0.1)
+  --no-modify-path        Do not update shell PATH configuration
+
+Environment overrides:
+  CHIMERA_BENCH_RELEASE_REPO   GitHub owner/repo (requires CHIMERA_BENCH_ALLOW_CUSTOM_REPO=1)
+  CHIMERA_BENCH_ALLOW_CUSTOM_REPO
+                              Set to 1 to allow custom GitHub owner/repo downloads
+  CHIMERA_BENCH_INSTALL_DIR    Installation directory (default: $INSTALL_DIR)
+  CHIMERA_BENCH_VERSION        Same as --version
+EOF
+}
+
+resolve_release_repository() {
+  local candidate_repository="$CUSTOM_RELEASE_REPOSITORY"
+
+  if [[ -z "$candidate_repository" ]]; then
+    printf "%s" "$DEFAULT_RELEASE_REPOSITORY"
+    return
+  fi
+
+  if [[ "$candidate_repository" == "$DEFAULT_RELEASE_REPOSITORY" ]]; then
+    printf "%s" "$DEFAULT_RELEASE_REPOSITORY"
+    return
+  fi
+
+  if [[ "$ALLOW_CUSTOM_RELEASE_REPOSITORY" != "1" ]]; then
+    echo "Error: refusing custom release repository '$candidate_repository'." >&2
+    echo "Set CHIMERA_BENCH_ALLOW_CUSTOM_REPO=1 to opt in to non-default download sources." >&2
+    exit 1
+  fi
+
+  if [[ ! "$candidate_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    echo "Error: invalid CHIMERA_BENCH_RELEASE_REPO '$candidate_repository'. Expected owner/repo." >&2
+    exit 1
+  fi
+
+  printf "%s" "$candidate_repository"
+}
+
+normalize_version() {
+  local version="$1"
+  version="${version#v}"
+
+  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+    echo "Error: invalid version '$1'. Expected semver like 0.0.1." >&2
+    exit 1
+  fi
+
+  printf "%s" "$version"
+}
+
+is_musl_linux() {
+  if [[ -f /etc/alpine-release ]]; then
+    return 0
+  fi
+
+  if command -v ldd >/dev/null 2>&1; then
+    if ldd --version 2>&1 | grep -qi musl; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+detect_asset_name() {
+  local raw_os
+  local raw_arch
+  local os
+  local arch
+
+  raw_os="$(uname -s)"
+  raw_arch="$(uname -m)"
+
+  case "$raw_os" in
+    Darwin)
+      os="darwin"
+      ;;
+    Linux)
+      os="linux"
+      ;;
+    *)
+      echo "Error: unsupported OS '$raw_os'." >&2
+      exit 1
+      ;;
+  esac
+
+  case "$raw_arch" in
+    x86_64|amd64)
+      arch="x64"
+      ;;
+    arm64|aarch64)
+      arch="arm64"
+      ;;
+    *)
+      echo "Error: unsupported architecture '$raw_arch'." >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "$os" == "linux" ]] && is_musl_linux; then
+    echo "Error: musl-based Linux is not yet supported by this installer." >&2
+    echo "Please use a glibc-based distro or build from source." >&2
+    exit 1
+  fi
+
+  case "$os-$arch" in
+    darwin-arm64)
+      printf "chimera-bench-darwin-arm64"
+      ;;
+    darwin-x64)
+      printf "chimera-bench-darwin-x64"
+      ;;
+    linux-arm64)
+      printf "chimera-bench-linux-arm64"
+      ;;
+    linux-x64)
+      printf "chimera-bench-linux-x64-baseline"
+      ;;
+    *)
+      echo "Error: unsupported platform '$os-$arch'." >&2
+      exit 1
+      ;;
+  esac
+}
+
+sha256_file() {
+  local path="$1"
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{ print $1 }'
+    return
+  fi
+
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{ print $1 }'
+    return
+  fi
+
+  echo "Error: neither sha256sum nor shasum is available for checksum validation." >&2
+  exit 1
+}
+
+append_path_command() {
+  local config_file="$1"
+  local command="$2"
+
+  if grep -Fqx "$command" "$config_file"; then
+    return
+  fi
+
+  {
+    echo ""
+    echo "# chimera-bench"
+    echo "$command"
+  } >> "$config_file"
+}
+
+configure_path() {
+  if [[ "$NO_MODIFY_PATH" == "true" ]]; then
+    return
+  fi
+
+  if [[ ":$PATH:" == *":$INSTALL_DIR:"* ]]; then
+    return
+  fi
+
+  local shell_name
+  shell_name="$(basename "${SHELL:-bash}")"
+
+  case "$shell_name" in
+    fish)
+      local config_file="$HOME/.config/fish/config.fish"
+      mkdir -p "$(dirname "$config_file")"
+      touch "$config_file"
+      append_path_command "$config_file" "fish_add_path $INSTALL_DIR"
+      ;;
+    zsh)
+      local config_file="${ZDOTDIR:-$HOME}/.zshrc"
+      touch "$config_file"
+      append_path_command "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+      ;;
+    *)
+      local config_file="$HOME/.bashrc"
+      touch "$config_file"
+      append_path_command "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+      ;;
+  esac
+}
+
+main() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -v|--version)
+        if [[ -z "${2:-}" ]]; then
+          echo "Error: --version requires a value" >&2
+          exit 1
+        fi
+        REQUESTED_VERSION="$2"
+        shift 2
+        ;;
+      --no-modify-path)
+        NO_MODIFY_PATH=true
+        shift
+        ;;
+      *)
+        echo "Error: unknown option '$1'" >&2
+        usage
+        exit 1
+        ;;
+    esac
+  done
+
+  RELEASE_REPOSITORY="$(resolve_release_repository)"
+
+  local asset_name
+  local checksum_file
+  local base_url
+  local release_label
+  local normalized_version
+  local tmp_dir
+  local binary_path
+  local checksum_path
+  local expected_checksum
+  local actual_checksum
+
+  asset_name="$(detect_asset_name)"
+  checksum_file="chimera-bench-sha256sums.txt"
+  base_url="https://github.com/$RELEASE_REPOSITORY/releases/latest/download"
+  release_label="latest"
+
+  if [[ -n "$REQUESTED_VERSION" ]]; then
+    normalized_version="$(normalize_version "$REQUESTED_VERSION")"
+    base_url="https://github.com/$RELEASE_REPOSITORY/releases/download/v$normalized_version"
+    release_label="v$normalized_version"
+  fi
+
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "$tmp_dir"' EXIT
+
+  binary_path="$tmp_dir/$APP_NAME"
+  checksum_path="$tmp_dir/$checksum_file"
+
+  echo "Installing $APP_NAME ($release_label) for asset '$asset_name'..."
+  curl -fsSL "$base_url/$checksum_file" -o "$checksum_path"
+  curl -fsSL "$base_url/$asset_name" -o "$binary_path"
+
+  expected_checksum="$(awk -v asset="$asset_name" '$2 == asset { print $1 }' "$checksum_path")"
+  if [[ -z "$expected_checksum" ]]; then
+    echo "Error: checksum entry for '$asset_name' not found in $checksum_file." >&2
+    exit 1
+  fi
+
+  actual_checksum="$(sha256_file "$binary_path")"
+  if [[ "$actual_checksum" != "$expected_checksum" ]]; then
+    echo "Error: checksum mismatch for downloaded binary." >&2
+    echo "Expected: $expected_checksum" >&2
+    echo "Actual:   $actual_checksum" >&2
+    exit 1
+  fi
+
+  mkdir -p "$INSTALL_DIR"
+  install -m 755 "$binary_path" "$INSTALL_DIR/$APP_NAME"
+
+  configure_path
+
+  echo "Installed $APP_NAME to $INSTALL_DIR/$APP_NAME"
+
+  if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+    echo "Add this directory to your PATH if needed:"
+    echo "  export PATH=$INSTALL_DIR:\$PATH"
+  fi
+
+  echo "Run '$APP_NAME help' to get started."
+}
+
+main "$@"

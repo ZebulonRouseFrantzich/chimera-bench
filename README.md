@@ -4,6 +4,39 @@
 
 A multi-ability LLM benchmark runner
 
+## Install (v0.0.1+)
+
+- curl installer:
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/ZebulonRouseFrantzich/chimera-bench/main/install | bash
+  ```
+
+- npm global install:
+
+  ```bash
+  npm i -g chimera-bench
+  ```
+
+- bun global install:
+
+  ```bash
+  bun add -g chimera-bench
+  ```
+
+Optional installer version pin:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZebulonRouseFrantzich/chimera-bench/v0.0.1/install | bash -s -- --version 0.0.1
+```
+
+Notes:
+
+- npm-based installs require Node.js 20 or newer.
+- Current binary releases target macOS (`arm64`, `x64`) and Linux glibc (`x64 baseline`, `arm64`).
+- Windows is covered in CI, but Windows release binaries are not published yet.
+- Homebrew and AUR/paru support are planned as future additions.
+
 ## Nix (optional)
 
 This repo includes a Nix flake for a reproducible dev shell.

@@ -1,6 +1,6 @@
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createApp } from "../../src/server/app.ts";
 import type { EngineCatalog } from "../../src/server/engines/engine-catalog.ts";
 import type { ServerLogger } from "../../src/server/logging.ts";
@@ -43,7 +43,7 @@ export function buildApp(input: BuildAppInput): {
   return {
     runtime,
     app: createApp({
-      version: "0.1.0",
+      version: "0.0.1",
       auth: input.auth,
       corsAllowlist: input.corsAllowlist ?? [],
       runtime,
@@ -131,5 +131,8 @@ function ensureTestModelFixture(): void {
     return;
   }
 
+  mkdirSync(dirname(TEST_MODEL_IDENTIFIER), {
+    recursive: true,
+  });
   writeFileSync(TEST_MODEL_IDENTIFIER, "fixture");
 }

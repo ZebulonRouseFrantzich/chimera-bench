@@ -80,38 +80,47 @@ describe("RunArtifactStore", () => {
 
   test("returns client-safe errors while preserving detailed log reasons", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "chimera-artifact-store-"));
+    const runId = "run_11111111-1111-4111-8111-111111111111";
     const blockedRoot = join(tempDir, "blocked");
     writeFileSync(blockedRoot, "blocked");
 
     try {
-      const store = new RunArtifactStore(blockedRoot);
+      const writeStore = new RunArtifactStore(blockedRoot);
 
       try {
-        await store.writeResult("run_11111111-1111-4111-8111-111111111111", {});
+        await writeStore.writeResult(runId, {});
         throw new Error("Expected writeResult to fail for blocked root.");
       } catch (error) {
         expect(error).toBeInstanceOf(RunArtifactWriteError);
 
         const writeError = error as RunArtifactWriteError;
         expect(writeError.message).not.toContain(blockedRoot);
-        expect(writeError.logReason).toContain(blockedRoot);
+        expect(writeError.logReason).toContain(runId);
+        expect(writeError.logReason).toContain("result.json");
       }
 
-      const resultDir = join(tempDir, "run_11111111-1111-4111-8111-111111111111");
+      const readRoot = join(tempDir, "read-root");
+      mkdirSync(readRoot, {
+        recursive: true,
+      });
+
+      const readStore = new RunArtifactStore(readRoot);
+      const resultDir = join(readRoot, runId);
       mkdirSync(resultDir, {
         recursive: true,
       });
       writeFileSync(join(resultDir, "result.json"), "{not-json", "utf8");
 
       try {
-        await store.readResult("run_11111111-1111-4111-8111-111111111111");
+        await readStore.readResult(runId);
         throw new Error("Expected readResult to fail for invalid JSON.");
       } catch (error) {
         expect(error).toBeInstanceOf(RunArtifactReadError);
 
         const readError = error as RunArtifactReadError;
         expect(readError.message).not.toContain(tempDir);
-        expect(readError.logReason).toContain(tempDir);
+        expect(readError.logReason).toContain(runId);
+        expect(readError.logReason).toContain("result.json");
       }
     } finally {
       rmSync(tempDir, {

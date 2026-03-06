@@ -3,7 +3,8 @@ import type {
   SpawnOptionsWithoutStdio,
 } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { PassThrough } from "node:stream";
 import type {
   EngineLaunchConfig,
@@ -136,6 +137,9 @@ function ensureTestModelFixture(): void {
     return;
   }
 
+  mkdirSync(dirname(TEST_MODEL_IDENTIFIER), {
+    recursive: true,
+  });
   writeFileSync(TEST_MODEL_IDENTIFIER, "fixture");
 }
 
