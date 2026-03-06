@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { TEST_APP_VERSION } from "./helpers/app-version.ts";
 import { buildApp } from "./helpers/app-fixture.ts";
 
 describe("global routes", () => {
@@ -16,7 +17,7 @@ describe("global routes", () => {
     const payload = await response.json();
     expect(payload.success).toBe(true);
     expect(payload.data.healthy).toBe(true);
-    expect(payload.data.version).toBe("0.0.3");
+    expect(payload.data.version).toBe(TEST_APP_VERSION);
     expect(typeof payload.meta.requestId).toBe("string");
     expect(response.headers.get("X-Request-Id")).toBe(payload.meta.requestId);
   });

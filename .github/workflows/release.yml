@@ -89,6 +89,7 @@ jobs:
 
       - name: Sync npm package version
         run: |
+          # npm shim package version source of truth is the release tag.
           release_version="${GITHUB_REF_NAME#v}"
           npm version "$release_version" --no-git-tag-version --allow-same-version
         working-directory: npm/chimera-bench

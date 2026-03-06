@@ -43,9 +43,7 @@ interface AppOptions {
 export function createApp(options: AppOptions): Hono {
   const app = new Hono();
   const logger = options.logger ?? DEFAULT_SERVER_LOGGER;
-  const openApiDocument = createOpenApiDocument({
-    version: options.version,
-  });
+  const openApiDocument = createOpenApiDocument();
   const targetProfiles = new TargetProfileStore(options.targetProfilesRootDir);
   const engines =
     options.engines ?? createDefaultEngineCatalog(options.modelRoots ?? [], targetProfiles);

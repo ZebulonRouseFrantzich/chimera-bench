@@ -10,13 +10,16 @@ Use a tag-driven, binary-first release pipeline where GitHub Releases are the so
 
 ## Version alignment
 
+- Application release version source of truth is root `package.json#version`.
 - Keep git tag version aligned with root `package.json#version`.
 - The release workflow must fail when tag and `package.json` versions do not match.
-- Keep `npm/chimera-bench/package.json#version` aligned with the same release version before publishing.
-- Version bumps require regenerating and committing:
-  - `openapi/openapi.json`
-  - `sdk/generated/client.ts`
-  - `sdk/generated/index.ts`
+- Keep `npm/chimera-bench/package.json#version` aligned to the release tag in CI
+  (the release workflow syncs shim version before publish).
+- API contract version source of truth is `SERVER_API_VERSION` in
+  `src/server/version-metadata.ts`, which follows semver independently from app
+  release cadence.
+- App-only version bumps do not require OpenAPI/SDK artifact changes unless API
+  contract changes are present.
 
 ## Required release checks
 
@@ -59,6 +62,9 @@ Rules:
 - GitHub Releases: primary distribution source.
 - curl installer (`install`): download binary + checksum from release, validate checksum, install to user bin directory.
 - npm package (`npm/chimera-bench`): postinstall downloads exact release-tag binary and verifies checksum.
+  - npm package README and LICENSE source of truth are repo-root `README.md` and
+    `LICENSE`, synced via `npm/chimera-bench/scripts/sync-root-publish-files.js`
+    during `prepack`/publish.
 - Bun global install support is provided through the same npm package.
 
 ## Platform policy
@@ -75,6 +81,7 @@ When changing release targets, artifact names, or download URLs, update all depe
 - `scripts/build-release-artifacts.ts`
 - `install`
 - `npm/chimera-bench/scripts/postinstall.js`
+- `npm/chimera-bench/scripts/sync-root-publish-files.js`
 - user-facing install docs (`README.md`)
 
 Do not ship partial pipeline updates that break installer or npm channel compatibility.

@@ -9,6 +9,13 @@ import { delimiter } from "node:path";
 import { isLoopbackHost } from "./network.ts";
 import type { ServeCliFlags, ServeConfig } from "./types.ts";
 
+/**
+ * Application release version source of truth:
+ * - root package.json#version during local/runtime execution
+ * - CHIMERA_BENCH_BUILD_VERSION for compiled release binaries
+ *
+ * API contract version is tracked independently via SERVER_API_VERSION.
+ */
 declare const CHIMERA_BENCH_BUILD_VERSION: string | undefined;
 
 const DEFAULT_USERNAME = "chimera";
