@@ -178,7 +178,7 @@ describe("run routes", () => {
       };
 
       expect(artifact.runId).toBe(runId);
-      expect(artifact.orchestratorVersion).toBe("0.1.0");
+      expect(artifact.orchestratorVersion).toBe("0.0.1");
       expect(artifact.engineId).toBe("llama-cpp");
       expect(artifact.engineVersion).toBe("test");
       expect(artifact.target).toBe("local");

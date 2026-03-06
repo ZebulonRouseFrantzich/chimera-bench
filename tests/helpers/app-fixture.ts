@@ -43,7 +43,7 @@ export function buildApp(input: BuildAppInput): {
   return {
     runtime,
     app: createApp({
-      version: "0.1.0",
+      version: "0.0.1",
       auth: input.auth,
       corsAllowlist: input.corsAllowlist ?? [],
       runtime,

@@ -1,6 +1,15 @@
+/**
+ * Server configuration resolution and startup policy enforcement.
+ *
+ * This module parses CLI/environment input, validates security constraints
+ * for loopback vs non-loopback binds, and provides the normalized runtime
+ * configuration consumed by server startup.
+ */
 import { delimiter } from "node:path";
 import { isLoopbackHost } from "./network.ts";
 import type { ServeCliFlags, ServeConfig } from "./types.ts";
+
+declare const CHIMERA_BENCH_BUILD_VERSION: string | undefined;
 
 const DEFAULT_USERNAME = "chimera";
 const FALLBACK_APP_VERSION = "0.0.0";
@@ -119,6 +128,12 @@ async function getAppVersion(): Promise<string> {
     return cachedAppVersion;
   }
 
+  const buildVersion = getBuildVersion();
+  if (buildVersion) {
+    cachedAppVersion = buildVersion;
+    return buildVersion;
+  }
+
   try {
     const packageJson = (await Bun.file(PACKAGE_JSON_URL).json()) as {
       version?: unknown;
@@ -137,6 +152,15 @@ async function getAppVersion(): Promise<string> {
 
   cachedAppVersion = FALLBACK_APP_VERSION;
   return FALLBACK_APP_VERSION;
+}
+
+function getBuildVersion(): string | null {
+  if (typeof CHIMERA_BENCH_BUILD_VERSION !== "string") {
+    return null;
+  }
+
+  const normalizedVersion = CHIMERA_BENCH_BUILD_VERSION.trim();
+  return normalizedVersion.length > 0 ? normalizedVersion : null;
 }
 
 function sanitizeEnv(value: string | undefined): string | undefined {

@@ -16,7 +16,7 @@ describe("global routes", () => {
     const payload = await response.json();
     expect(payload.success).toBe(true);
     expect(payload.data.healthy).toBe(true);
-    expect(payload.data.version).toBe("0.1.0");
+    expect(payload.data.version).toBe("0.0.1");
     expect(typeof payload.meta.requestId).toBe("string");
     expect(response.headers.get("X-Request-Id")).toBe(payload.meta.requestId);
   });

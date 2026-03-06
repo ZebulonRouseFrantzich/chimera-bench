@@ -61,6 +61,35 @@ CHIMERA_BENCH_DEV=1 chimera-bench serve
 - Keep source quality checks green (`bun run lint`) and avoid increasing legacy SLOC caps.
 - Ensure the branch is up to date with the target branch before requesting review.
 
+## Branching and releases
+
+- `main` is the trunk branch and should stay releasable.
+- Use short-lived feature branches for regular development and merge via pull requests.
+- Create versioned releases from `main` using tags only (for example, `v0.0.1`).
+- Keep git tags aligned with `package.json#version`; the release workflow enforces this.
+
+Release flow:
+
+1. Update `package.json#version` on `main`.
+2. Push a matching annotated tag:
+
+   ```bash
+   git tag -a v0.0.1 -m "Release v0.0.1"
+   git push origin v0.0.1
+   ```
+
+3. GitHub Actions publishes release binaries and the npm package automatically.
+
+Release artifact names are intentionally stable across versions to make downstream packaging easier:
+
+- `chimera-bench-darwin-arm64`
+- `chimera-bench-darwin-x64`
+- `chimera-bench-linux-arm64`
+- `chimera-bench-linux-x64-baseline`
+- `chimera-bench-sha256sums.txt`
+
+For urgent patches on older versions, create a temporary `release/vX.Y` branch only when needed, cherry-pick fixes, and tag from that branch.
+
 ## CLA check (one-time)
 
 - Pull requests are gated by a CLA status check.
