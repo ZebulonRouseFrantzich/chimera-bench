@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ZebulonRouseFrantzich/chimera-bench"
+    "url": "git+https://github.com/ZebulonRouseFrantzich/chimera-bench.git"
   },
   "bin": {
     "chimera-bench": "./bin/chimera-bench.js"
