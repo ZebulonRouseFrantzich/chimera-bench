@@ -106,6 +106,7 @@ Notes:
 
 - Basic auth: `CHIMERA_SERVER_PASSWORD` enables auth; `CHIMERA_SERVER_USERNAME` defaults to `chimera`.
 - Non-loopback binds require a strong password (`CHIMERA_SERVER_PASSWORD`) and model-root confinement (`CHIMERA_MODEL_ROOTS`).
+- Filesystem workload packs can be discovered from `CHIMERA_WORKLOAD_ROOTS`.
 - CORS allowlist: `--cors <origin>` (repeatable).
 - mDNS advertisement: `--mdns` (default domain `chimera.local`, override with `--mdns-domain`).
 - Proxy mode: set `CHIMERA_SERVER_TRUST_PROXY=1` only behind a trusted reverse proxy (affects auth rate limiting).
@@ -119,7 +120,13 @@ List engines:
 curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/engines
 ```
 
-Create a run (defaults to built-in starter workload):
+List available workloads:
+
+```bash
+curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/workloads
+```
+
+Create a run (defaults to built-in `starter.v2` workload):
 
 ```bash
 curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD \

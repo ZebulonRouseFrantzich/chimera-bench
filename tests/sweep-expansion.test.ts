@@ -10,8 +10,8 @@ describe("sweep expansion", () => {
       buildSweepCaseConfigId({
         engineId: "llama-cpp",
         modelIdentifier: "/models/sample.gguf",
-        workloadId: "tuning.v0_0_1",
-        promptId: "tuning.v0_0_1.prompt-1",
+        workloadId: "tuning.v1",
+        promptId: "tuning.v1.prompt-1",
         engineArgs: ["--ctx-size", "8192"],
         requestParams: {
           invalid: () => "not-json",

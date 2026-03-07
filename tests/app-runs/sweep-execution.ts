@@ -22,7 +22,7 @@ function createSweepRequestBody(overrides: Record<string, unknown> = {}): Record
     model: {
       identifier: TEST_MODEL_IDENTIFIER,
     },
-    workloadId: "tuning.v0_0_1",
+    workloadId: "tuning.v1",
     validationMode: "permissive",
     sweep: {
       axes: {
@@ -107,7 +107,7 @@ describe("run routes", () => {
       repetitions: 1,
     };
 
-    const workload = getBuiltInWorkload("tuning.v0_0_1");
+    const workload = getBuiltInWorkload("tuning.v1");
     if (!workload) {
       throw new Error("Expected tuning workload fixture.");
     }
@@ -119,7 +119,7 @@ describe("run routes", () => {
     const expectedCases = expandSweepCases({
       engineId: "llama-cpp",
       modelIdentifier: TEST_MODEL_IDENTIFIER,
-      workloadId: "tuning.v0_0_1",
+      workloadId: "tuning.v1",
       workloadCase,
       baseServerArgs: [],
       baseRequestParams: {},
@@ -145,8 +145,8 @@ describe("run routes", () => {
     const caseConfigId = buildSweepCaseConfigId({
       engineId: "llama-cpp",
       modelIdentifier: "/models/sample.gguf",
-      workloadId: "tuning.v0_0_1",
-      promptId: "tuning.v0_0_1.prompt-1",
+      workloadId: "tuning.v1",
+      promptId: "tuning.v1.prompt-1",
       engineArgs: ["--ctx-size", "8192", "--n-gpu-layers", "33"],
       requestParams: {
         temperature: 0.8,
@@ -158,12 +158,12 @@ describe("run routes", () => {
     });
 
     expect(caseConfigId).toBe(
-      "sweep_9a400fd574783f036a8dba959220e12c2b3942f20c6d727c2fe0ba33067ed2db",
+      "sweep_438a68b1b22b9198d0ea03f29688d1bc1cbd9a5b9de57313c018759d4609370e",
     );
   });
 
   test("caseId repetition suffixes are deterministic", () => {
-    const workload = getBuiltInWorkload("tuning.v0_0_1");
+    const workload = getBuiltInWorkload("tuning.v1");
     if (!workload) {
       throw new Error("Expected tuning workload fixture.");
     }
@@ -175,7 +175,7 @@ describe("run routes", () => {
     const expanded = expandSweepCases({
       engineId: "llama-cpp",
       modelIdentifier: TEST_MODEL_IDENTIFIER,
-      workloadId: "tuning.v0_0_1",
+      workloadId: "tuning.v1",
       workloadCase,
       baseServerArgs: [],
       baseRequestParams: {},
@@ -260,7 +260,7 @@ describe("run routes", () => {
     expect(resultPayload.data.result.summary.totalCases).toBe(4);
     expect(resultPayload.data.result.cases).toHaveLength(4);
 
-    const workload = getBuiltInWorkload("tuning.v0_0_1");
+    const workload = getBuiltInWorkload("tuning.v1");
     if (!workload) {
       throw new Error("Expected tuning workload fixture.");
     }
@@ -272,7 +272,7 @@ describe("run routes", () => {
     const expectedCases = expandSweepCases({
       engineId: "llama-cpp",
       modelIdentifier: TEST_MODEL_IDENTIFIER,
-      workloadId: "tuning.v0_0_1",
+      workloadId: "tuning.v1",
       workloadCase,
       baseServerArgs: [],
       baseRequestParams: {},
@@ -384,7 +384,7 @@ describe("run routes", () => {
       repetitions: 1,
     };
 
-    const workload = getBuiltInWorkload("tuning.v0_0_1");
+    const workload = getBuiltInWorkload("tuning.v1");
     if (!workload) {
       throw new Error("Expected tuning workload fixture.");
     }
@@ -396,7 +396,7 @@ describe("run routes", () => {
     const expectedCases = expandSweepCases({
       engineId: "llama-cpp",
       modelIdentifier: TEST_MODEL_IDENTIFIER,
-      workloadId: "tuning.v0_0_1",
+      workloadId: "tuning.v1",
       workloadCase,
       baseServerArgs: [],
       baseRequestParams: {},

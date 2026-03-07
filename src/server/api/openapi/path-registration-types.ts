@@ -14,11 +14,16 @@ export interface OpenApiPathSchemas {
   readonly runSummaryResponse: z.ZodTypeAny;
   readonly runResultResponse: z.ZodTypeAny;
   readonly cancelRunResponse: z.ZodTypeAny;
+  readonly workloadsResponse: z.ZodTypeAny;
+  readonly workloadDetailResponse: z.ZodTypeAny;
+  readonly workloadsReloadResponse: z.ZodTypeAny;
   readonly targetProfileResponse: z.ZodTypeAny;
   readonly targetProfilesResponse: z.ZodTypeAny;
   readonly deleteTargetProfileResponse: z.ZodTypeAny;
   readonly upsertTargetProfileRequest: z.ZodTypeAny;
   readonly runIdParams: OpenApiRouteParamsSchema;
+  readonly workloadIdParams: OpenApiRouteParamsSchema;
+  readonly workloadDetailQuery: OpenApiRouteParamsSchema;
   readonly targetProfileIdParams: OpenApiRouteParamsSchema;
   readonly errorResponse: z.ZodTypeAny;
 }

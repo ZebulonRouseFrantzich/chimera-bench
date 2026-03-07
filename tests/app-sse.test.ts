@@ -123,7 +123,7 @@ describe("SSE routes", () => {
     const decoder = new TextDecoder();
     let payload = "";
 
-    for (let attempt = 0; attempt < 8; attempt += 1) {
+    for (let attempt = 0; attempt < 16; attempt += 1) {
       const chunk = await reader.read();
       if (chunk.value) {
         payload += decoder.decode(chunk.value);

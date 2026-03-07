@@ -5,6 +5,7 @@ import {
   resolveServeConfig,
   ServeConfigurationError,
 } from "../src/server/config.ts";
+import { DEFAULT_MODEL_DIGEST_CACHE_MAX_ENTRIES } from "../src/server/runs/model-digest-service.ts";
 import type { ServeCliFlags } from "../src/server/types.ts";
 
 const DEFAULT_FLAGS: ServeCliFlags = {
@@ -115,6 +116,36 @@ describe("resolveServeConfig", () => {
     );
 
     expect(config.modelRoots).toEqual(["/models", "/other-models"]);
+  });
+
+  test("parses workload roots using path delimiter", async () => {
+    const config = await resolveServeConfig(DEFAULT_FLAGS, {
+      CHIMERA_WORKLOAD_ROOTS: ["/workloads", "/extra-workloads"].join(delimiter),
+    });
+
+    expect(config.workloadRoots).toEqual(["/workloads", "/extra-workloads"]);
+  });
+
+  test("uses default model digest cache size when env is unset", async () => {
+    const config = await resolveServeConfig(DEFAULT_FLAGS, {});
+
+    expect(config.modelDigestCacheMaxEntries).toBe(DEFAULT_MODEL_DIGEST_CACHE_MAX_ENTRIES);
+  });
+
+  test("parses model digest cache size as a non-negative integer", async () => {
+    const config = await resolveServeConfig(DEFAULT_FLAGS, {
+      CHIMERA_MODEL_DIGEST_CACHE_MAX_ENTRIES: "0",
+    });
+
+    expect(config.modelDigestCacheMaxEntries).toBe(0);
+  });
+
+  test("rejects invalid model digest cache size", async () => {
+    await expect(
+      resolveServeConfig(DEFAULT_FLAGS, {
+        CHIMERA_MODEL_DIGEST_CACHE_MAX_ENTRIES: "-1",
+      }),
+    ).rejects.toThrow("CHIMERA_MODEL_DIGEST_CACHE_MAX_ENTRIES");
   });
 
   test("enables trust proxy mode when configured", async () => {

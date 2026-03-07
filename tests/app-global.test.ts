@@ -38,5 +38,6 @@ describe("global routes", () => {
     expect(payload.paths["/global/health"]).toBeDefined();
     expect(payload.paths["/targets"]).toBeDefined();
     expect(payload.paths["/runs"]).toBeDefined();
+    expect(payload.paths["/workloads"]).toBeDefined();
   });
 });

@@ -15,6 +15,11 @@ import {
   CancelRunEnvelopeSchema,
   CreateRunEnvelopeSchema,
   CreateRunRequestSchema,
+  WorkloadDetailEnvelopeSchema,
+  WorkloadDetailQuerySchema,
+  WorkloadIdParamsSchema,
+  WorkloadsEnvelopeSchema,
+  WorkloadsReloadEnvelopeSchema,
   TargetProfileIdParamsSchema,
   TargetProfileEnvelopeSchema,
   TargetProfilesEnvelopeSchema,
@@ -30,6 +35,7 @@ import type { OpenApiRouteParamsSchema } from "./path-registration-types.ts";
 import { registerGlobalAndEnginePaths } from "./register-global-engine-paths.ts";
 import { registerRunPaths } from "./register-run-paths.ts";
 import { registerTargetPaths } from "./register-target-paths.ts";
+import { registerWorkloadPaths } from "./register-workload-paths.ts";
 
 export function createOpenApiDocument(): object {
   const registry = new OpenAPIRegistry();
@@ -44,6 +50,15 @@ export function createOpenApiDocument(): object {
   );
   const runResultResponse = registry.register("RunResultResponse", RunResultEnvelopeSchema);
   const cancelRunResponse = registry.register("CancelRunResponse", CancelRunEnvelopeSchema);
+  const workloadsResponse = registry.register("WorkloadsResponse", WorkloadsEnvelopeSchema);
+  const workloadDetailResponse = registry.register(
+    "WorkloadDetailResponse",
+    WorkloadDetailEnvelopeSchema,
+  );
+  const workloadsReloadResponse = registry.register(
+    "WorkloadsReloadResponse",
+    WorkloadsReloadEnvelopeSchema,
+  );
   const targetProfileResponse = registry.register(
     "TargetProfileResponse",
     TargetProfileEnvelopeSchema,
@@ -64,6 +79,14 @@ export function createOpenApiDocument(): object {
     registry.register("RunIdParams", RunIdParamsSchema),
     "RunIdParams",
   );
+  const workloadIdParams = asOpenApiRouteParamsSchema(
+    registry.register("WorkloadIdParams", WorkloadIdParamsSchema),
+    "WorkloadIdParams",
+  );
+  const workloadDetailQuery = asOpenApiRouteParamsSchema(
+    registry.register("WorkloadDetailQuery", WorkloadDetailQuerySchema),
+    "WorkloadDetailQuery",
+  );
   const targetProfileIdParams = asOpenApiRouteParamsSchema(
     registry.register("TargetProfileIdParams", TargetProfileIdParamsSchema),
     "TargetProfileIdParams",
@@ -78,11 +101,16 @@ export function createOpenApiDocument(): object {
     runSummaryResponse,
     runResultResponse,
     cancelRunResponse,
+    workloadsResponse,
+    workloadDetailResponse,
+    workloadsReloadResponse,
     targetProfileResponse,
     targetProfilesResponse,
     deleteTargetProfileResponse,
     upsertTargetProfileRequest,
     runIdParams,
+    workloadIdParams,
+    workloadDetailQuery,
     targetProfileIdParams,
     errorResponse,
   };
@@ -96,6 +124,10 @@ export function createOpenApiDocument(): object {
     schemas: pathSchemas,
   });
   registerRunPaths({
+    registry,
+    schemas: pathSchemas,
+  });
+  registerWorkloadPaths({
     registry,
     schemas: pathSchemas,
   });

@@ -17,7 +17,6 @@ import {
 } from "../../api/schemas.ts";
 import type { EngineCatalog } from "../../engines/engine-catalog.ts";
 import type {
-  EngineRunConfig,
   EngineRunConfigValidationResult,
 } from "../../engines/engine-plugin.ts";
 import { parseJsonBody } from "../../http/request-validation.ts";
@@ -30,6 +29,7 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../../runs/defaults.ts";
+import type { ModelDigestService } from "../../runs/model-digest-service.ts";
 import {
   computeMaxSweepAdditionalServerArgs,
   validateAndPlanSweepConfig,
@@ -42,20 +42,22 @@ import {
 import { validateSshModelIdentifier } from "../../runs/ssh-model-identifier-validation.ts";
 import type { RunArtifactStore } from "../../runs/run-artifact-store.ts";
 import { RunOrchestrator } from "../../runs/run-orchestrator/index.ts";
-import { getBuiltInWorkload } from "../../runs/starter-workload.ts";
 import type { TargetProfile } from "../../targets/target-profile.ts";
 import {
   TargetProfileNotFoundError,
   TargetProfilePersistError,
   type TargetProfileStore,
 } from "../../targets/target-profile-store.ts";
+import type { WorkloadRegistry } from "../../workloads/registry.ts";
 import {
   DEFAULT_SERVER_LOGGER,
   type ServerLogger,
 } from "../../logging.ts";
 import type { RuntimeControl } from "../../runtime-control.ts";
 import { registerRunSupplementalRoutes } from "./supplemental.ts";
+import { buildEngineRunConfig } from "./run-config.ts";
 import { buildValidationFailurePayload } from "./shared.ts";
+import { prepareRunWorkloadAndProvenance } from "./workload-preparation.ts";
 
 const RUN_CREATE_BODY_LIMIT_BYTES = 64 * 1024;
 
@@ -65,6 +67,8 @@ interface RegisterRunRoutesOptions {
   runStore: InMemoryRunStore;
   runArtifacts: RunArtifactStore;
   targetProfiles: TargetProfileStore;
+  workloads: WorkloadRegistry;
+  modelDigests: ModelDigestService;
   engines: EngineCatalog;
   logger?: ServerLogger;
 }
@@ -99,6 +103,16 @@ export function registerRunRoutes(
     }
 
     const request = normalizeCreateRunRequest(parsedBody);
+    const requestId = getOrCreateRequestId(context);
+
+    if (typeof parsedBody.workloadId !== "string") {
+      logger.info(
+        `[chimera-bench] requestId=${requestId}` +
+          " event=run.workload.default_selected" +
+          ` defaultWorkloadId=${sanitizeControlCharacters(request.workloadId)}` +
+          " requestedWorkloadId=unset",
+      );
+    }
 
     const plugin = options.engines.getById(request.engineId);
     if (!plugin) {
@@ -190,11 +204,11 @@ export function registerRunRoutes(
       });
     }
 
-    const workload = getBuiltInWorkload(request.workloadId);
-    if (!workload) {
+    const selectedWorkload = await options.workloads.getWorkload(request.workloadId);
+    if (!selectedWorkload) {
       return jsonError(context, 400, {
-        code: "VALIDATION_WORKLOAD_INVALID",
-        message: `Workload '${sanitizeControlCharacters(request.workloadId)}' is not available in this build.`,
+        code: "WORKLOAD_NOT_FOUND",
+        message: `Workload '${sanitizeControlCharacters(request.workloadId)}' was not found.`,
       });
     }
 
@@ -207,7 +221,7 @@ export function registerRunRoutes(
 
       plannedSweepCases = sweepValidation.plannedCases;
 
-      if (workload.cases.length !== 1) {
+      if (selectedWorkload.cases.length !== 1) {
         return jsonError(context, 400, {
           code: "VALIDATION_SWEEP_WORKLOAD_NOT_SUPPORTED",
           message:
@@ -255,6 +269,24 @@ export function registerRunRoutes(
     request.engine.requestParams = validationResult.normalized.requestParams;
     request.model.identifier = validationResult.normalized.modelIdentifier;
 
+    const preparation = await prepareRunWorkloadAndProvenance({
+      context,
+      requestId,
+      logger,
+      workload: selectedWorkload,
+      workloadId: request.workloadId,
+      target: request.target.type,
+      modelIdentifier: request.model.identifier,
+      modelDigests: options.modelDigests,
+    });
+    if (preparation instanceof Response) {
+      return preparation;
+    }
+
+    const preparedWorkload = preparation.workload;
+    const workloadPack = preparation.workloadPack;
+    const modelInfo = preparation.modelInfo;
+
     if (request.sweep) {
       const baseServerArgsCount = request.engine.serverArgs.length;
       const sweepMaxAdditionalServerArgs = computeMaxSweepAdditionalServerArgs(request.sweep);
@@ -281,7 +313,7 @@ export function registerRunRoutes(
 
     let sweepCases: ExpandedSweepCase[] | undefined;
     if (request.sweep) {
-      const workloadCase = workload.cases[0];
+      const workloadCase = preparedWorkload.cases[0];
       if (!workloadCase) {
         return jsonError(context, 400, {
           code: "VALIDATION_SWEEP_WORKLOAD_NOT_SUPPORTED",
@@ -347,6 +379,8 @@ export function registerRunRoutes(
         : {}),
       modelIdentifier: request.model.identifier,
       workloadId: request.workloadId,
+      workloadPack,
+      modelInfo,
       engineArgs: request.engine.serverArgs,
       ...(request.sweep && sweepCases
         ? {
@@ -361,7 +395,7 @@ export function registerRunRoutes(
             },
           }
         : {}),
-      totalCases: sweepCases?.length ?? workload.cases.length,
+      totalCases: sweepCases?.length ?? preparedWorkload.cases.length,
       caseTimeoutMs,
       runTimeoutMs,
     });
@@ -381,39 +415,21 @@ export function registerRunRoutes(
     }
 
     const runId = createRunResult.runId;
-    const requestId = getOrCreateRequestId(context);
 
     logger.info(
       `[chimera-bench] requestId=${requestId} runId=${runId} event=run.created engineId=${sanitizeControlCharacters(request.engineId)} workloadId=${sanitizeControlCharacters(request.workloadId)}`,
     );
 
-    const runConfig: EngineRunConfig = {
-      engineId: request.engineId,
-      target: request.target,
-      model: request.model,
-      workloadId: request.workloadId,
-      validationMode: request.validationMode,
-      engine: {
-        serverArgs: [...request.engine.serverArgs],
-        requestParams: {
-          ...request.engine.requestParams,
-        },
-      },
-      ...(request.sweep
-        ? {
-            sweep: request.sweep,
-          }
-        : {}),
-      timeouts: {
-        caseMs: caseTimeoutMs,
-        runMs: runTimeoutMs,
-      },
-    };
+    const runConfig = buildEngineRunConfig({
+      request,
+      caseTimeoutMs,
+      runTimeoutMs,
+    });
 
     runOrchestrator.start({
       runId,
       runConfig,
-      workload,
+      workload: preparedWorkload,
       ...(sweepCases
         ? {
             sweepCases,

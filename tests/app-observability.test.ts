@@ -85,6 +85,44 @@ describe("observability", () => {
       }),
     ).toBe(true);
   });
+
+  test("logs default workload selection when workloadId is omitted", async () => {
+    const logLines: string[] = [];
+    const { app } = buildApp({
+      auth: {
+        enabled: false,
+        username: "chimera",
+      },
+      logger: createTestLogger(logLines),
+    });
+
+    const response = await app.request("http://localhost/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        engineId: "llama-cpp",
+        target: {
+          type: "local",
+        },
+        model: {
+          identifier: TEST_MODEL_IDENTIFIER,
+        },
+      }),
+    });
+    expect(response.status).toBe(202);
+
+    expect(
+      logLines.some((line) => {
+        return (
+          line.includes("event=run.workload.default_selected") &&
+          line.includes("defaultWorkloadId=starter.v2") &&
+          line.includes("requestedWorkloadId=unset")
+        );
+      }),
+    ).toBe(true);
+  });
 });
 
 function createTestLogger(logLines: string[]): {

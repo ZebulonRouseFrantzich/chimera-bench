@@ -15,6 +15,8 @@ interface BuildAppInput {
   devMode?: boolean;
   logger?: ServerLogger;
   modelRoots?: string[];
+  workloadRoots?: string[];
+  modelDigestCacheMaxEntries?: number;
   engines?: EngineCatalog;
   engineEnvironmentValidation?: EngineEnvironmentValidationSettings;
   runArtifactsRootDir?: string;
@@ -62,6 +64,16 @@ export function buildApp(input: BuildAppInput): {
       ...(input.modelRoots
         ? {
             modelRoots: input.modelRoots,
+          }
+        : {}),
+      ...(input.workloadRoots
+        ? {
+            workloadRoots: input.workloadRoots,
+          }
+        : {}),
+      ...(typeof input.modelDigestCacheMaxEntries === "number"
+        ? {
+            modelDigestCacheMaxEntries: input.modelDigestCacheMaxEntries,
           }
         : {}),
       ...(input.engineEnvironmentValidation

@@ -14,14 +14,29 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../runs/defaults.ts";
+import { DEFAULT_BUILT_IN_WORKLOAD_ID } from "../runs/starter-workload.ts";
 import {
   TargetProfileIdSchema as TargetProfileIdentifierSchema,
   TargetProfileSchema as TargetProfileModelSchema,
 } from "../targets/target-profile.ts";
 
+export {
+  WorkloadDetailDataSchema,
+  WorkloadDetailEnvelopeSchema,
+  WorkloadDetailQuerySchema,
+  WorkloadIdParamsSchema,
+  WorkloadMessageSchema,
+  WorkloadPromptSchema,
+  WorkloadSummarySchema,
+  WorkloadsDataSchema,
+  WorkloadsEnvelopeSchema,
+  WorkloadsReloadDataSchema,
+  WorkloadsReloadEnvelopeSchema,
+} from "./workload-schemas.ts";
+
 extendZodWithOpenApi(z);
 
-export const DEFAULT_WORKLOAD_ID = "starter.v1";
+export const DEFAULT_WORKLOAD_ID = DEFAULT_BUILT_IN_WORKLOAD_ID;
 
 const MAX_ENGINE_ID_LENGTH = 128;
 const MAX_WORKLOAD_ID_LENGTH = 128;

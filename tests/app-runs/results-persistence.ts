@@ -47,10 +47,10 @@ describe("run routes", () => {
 
     const resultPayload = await resultResponse.json();
     expect(resultPayload.data.status).toBe("completed");
-    expect(resultPayload.data.result.summary.totalCases).toBe(3);
-    expect(resultPayload.data.result.summary.completedCases).toBe(3);
+    expect(resultPayload.data.result.summary.totalCases).toBe(4);
+    expect(resultPayload.data.result.summary.completedCases).toBe(4);
     expect(resultPayload.data.result.summary.failedCases).toBe(0);
-    expect(resultPayload.data.result.cases).toHaveLength(3);
+    expect(resultPayload.data.result.cases).toHaveLength(4);
   });
 
   test("persists tuning workload identifiers in result.json", async () => {
@@ -85,7 +85,7 @@ describe("run routes", () => {
           model: {
             identifier: "/tmp/model.gguf",
           },
-          workloadId: "tuning.v0_0_1",
+          workloadId: "tuning.v1",
         }),
       });
       expect(createResponse.status).toBe(202);
@@ -113,10 +113,10 @@ describe("run routes", () => {
         }>;
       };
 
-      expect(artifact.workloadId).toBe("tuning.v0_0_1");
+      expect(artifact.workloadId).toBe("tuning.v1");
       expect(artifact.cases).toHaveLength(1);
-      expect(artifact.cases?.[0]?.caseId).toBe("tuning.v0_0_1.case-1");
-      expect(artifact.cases?.[0]?.promptId).toBe("tuning.v0_0_1.prompt-1");
+      expect(artifact.cases?.[0]?.caseId).toBe("tuning.v1.case-1");
+      expect(artifact.cases?.[0]?.promptId).toBe("tuning.v1.prompt-1");
     } finally {
       rmSync(runArtifactsRootDir, {
         recursive: true,

@@ -10,7 +10,7 @@ function createSweepRequestBody(overrides: Record<string, unknown> = {}): Record
     model: {
       identifier: TEST_MODEL_IDENTIFIER,
     },
-    workloadId: "tuning.v0_0_1",
+    workloadId: "tuning.v1",
     validationMode: "permissive",
     sweep: {
       axes: {

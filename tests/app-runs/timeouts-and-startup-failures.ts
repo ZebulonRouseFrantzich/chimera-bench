@@ -126,7 +126,7 @@ describe("run routes", () => {
     const resultResponse = await app.request(`http://localhost/runs/${runId}/result`);
     expect(resultResponse.status).toBe(200);
     const resultPayload = await resultResponse.json();
-    expect(resultPayload.data.result.summary.failedCases).toBe(3);
+    expect(resultPayload.data.result.summary.failedCases).toBe(4);
     expect(resultPayload.data.result.cases[0].error.code).toBe("RUN_CASE_TIMEOUT");
   });
 

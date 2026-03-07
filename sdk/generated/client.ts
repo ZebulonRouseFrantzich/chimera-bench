@@ -71,6 +71,21 @@ export const operations = {
     path: "/targets/{id}",
     summary: "Delete an SSH target profile",
   },
+  "getWorkloads": {
+    method: "GET",
+    path: "/workloads",
+    summary: "List registered workloads",
+  },
+  "getWorkloadsByWorkloadId": {
+    method: "GET",
+    path: "/workloads/{workloadId}",
+    summary: "Read workload metadata or prompt details",
+  },
+  "postWorkloadsReload": {
+    method: "POST",
+    path: "/workloads/reload",
+    summary: "Reload filesystem workloads",
+  },
 } as const;
 
 export type OperationId = keyof typeof operations;

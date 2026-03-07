@@ -86,7 +86,7 @@ describe("run routes", () => {
         model: {
           identifier: TEST_MODEL_IDENTIFIER,
         },
-        workloadId: "tuning.v0_0_1",
+        workloadId: "tuning.v1",
       }),
     });
 
@@ -122,7 +122,7 @@ describe("run routes", () => {
 
     expect(response.status).toBe(400);
     const payload = await response.json();
-    expect(payload.error.code).toBe("VALIDATION_WORKLOAD_INVALID");
+    expect(payload.error.code).toBe("WORKLOAD_NOT_FOUND");
   });
 
   test("rejects local targets for engines without local capability", async () => {

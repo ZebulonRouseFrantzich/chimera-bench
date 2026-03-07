@@ -91,12 +91,10 @@ export function buildEngineCaseConfig(
     promptId: workloadCase.promptId,
     index,
     prompt: workloadCase.prompt,
-    messages: [
-      {
-        role: "user",
-        content: workloadCase.prompt,
-      },
-    ],
+    messages: workloadCase.messages.map((message) => ({
+      role: message.role,
+      content: message.content,
+    })),
     requestParams: {
       ...runConfig.engine.requestParams,
     },
