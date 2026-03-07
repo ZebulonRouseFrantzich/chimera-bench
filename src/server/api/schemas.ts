@@ -14,7 +14,10 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../runs/defaults.ts";
-import { DEFAULT_BUILT_IN_WORKLOAD_ID } from "../runs/starter-workload.ts";
+import {
+  DEFAULT_BUILT_IN_WORKLOAD_ID,
+  MAX_WORKLOAD_ID_LENGTH,
+} from "../runs/starter-workload.ts";
 import {
   TargetProfileIdSchema as TargetProfileIdentifierSchema,
   TargetProfileSchema as TargetProfileModelSchema,
@@ -39,7 +42,6 @@ extendZodWithOpenApi(z);
 export const DEFAULT_WORKLOAD_ID = DEFAULT_BUILT_IN_WORKLOAD_ID;
 
 const MAX_ENGINE_ID_LENGTH = 128;
-const MAX_WORKLOAD_ID_LENGTH = 128;
 const MAX_MODEL_IDENTIFIER_LENGTH = 4096;
 export const MAX_SERVER_ARGS = 64;
 const MAX_SERVER_ARG_LENGTH = 4096;

@@ -28,8 +28,14 @@
   - Use realpath-based confinement to prevent symlink escapes.
 - `/workloads` returns metadata by default; prompt bodies are only included with `?includePrompts=1` and a response-size ceiling.
 - `?includePrompts=1` hard ceiling: 2 MiB; if exceeded return `RESPONSE_TOO_LARGE` (do not truncate silently).
+  - Compute size from a single serialized JSON body and reuse that body for the success response.
 - `/workloads/reload` refreshes the in-memory pack index without requiring a server restart.
 - `/workloads/reload` is auth-gated and rate-limited with a small cooldown; concurrent reload calls are in-flight deduped.
+  - Cooldown responses include both JSON `retryAfterMs` and HTTP `Retry-After`.
+  - Startup scan failures apply a short retry backoff to avoid scan storms on repeated requests.
+- Pack discovery re-checks canonical realpaths so `workload.json` cannot resolve outside its pack directory.
+- Duplicate workload ID resolution logs both selected and skipped sources for operator debugging.
+- Sweep execution preserves original workload message arrays (including multi-turn prompts).
 - `result.json` persists workload provenance and digests (no absolute paths).
 - Provenance is snapshotted at run creation time so reloads do not affect in-progress runs or exports.
 - `result.json` includes model metadata and optional `sha256` digests when available.

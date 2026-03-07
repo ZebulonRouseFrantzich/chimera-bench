@@ -8,6 +8,7 @@
 import type { Dirent } from "node:fs";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { toErrorMessage } from "../error-utils.ts";
 import { sanitizeControlCharacters } from "../http/sanitize.ts";
 import {
   DEFAULT_SERVER_LOGGER,
@@ -17,6 +18,7 @@ import {
   listBuiltInWorkloadPacks,
   type StarterWorkload,
 } from "../runs/starter-workload.ts";
+import { resolveConstrainedPackPaths } from "./pack-discovery.ts";
 import {
   toRuntimeWorkload,
   validateWorkloadPackDefinition,
@@ -24,6 +26,7 @@ import {
 
 const WORKLOAD_FILENAME = "workload.json";
 const DEFAULT_RELOAD_COOLDOWN_MS = 5_000;
+const DEFAULT_INITIAL_LOAD_FAILURE_BACKOFF_MS = 1_000;
 const RESTRICTED_POSIX_ROOT_PREFIXES = ["/proc", "/sys", "/dev"] as const;
 
 interface FilesystemWorkloadCandidate {
@@ -57,11 +60,19 @@ export class WorkloadReloadCooldownError extends Error {
   }
 }
 
+export class WorkloadInitialLoadBackoffError extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super("Workload registry initial load is cooling down after a failure.");
+    this.name = "WorkloadInitialLoadBackoffError";
+  }
+}
+
 interface WorkloadRegistryOptions {
   workloadRoots: readonly string[];
   logger?: ServerLogger;
   now?: () => number;
   reloadCooldownMs?: number;
+  initialLoadFailureBackoffMs?: number;
 }
 
 export class WorkloadRegistry {
@@ -69,17 +80,21 @@ export class WorkloadRegistry {
   private readonly logger: ServerLogger;
   private readonly now: () => number;
   private readonly reloadCooldownMs: number;
+  private readonly initialLoadFailureBackoffMs: number;
   private workloadsById = new Map<string, StarterWorkload>();
   private initialized = false;
   private initialLoadInFlight: Promise<void> | null = null;
   private reloadInFlight: Promise<WorkloadReloadStats> | null = null;
   private lastReloadCompletedAtMs = 0;
+  private nextInitialLoadAttemptAtMs = 0;
 
   constructor(options: WorkloadRegistryOptions) {
     this.workloadRoots = options.workloadRoots;
     this.logger = options.logger ?? DEFAULT_SERVER_LOGGER;
     this.now = options.now ?? Date.now;
     this.reloadCooldownMs = options.reloadCooldownMs ?? DEFAULT_RELOAD_COOLDOWN_MS;
+    this.initialLoadFailureBackoffMs =
+      options.initialLoadFailureBackoffMs ?? DEFAULT_INITIAL_LOAD_FAILURE_BACKOFF_MS;
   }
 
   async listSummaries(): Promise<WorkloadSummary[]> {
@@ -140,6 +155,13 @@ export class WorkloadRegistry {
       return;
     }
 
+    const nowMs = this.now();
+    if (nowMs < this.nextInitialLoadAttemptAtMs) {
+      throw new WorkloadInitialLoadBackoffError(
+        Math.max(1, this.nextInitialLoadAttemptAtMs - nowMs),
+      );
+    }
+
     this.initialLoadInFlight = (async () => {
       await this.performScan("startup");
       this.initialized = true;
@@ -147,6 +169,10 @@ export class WorkloadRegistry {
 
     try {
       await this.initialLoadInFlight;
+      this.nextInitialLoadAttemptAtMs = 0;
+    } catch (error) {
+      this.nextInitialLoadAttemptAtMs = this.now() + this.initialLoadFailureBackoffMs;
+      throw error;
     } finally {
       this.initialLoadInFlight = null;
     }
@@ -158,18 +184,28 @@ export class WorkloadRegistry {
     const filesystemScan = await this.scanFilesystemWorkloads();
 
     const mergedById = new Map<string, StarterWorkload>();
+    const selectedSourceByWorkloadId = new Map<string, string>();
     for (const workload of builtIns) {
       mergedById.set(workload.workloadId, workload);
+      selectedSourceByWorkloadId.set(workload.workloadId, "built-in");
     }
 
     let duplicateIdSkips = 0;
     for (const candidate of filesystemScan.candidates) {
-      if (mergedById.has(candidate.workload.workloadId)) {
+      const selectedSource = selectedSourceByWorkloadId.get(candidate.workload.workloadId);
+      if (selectedSource) {
         duplicateIdSkips += 1;
+        this.logger.info(
+          `[chimera-bench] event=workloads.scan.duplicate_id_skipped` +
+            ` workloadId=${sanitizeControlCharacters(candidate.workload.workloadId)}` +
+            ` selectedSource=${sanitizeControlCharacters(selectedSource)}` +
+            ` skippedSource=${sanitizeControlCharacters(candidate.packDir)}`,
+        );
         continue;
       }
 
       mergedById.set(candidate.workload.workloadId, candidate.workload);
+      selectedSourceByWorkloadId.set(candidate.workload.workloadId, candidate.packDir);
     }
 
     this.workloadsById = mergedById;
@@ -255,14 +291,28 @@ export class WorkloadRegistry {
           continue;
         }
 
-        const loadedWorkload = await this.tryLoadFilesystemWorkload(packDir, workloadPath);
+        const constrainedPaths = await resolveConstrainedPackPaths({
+          packDir,
+          workloadPath,
+          rootDir,
+          logger: this.logger,
+        });
+        if (!constrainedPaths) {
+          skippedInvalidPacks += 1;
+          continue;
+        }
+
+        const loadedWorkload = await this.tryLoadFilesystemWorkload(
+          constrainedPaths.packDir,
+          constrainedPaths.workloadPath,
+        );
         if (!loadedWorkload) {
           skippedInvalidPacks += 1;
           continue;
         }
 
         discoveredCandidates.push({
-          packDir,
+          packDir: constrainedPaths.packDir,
           workload: loadedWorkload,
         });
       }
@@ -393,12 +443,4 @@ function compareLexicographic(left: string, right: string): number {
   }
 
   return 0;
-}
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
 }

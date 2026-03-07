@@ -12,6 +12,7 @@ import {
   jsonError,
   jsonSuccess,
 } from "../api/envelope.ts";
+import { toErrorMessage } from "../error-utils.ts";
 import {
   WorkloadDetailQuerySchema,
   WorkloadIdParamsSchema,
@@ -85,7 +86,8 @@ export function registerWorkloadRoutes(
           requestId,
         },
       };
-      const payloadBytes = Buffer.byteLength(JSON.stringify(envelopedPayload), "utf8");
+      const serializedPayload = JSON.stringify(envelopedPayload);
+      const payloadBytes = Buffer.byteLength(serializedPayload, "utf8");
       if (payloadBytes > INCLUDE_PROMPTS_RESPONSE_MAX_BYTES) {
         return jsonError(context, 413, {
           code: "RESPONSE_TOO_LARGE",
@@ -94,7 +96,13 @@ export function registerWorkloadRoutes(
         });
       }
 
-      return context.json(envelopedPayload, 200);
+      return new Response(serializedPayload, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-Request-Id": requestId,
+        },
+      });
     } catch (error) {
       return handleWorkloadRouteError(context, logger, "workloads.get.failed", error);
     }
@@ -106,6 +114,10 @@ export function registerWorkloadRoutes(
       return jsonSuccess(context, stats);
     } catch (error) {
       if (error instanceof WorkloadReloadCooldownError) {
+        context.header(
+          "Retry-After",
+          String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))),
+        );
         return jsonError(context, 429, {
           code: "WORKLOADS_RELOAD_COOLDOWN",
           message: "Workload reload is cooling down. Retry after the provided delay.",
@@ -228,12 +240,4 @@ function handleWorkloadRouteError(
     code: "WORKLOADS_ROUTE_FAILED",
     message: "Workload request failed due to an unexpected server error.",
   });
-}
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
 }

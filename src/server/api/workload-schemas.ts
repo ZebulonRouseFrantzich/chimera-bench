@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { successEnvelopeSchema } from "./envelope.ts";
-
-const MAX_WORKLOAD_ID_LENGTH = 128;
+import { MAX_WORKLOAD_ID_LENGTH } from "../runs/starter-workload.ts";
 
 export const WorkloadIdParamsSchema = z.object({
   workloadId: z.string().min(1).max(MAX_WORKLOAD_ID_LENGTH),

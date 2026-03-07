@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildApp } from "./helpers/app-fixture.ts";
@@ -128,11 +128,155 @@ describe("workload routes", () => {
         method: "POST",
       });
       expect(cooldownResponse.status).toBe(429);
+      expect(cooldownResponse.headers.get("Retry-After")).not.toBeNull();
 
       const cooldownPayload = await cooldownResponse.json();
       expect(cooldownPayload.error.code).toBe("WORKLOADS_RELOAD_COOLDOWN");
       expect(typeof cooldownPayload.error.details.retryAfterMs).toBe("number");
       expect(cooldownPayload.error.details.retryAfterMs).toBeGreaterThan(0);
+    } finally {
+      rmSync(workloadRoot, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("deduplicates concurrent reload requests into one scan", async () => {
+    const workloadRoot = mkdtempSync(join(tmpdir(), "chimera-workloads-reload-dedupe-"));
+    const infoLines: string[] = [];
+
+    try {
+      for (let index = 0; index < 32; index += 1) {
+        writeWorkloadPack(workloadRoot, `bulk-pack-${index + 1}`, {
+          schemaVersion: 1,
+          workloadId: `bulk${index + 1}.v1`,
+          displayName: `Bulk pack ${index + 1}`,
+          version: "0.1.0",
+          prompts: [
+            {
+              promptId: `bulk${index + 1}.v1.prompt-1`,
+              caseId: `bulk${index + 1}.v1.case-1`,
+              messages: [
+                {
+                  role: "user",
+                  content: "hello",
+                },
+              ],
+            },
+          ],
+        });
+      }
+
+      const { app } = buildApp({
+        auth: {
+          enabled: false,
+          username: "chimera",
+        },
+        workloadRoots: [workloadRoot],
+        logger: {
+          info(message: string): void {
+            infoLines.push(message);
+          },
+          error(_message: string): void {},
+        },
+      });
+
+      const startupResponse = await app.request("http://localhost/workloads");
+      expect(startupResponse.status).toBe(200);
+      infoLines.length = 0;
+
+      const [firstReloadResponse, secondReloadResponse] = await Promise.all([
+        app.request("http://localhost/workloads/reload", {
+          method: "POST",
+        }),
+        app.request("http://localhost/workloads/reload", {
+          method: "POST",
+        }),
+      ]);
+
+      expect(firstReloadResponse.status).toBe(200);
+      expect(secondReloadResponse.status).toBe(200);
+
+      const reloadScanLines = infoLines.filter((line) => {
+        return line.includes("event=workloads.scan trigger=reload");
+      });
+      expect(reloadScanLines).toHaveLength(1);
+    } finally {
+      rmSync(workloadRoot, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("logs selected and skipped sources for duplicate workload IDs", async () => {
+    const workloadRoot = mkdtempSync(join(tmpdir(), "chimera-workloads-duplicates-"));
+    const infoLines: string[] = [];
+
+    try {
+      writeWorkloadPack(workloadRoot, "pack-a", {
+        schemaVersion: 1,
+        workloadId: "duplicate.v1",
+        displayName: "Duplicate A",
+        version: "0.1.0",
+        prompts: [
+          {
+            promptId: "duplicate.v1.prompt-1",
+            caseId: "duplicate.v1.case-1",
+            messages: [
+              {
+                role: "user",
+                content: "from pack a",
+              },
+            ],
+          },
+        ],
+      });
+
+      writeWorkloadPack(workloadRoot, "pack-b", {
+        schemaVersion: 1,
+        workloadId: "duplicate.v1",
+        displayName: "Duplicate B",
+        version: "0.1.0",
+        prompts: [
+          {
+            promptId: "duplicate.v1.prompt-1",
+            caseId: "duplicate.v1.case-1",
+            messages: [
+              {
+                role: "user",
+                content: "from pack b",
+              },
+            ],
+          },
+        ],
+      });
+
+      const { app } = buildApp({
+        auth: {
+          enabled: false,
+          username: "chimera",
+        },
+        workloadRoots: [workloadRoot],
+        logger: {
+          info(message: string): void {
+            infoLines.push(message);
+          },
+          error(_message: string): void {},
+        },
+      });
+
+      const listResponse = await app.request("http://localhost/workloads");
+      expect(listResponse.status).toBe(200);
+
+      const duplicateLog = infoLines.find((line) => {
+        return line.includes("event=workloads.scan.duplicate_id_skipped");
+      });
+      expect(typeof duplicateLog).toBe("string");
+      expect(duplicateLog).toContain("workloadId=duplicate.v1");
+      expect(duplicateLog).toContain("selectedSource=");
+      expect(duplicateLog).toContain("skippedSource=");
     } finally {
       rmSync(workloadRoot, {
         recursive: true,
@@ -184,6 +328,75 @@ describe("workload routes", () => {
       ).toBe(false);
     } finally {
       rmSync(workloadRoot, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("skips packs when workload.json resolves outside the pack directory", async () => {
+    const workloadRoot = mkdtempSync(join(tmpdir(), "chimera-workloads-symlink-"));
+    const externalRoot = mkdtempSync(join(tmpdir(), "chimera-workloads-external-"));
+
+    try {
+      const packDir = join(workloadRoot, "symlink-pack");
+      mkdirSync(packDir, {
+        recursive: true,
+      });
+
+      const externalWorkloadPath = join(externalRoot, "external-workload.json");
+      writeFileSync(
+        externalWorkloadPath,
+        `${JSON.stringify(
+          {
+            schemaVersion: 1,
+            workloadId: "external.v1",
+            displayName: "External workload",
+            version: "0.1.0",
+            prompts: [
+              {
+                promptId: "external.v1.prompt-1",
+                caseId: "external.v1.case-1",
+                messages: [
+                  {
+                    role: "user",
+                    content: "hello",
+                  },
+                ],
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+
+      symlinkSync(externalWorkloadPath, join(packDir, "workload.json"));
+
+      const { app } = buildApp({
+        auth: {
+          enabled: false,
+          username: "chimera",
+        },
+        workloadRoots: [workloadRoot],
+      });
+
+      const listResponse = await app.request("http://localhost/workloads");
+      expect(listResponse.status).toBe(200);
+      const listPayload = await listResponse.json();
+
+      expect(
+        listPayload.data.workloads.some(
+          (workload: { workloadId: string }) => workload.workloadId === "external.v1",
+        ),
+      ).toBe(false);
+    } finally {
+      rmSync(workloadRoot, {
+        recursive: true,
+        force: true,
+      });
+      rmSync(externalRoot, {
         recursive: true,
         force: true,
       });

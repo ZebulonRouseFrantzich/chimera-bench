@@ -9,10 +9,12 @@ import { Buffer } from "node:buffer";
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { z } from "zod";
+import { toErrorMessage } from "../error-utils.ts";
 import { formatValidationIssues } from "../http/validation-issues.ts";
 import { sanitizeControlCharacters } from "../http/sanitize.ts";
 import {
   convertPackToStarterWorkload,
+  MAX_WORKLOAD_ID_LENGTH,
   type StarterWorkload,
   type WorkloadPackDefinition,
   WORKLOAD_ID_PATTERN,
@@ -22,7 +24,6 @@ export const MAX_PROMPTS_PER_PACK = 256;
 export const MAX_MESSAGES_PER_PROMPT = 32;
 export const MAX_MESSAGE_CONTENT_BYTES = 64 * 1024;
 export const MAX_CONTEXT_FILES_PER_PROMPT = 32;
-const MAX_WORKLOAD_ID_LENGTH = 128;
 const MAX_PROMPT_ID_LENGTH = 128;
 const MAX_CASE_ID_LENGTH = 128;
 
@@ -331,12 +332,4 @@ function hasParentDirectoryTraversal(pathValue: string): boolean {
 function isPathWithinRoot(path: string, rootDir: string): boolean {
   const relativePath = relative(rootDir, path);
   return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
-}
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
 }

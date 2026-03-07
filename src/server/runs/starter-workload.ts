@@ -49,6 +49,7 @@ export interface StarterWorkload {
   packRootDir?: string | undefined;
 }
 
+export const MAX_WORKLOAD_ID_LENGTH = 128;
 export const WORKLOAD_ID_PATTERN = /^[a-z][a-z0-9-]*\.v[1-9][0-9]*$/;
 export const DEFAULT_BUILT_IN_WORKLOAD_ID = "starter.v2";
 

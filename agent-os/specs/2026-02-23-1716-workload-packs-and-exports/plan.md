@@ -73,6 +73,8 @@ Define realistic benchmark workloads and produce portable run outputs for analys
 - Workload packs must expose stable `promptId`s and preserve prompt ordering.
   `agent-os/specs/2026-02-23-1717-sweep-engine-run-orchestration/` will reference prompt IDs for
   sweep prompt selection and deterministic case identity.
+- Sweep execution must pass the workload case `messages` array through to engine execution as-is.
+  Do not flatten multi-message prompts into a single synthesized user message.
 - Exports must remain usable for both single runs and sweeps:
   - CSV must include per-case `engine_args_json` + `request_params_json` so sweep configs can be reconstructed.
   - CSV and NDJSON should repeat essential run-level metadata on every row/line so results can be concatenated across runs and engines.
@@ -201,6 +203,9 @@ bun run serve
   - Errors:
     - Use stable `VALIDATION_*` codes.
     - Client messages must not include absolute filesystem paths; log detailed `logReason` instead.
+  - Keep validation constants/utilities centralized where practical:
+    - share `MAX_WORKLOAD_ID_LENGTH` between pack and API schemas
+    - share unknown-error-to-message helpers to avoid drift across modules
 
 #### Manual Testing
 
@@ -254,10 +259,16 @@ EOF
 - Discovery strategy (perf + safety):
   - For each root, scan one directory level for subdirectories containing `workload.json`.
   - Do not recurse deeply.
+  - Resolve and re-check pack/workload realpaths before loading:
+    - canonical pack dir must remain within the canonical workload root
+    - canonical `workload.json` path must remain within the canonical pack dir
+    - reject packs that violate confinement and log a stable skip reason
   - Validate every candidate pack; skip invalid packs with a safe log.
+  - If initial startup scan fails, apply a short retry backoff so repeated API calls do not trigger a scan storm.
   - Duplicate `workloadId` policy:
     - built-in wins over file-based
     - file-vs-file: select deterministically (stable sort by path)
+    - log duplicate resolution with both selected and skipped sources for operator debugging
   - Keep an in-memory cache of discovered metadata; refresh on process restart.
 - APIs:
   - `GET /workloads` (enveloped JSON): list packs with metadata only.
@@ -267,11 +278,13 @@ EOF
     - `?includePrompts=1`: include prompt message bodies.
       - Hard response ceiling: 2 MiB (UTF-8 bytes) for the JSON payload.
       - If the response would exceed the ceiling, return HTTP 413 with a stable `RESPONSE_TOO_LARGE` error (do not truncate silently).
+      - Size checks should serialize once and reuse the serialized body for the final response.
   - `POST /workloads/reload` (enveloped JSON): rescan `CHIMERA_WORKLOAD_ROOTS` and refresh the in-memory index.
     - Response includes counts (example: discovered packs, skipped invalid packs, duplicate-id skips).
     - Auth required.
     - Add a simple cooldown (minimum 5s between reloads) and in-flight dedupe so concurrent callers do not trigger duplicate scans.
       - Within the cooldown window, return HTTP 429 with a stable `WORKLOADS_RELOAD_COOLDOWN` error and a `retryAfterMs` hint.
+      - Include HTTP `Retry-After` on cooldown responses (seconds).
   - Do not expose absolute filesystem paths in API responses.
 - Observability:
   - Log one structured line per scan/reload with pack counts, skipped counts, and elapsedMs (per `server/log-line-format`).
@@ -320,6 +333,10 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD -X POST http://127.0.0.1:4096/workl
 ```
 
   - Confirm the new pack appears in `GET /workloads`.
+
+7) Concurrent reload dedupe:
+  - Fire two `POST /workloads/reload` requests at the same time.
+  - Confirm both succeed and only one reload scan is logged.
 
 
 ### Task 5: Implement Context Document Ingestion + Prompt Assembly
