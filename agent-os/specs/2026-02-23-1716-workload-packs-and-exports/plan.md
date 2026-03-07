@@ -127,9 +127,9 @@ rg -n "^### Task |^#### Manual Testing" agent-os/specs/2026-02-23-1716-workload-
   - Introduce the tuning workload as `tuning.v1`.
     - Update its `caseId` and `promptId` to match the new workload ID prefix (`tuning.v1.`).
     - Re-baseline any regression hash tests that intentionally lock the prompt contract.
-  - Back-compat for existing automation:
-    - Treat `tuning.v0_0_1` as a deprecated alias of `tuning.v1` for at least one release line (v0.1.x).
-    - Runs created using the alias must persist the canonical ID (`tuning.v1`) in `result.json` and exports.
+  - Hard switch:
+    - Remove `tuning.v0_0_1` support entirely.
+    - Treat the rename as a breaking change for any callers that reference the old ID.
 - Default workload selection:
   - Add a new high-quality starter pack as `starter.v2` (do not mutate `starter.v1`).
   - Set the server default workload ID to `starter.v2` for v0.1.0.
@@ -144,6 +144,7 @@ rg -n "^### Task |^#### Manual Testing" agent-os/specs/2026-02-23-1716-workload-
   - Prompt IDs and case IDs must be stable and prefixed with `starter.v2.`.
 - Documentation:
   - Update any curl examples in specs that reference `tuning.v0_0_1` to `tuning.v1`.
+  - Call out the tuning workload rename (`tuning.v0_0_1` -> `tuning.v1`) as a compatibility note in the v0.1.0 release notes.
   - Call out the default workload change (`starter.v2`) as a compatibility note in the v0.1.0 release notes.
   - When the server chooses the default workload because the client omitted `workloadId`, emit a structured log line (include `defaultWorkloadId` and `requestedWorkloadId=unset`).
 
