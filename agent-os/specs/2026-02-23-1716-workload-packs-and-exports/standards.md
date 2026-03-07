@@ -7,6 +7,13 @@ Do not duplicate standards text here; use the source files below directly.
 
 - `agent-os/standards/server/api-conventions.md`
 - `agent-os/standards/runs/result-schema.md`
+- `agent-os/standards/runs/artifact-store.md`
+- `agent-os/standards/runs/built-in-workload-hardening.md`
+- `agent-os/standards/global/sanitization-and-safe-errors.md`
+- `agent-os/standards/server/openapi-and-sdk-artifacts.md`
+- `agent-os/standards/server/request-param-budgets.md`
+- `agent-os/standards/cli/arg-parsing.md`
+- `agent-os/standards/cli/exit-codes.md`
 
 ## Usage notes
 
