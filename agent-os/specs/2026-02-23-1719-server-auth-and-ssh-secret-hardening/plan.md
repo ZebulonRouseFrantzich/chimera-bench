@@ -23,6 +23,7 @@ The project explicitly supports SSH execution on local networks or over the inte
 - Secret handling rules:
   - Redact secrets from logs and error responses.
   - Ensure run artifacts never persist secrets (API keys, auth headers, private key contents).
+  - Ensure downloadable run artifacts (exports, bundles, logs) are safe-by-default for sharing.
 - SSH hardening:
   - Strict host key checking by default.
   - Clear SSH key handling guidance (prefer `ssh-agent`; allow key-path references only).
@@ -76,16 +77,41 @@ The project explicitly supports SSH execution on local networks or over the inte
      - Attempt to start with a short password and verify the server refuses to start.
 
 3. Define secure local storage and redaction for sensitive fields.
-   - Redaction policy:
-     - Never log: `Authorization` header, basic auth password, per-run engine API keys.
-     - Never persist: per-run engine API keys, auth headers, private key contents.
-   - Ensure any persisted configs (targets, runs) contain references/paths only.
-   - Add tests that assert redaction on common failure paths.
-   - Manual testing steps:
-     - Run a local and SSH benchmark and then verify secrets are absent:
-       - `rg -n "Authorization|CHIMERA_SERVER_PASSWORD|api[-_ ]?key" runs/ ~/.chimera-bench/` (expect no matches)
+    - Redaction policy:
+      - Never log: `Authorization` header, basic auth password, per-run engine API keys.
+      - Never persist: per-run engine API keys, auth headers, private key contents.
+    - Ensure any persisted configs (targets, runs) contain references/paths only.
+    - Ensure artifact surfaces added in v0.1.0 are covered:
+      - `/workloads/reload`
+      - `/runs/:runId/artifacts`
+      - `/exports/runs/:runId/*` (including `result.json`, `manifest.json`, bundles, and log files)
+    - Avoid persisting absolute filesystem paths in run artifacts and exports.
+    - Add tests that assert redaction on common failure paths.
+    - Manual testing steps:
+      - Run a local and SSH benchmark and then verify secrets are absent:
+        - `rg -n "Authorization|CHIMERA_SERVER_PASSWORD|api[-_ ]?key" runs/ ~/.chimera-bench/` (expect no matches)
 
-4. Add host key verification and strict SSH defaults.
+4. Harden artifact download and maintenance endpoints.
+    - Ensure all artifact-related endpoints require authentication when auth is enabled:
+      - `/exports/*`
+      - `/runs/:runId/artifacts`
+      - `/workloads/reload`
+    - Add rate limiting for high-leverage endpoints:
+      - repeated auth failures (global)
+      - `/workloads/reload` (avoid filesystem scan abuse)
+      - large artifact downloads (avoid bandwidth abuse)
+    - Enforce strict path safety:
+      - `runId` is untrusted input; only allow known artifact names.
+      - Never allow arbitrary path reads via export routes.
+    - Ensure bundles and logs are bounded:
+      - bundles are deterministic for reproducibility
+      - logs are truncated with a stable marker and redacted before persistence
+    - Manual testing steps:
+      - Attempt unauthenticated fetches of `/exports/...` endpoints when auth is enabled (expect 401).
+      - Call `/workloads/reload` repeatedly and confirm rate limiting triggers.
+      - Attempt to fetch a non-existent artifact name and confirm 404 without leaking filesystem paths.
+
+5. Add host key verification and strict SSH defaults.
    - Enforce:
      - `StrictHostKeyChecking=yes`
      - `BatchMode=yes`
@@ -96,13 +122,13 @@ The project explicitly supports SSH execution on local networks or over the inte
      - Connect to an unknown host and verify the run fails without prompting.
      - Confirm agent forwarding is disabled.
 
-5. Add audit logging and failure alerts for remote execution actions.
+6. Add audit logging and failure alerts for remote execution actions.
    - Write an audit log as JSONL under `~/.chimera-bench/audit.log`.
    - Log (at minimum): server start/stop, auth enabled/disabled, target create/update, run create/cancel, remote command start/stop (redacted).
    - Manual testing steps:
      - Perform actions (create target, start run, cancel run) and verify entries appear in `~/.chimera-bench/audit.log`.
 
-6. Document secure deployment patterns for LAN and internet exposure.
+7. Document secure deployment patterns for LAN and internet exposure.
    - Add an operator-facing doc:
      - LAN-safe defaults
      - required auth

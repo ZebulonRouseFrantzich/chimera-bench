@@ -4,12 +4,27 @@ Run results are persisted under the artifact root (default `runs/`):
 
 - `runs/{runId}/result.json`
 
+Additional artifacts may be persisted under the same directory (server-version dependent):
+
+- `runs/{runId}/manifest.json`
+- `runs/{runId}/cases.csv`
+- `runs/{runId}/cases.ndjson`
+- `runs/{runId}/summary.md`
+- `runs/{runId}/bundle.tgz`
+- `runs/{runId}/engine.stdout.log`
+- `runs/{runId}/engine.stderr.log`
+
 Write rules:
 
-- Write JSON via an atomic replace:
+- Write artifacts via an atomic replace (when feasible):
   - write `result.json.tmp-<uuid>`
   - `rename` to `result.json`
 - Best-effort cleanup of temp files on failure.
+
+Notes:
+
+- For non-JSON artifacts (CSV/NDJSON/markdown/logs), keep the same atomic write strategy using a temp file + rename.
+- For archive bundles, ensure deterministic output when reproducibility is required (stable file order and fixed metadata).
 
 Path safety:
 

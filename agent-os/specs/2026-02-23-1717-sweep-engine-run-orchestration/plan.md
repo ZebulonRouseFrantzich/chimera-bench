@@ -9,6 +9,9 @@ Automate benchmark matrices across engine flags, API params, and context depth w
 - Sweep definitions must preserve flexibility for evolving engine flags.
 - Pass-through options are required so new backend flags can be tested without core schema churn.
 - Engine restarts between cases are required to reduce cache contamination and improve comparability.
+- Deterministic artifacts must remain reproducible across restarts/resumes:
+  - incorporate workload/model digests into case identity hashing when available
+  - persist intermediate state under the run directory and ensure it is included in artifact manifests/bundles
 
 ## Deliverables
 
@@ -18,6 +21,7 @@ Automate benchmark matrices across engine flags, API params, and context depth w
 - Progress tracking and resumable run state.
 - Typed progress events over `/event` for clients monitoring long-running sweeps.
 - Aggregated run summary statistics.
+- Deterministic, shareable run artifacts (manifest + bundle) via `workload-packs-and-exports`.
 
 ## Standards applied
 
@@ -58,9 +62,13 @@ Automate benchmark matrices across engine flags, API params, and context depth w
      - Sort axis keys.
      - Preserve input value order (or sort explicitly; pick one and document it).
      - Combine axes with a cartesian product, then apply `repetitions`.
-   - Case identity:
-     - Compute `caseId` as a hash of a canonical JSON representation of the case config.
-     - Include all fields that impact inference (`engineArgs`, `requestParams`, `promptId`, context, model identifier).
+    - Case identity:
+      - Compute `caseId` as a hash of a canonical JSON representation of the case config.
+      - Include all fields that impact inference (`engineArgs`, `requestParams`, `promptId`, context, model identifier).
+      - When available, include reproducibility digests:
+        - `workloadPack.digestSha256`
+        - `modelInfo.digestSha256`
+      - Include `engineId` and `engineVersion` so cross-engine runs cannot collide.
    - Manual testing steps:
      - Unit test: same sweep config produces identical case ordering and `caseId`s across runs.
 
@@ -88,22 +96,30 @@ Automate benchmark matrices across engine flags, API params, and context depth w
 
 5. Persist intermediate state for resume/cancel behavior.
    - Persist a state file under the run directory (example: `runs/{runId}/state.json`).
-   - Contents include:
-     - sweep config
-     - expanded cases list (or a deterministic seed + cursor)
-     - current cursor/index and per-case status
-   - Resume:
-     - Add `POST /runs/:runId/resume` (idempotent) to continue from the persisted cursor.
+    - Contents include:
+      - sweep config
+      - expanded cases list (or a deterministic seed + cursor)
+      - current cursor/index and per-case status
+      - workload/model provenance at run start:
+        - `workloadId`
+        - `workloadPack.digestSha256` (when available)
+        - `model.identifier`
+        - `modelInfo.digestSha256` (when available)
+    - Resume:
+      - Add `POST /runs/:runId/resume` (idempotent) to continue from the persisted cursor.
+    - Artifact integration:
+      - Ensure `state.json` is listed in `runs/{runId}/manifest.json` and included in `bundle.tgz`.
    - Manual testing steps:
      - Start a sweep; stop the server mid-run; restart the server.
      - Call `POST /runs/RUN_ID/resume` and confirm it continues where it left off.
 
 6. Generate aggregate summaries over case outputs.
-   - Aggregate summary fields:
-     - counts by status
-     - latency/throughput aggregates (mean/median/p95)
-     - best/worst configurations by tokens/sec
-   - Persist aggregates in `result.json` (under a `summary` object) and ensure exports reflect them.
+    - Aggregate summary fields:
+      - counts by status
+      - latency/throughput aggregates (mean/median/p95)
+      - best/worst configurations by tokens/sec
+      - when `repetitions > 1`, include variability summaries (at minimum stddev for key metrics)
+    - Persist aggregates in `result.json` (under a `summary` object) and ensure exports reflect them.
    - Manual testing steps:
      - Complete a sweep; open `runs/RUN_ID/summary.md` and confirm it contains sweep-level aggregates.
 

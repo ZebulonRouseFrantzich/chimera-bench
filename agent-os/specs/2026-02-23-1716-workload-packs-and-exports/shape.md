@@ -6,11 +6,14 @@
 - Ship built-in workload packs with standardized IDs (`type.vN`) and stable prompt/case identifiers.
 - Support optional context documents referenced by a workload pack with strict filesystem confinement.
 - Persist workload provenance (pack + context digests) into `runs/{runId}/result.json` for reproducibility.
+- Persist model provenance/digests into `runs/{runId}/result.json` when available.
+- Persist an artifact manifest at `runs/{runId}/manifest.json`.
 - Generate portable exports (`cases.csv`, `cases.ndjson`, `summary.md`, `bundle.tgz`) derived from `runs/{runId}/result.json`.
 - Expose discovery/read APIs:
   - `/workloads` for listing packs and prompt IDs
   - `/runs/:runId/artifacts` for indexing available artifacts
   - `/exports` for reading derived artifacts
+- Persist bounded engine logs (`engine.stdout.log`, `engine.stderr.log`) as optional run artifacts.
 - Provide a CLI validator for workload pack authors.
 - Keep OpenAPI and generated SDK artifacts in sync with route/schema changes.
 
@@ -26,11 +29,17 @@
 - `/workloads` returns metadata by default; prompt bodies are only included with `?includePrompts=1` and a response-size ceiling.
 - `/workloads/reload` refreshes the in-memory pack index without requiring a server restart.
 - `result.json` persists workload provenance and digests (no absolute paths).
+- `result.json` includes model metadata and optional `sha256` digests when available.
 - Exports are derived from `result.json` only (no additional data sources), written atomically, and served as raw files.
+  - `GET /exports/runs/:runId/result.json` -> `application/json`
+  - `GET /exports/runs/:runId/manifest.json` -> `application/json`
   - `GET /exports/runs/:runId/cases.csv` -> `text/csv`
   - `GET /exports/runs/:runId/cases.ndjson` -> `application/x-ndjson`
   - `GET /exports/runs/:runId/summary.md` -> `text/markdown`
   - `GET /exports/runs/:runId/bundle.tgz` -> `application/gzip`
+- Engine logs (when present) are served as raw files:
+  - `GET /exports/runs/:runId/engine.stdout.log` -> `text/plain`
+  - `GET /exports/runs/:runId/engine.stderr.log` -> `text/plain`
 - `/runs/:runId/artifacts` returns an enveloped index of available artifacts (no filesystem paths).
 - v0.1.0 implements this spec alongside `agent-os/specs/2026-02-23-1717-sweep-engine-run-orchestration/`.
   Workload prompt IDs must be stable and discoverable so sweeps can select prompts deterministically.
@@ -48,5 +57,5 @@
 
 ## Success Criteria
 
-- A completed run reliably produces `result.json`, `cases.csv`, `cases.ndjson`, `summary.md`, and `bundle.tgz` derived from the same data.
+- A completed run reliably produces `result.json`, `manifest.json`, `cases.csv`, `cases.ndjson`, `summary.md`, and `bundle.tgz` derived from the same data.
 - Workload packs are easy to add without code changes (file-based packs under an allowlisted root).

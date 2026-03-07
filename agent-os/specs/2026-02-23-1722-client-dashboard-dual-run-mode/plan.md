@@ -14,6 +14,7 @@ Build the benchmark client UI and enable running server and client together or s
 
 - Web client for configuring runs, monitoring progress, and viewing/exporting results.
 - Live updates via SSE/WebSocket.
+- Artifact discovery + downloads using server-provided manifests and export endpoints.
 - Dev and packaged commands to run:
   - server only
   - client only
@@ -77,7 +78,28 @@ Build the benchmark client UI and enable running server and client together or s
      - Open the run creation form and verify it can create a single local run end-to-end.
      - If sweeps are enabled, create a small 2x2 sweep and verify the UI renders the expanded case count.
 
-4. Implement live run monitor and result visualizations.
+4. Implement run history + artifact discovery/download UX.
+    - Run history:
+      - Persist a local run history list (at minimum: `runId`, `createdAt`, `engineId`, `workloadId`, `target`).
+      - If/when the server provides a run listing endpoint, prefer server history over local-only storage.
+    - Artifact discovery:
+      - Use `GET /runs/:runId/artifacts` to list available artifacts.
+      - Render artifact metadata (name, bytes, content type, sha256 when present).
+    - Downloads:
+      - Provide one-click downloads for:
+        - `bundle.tgz`
+        - `result.json`, `manifest.json`
+        - `cases.csv`, `cases.ndjson`, `summary.md`
+        - `engine.stdout.log`, `engine.stderr.log` (with clear warnings)
+    - Efficient polling (when SSE is not sufficient):
+      - When supported, use `ETag` + `If-None-Match` for artifact index and workload listings.
+      - Otherwise throttle polling and back off on errors.
+    - Manual testing steps:
+      - Create two runs and confirm they appear in the Runs history view after page reload.
+      - Open a run detail page and confirm the artifacts list populates.
+      - Download `bundle.tgz` and confirm it contains the expected files.
+
+5. Implement live run monitor and result visualizations.
    - Subscribe to SSE:
      - global `GET /event`
      - per-run `GET /runs/:runId/event`
@@ -90,7 +112,7 @@ Build the benchmark client UI and enable running server and client together or s
      - Create a run and verify SSE events update the UI without refresh.
      - Cancel a run mid-flight and confirm the UI transitions to `cancelled`.
 
-5. Add dual-run scripts and documentation.
+6. Add dual-run scripts and documentation.
    - Provide developer scripts to run:
      - server only
      - client only
@@ -100,7 +122,7 @@ Build the benchmark client UI and enable running server and client together or s
      - Run `server only` and verify the client can connect to it.
      - Run `both together` and verify the client loads and can start a run.
 
-6. Add client integration tests against the server API.
+7. Add client integration tests against the server API.
    - Add automated tests (e.g., Playwright) for:
      - connect flow (401 + success)
      - run creation

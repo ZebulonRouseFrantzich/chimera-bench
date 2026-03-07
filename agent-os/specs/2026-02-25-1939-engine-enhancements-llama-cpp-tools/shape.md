@@ -11,9 +11,10 @@
 ## Decisions
 
 - Preserve the core run schema and plugin lifecycle contract; new capabilities land in plugins and model resolution.
-- Treat downloaded models as normal local GGUF paths after resolution; persist resolved path + hash metadata for reproducibility.
+- Treat downloaded models as normal local GGUF paths after resolution; persist reproducibility metadata via `runs/result-schema` (`modelInfo.resolvedPath` + `modelInfo.digestSha256` when available).
 - Keep strict-by-default validation for args/params; allow explicit permissive mode for experimentation.
 - Prefer approaches that work well with SSH targets (e.g., `llama-cli` avoids opening remote ports).
+- Persist optional engine-level artifacts via `runs/artifact-store` so `manifest.json` / `bundle.tgz` can include them when exports are enabled.
 - Visuals: none.
 
 ## Assumptions

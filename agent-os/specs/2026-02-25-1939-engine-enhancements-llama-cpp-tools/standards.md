@@ -8,6 +8,7 @@ Do not duplicate standards text here; use the source files below directly.
 - `agent-os/standards/server/api-conventions.md`
 - `agent-os/standards/plugins/engine-interface.md`
 - `agent-os/standards/runs/result-schema.md`
+- `agent-os/standards/runs/artifact-store.md`
 
 ## Usage notes
 

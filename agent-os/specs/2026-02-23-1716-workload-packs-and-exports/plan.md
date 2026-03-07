@@ -19,16 +19,27 @@ Define realistic benchmark workloads and produce portable run outputs for analys
   - When a built-in workload changes, it must be published under a new `type.v{N+1}` ID.
 - Built-in high-quality technical starter workload pack (new ID, not a silent mutation of existing built-ins).
 - Context injection support from local files with strict path confinement and size budgets.
-- Export pipeline for `cases.csv` and `summary.md` derived from `runs/{runId}/result.json`.
+- Export pipeline derived from `runs/{runId}/result.json`:
+  - `manifest.json`
+  - `cases.csv`
+  - `cases.ndjson`
+  - `summary.md`
+  - `bundle.tgz`
 - Stable mapping between run schema fields and export columns/sections.
 - Workload APIs (route group: `/workloads`) for listing and selecting workloads.
 - Workloads reload API to rescan filesystem packs without restart.
-- Export read APIs (route group: `/exports`) for retrieving CSV and markdown artifacts.
+- Export read APIs (route group: `/exports`) for retrieving artifacts:
+  - raw `result.json` and `manifest.json`
+  - raw engine logs when available (`engine.stdout.log`, `engine.stderr.log`)
+  - CSV/NDJSON/markdown exports
+  - shareable bundle
 - NDJSON case export for large sweeps.
 - Single-file export bundle for sharing (result + exports).
-- Run artifacts index API so clients can discover available artifacts.
+- Persist a run artifact manifest (`runs/{runId}/manifest.json`) and provide an artifacts index API so clients can discover available artifacts.
 - Workload file safety: allowlist workload pack roots via `CHIMERA_WORKLOAD_ROOTS`.
 - Persist workload digests (pack + referenced context docs) into `result.json` and exports for reproducibility.
+- Persist model digests (where available) into `result.json` and exports for reproducibility.
+- Standardize engine log artifact filenames so v0.2.0 deep-metrics parsing can depend on stable inputs.
 - CLI workload pack validator for pack authors.
 - OpenAPI/SDK artifacts updated and drift-free when routes/schemas change.
 
@@ -61,6 +72,7 @@ Define realistic benchmark workloads and produce portable run outputs for analys
   sweep prompt selection and deterministic case identity.
 - Exports must remain usable for both single runs and sweeps:
   - CSV must include per-case `engine_args_json` + `request_params_json` so sweep configs can be reconstructed.
+  - CSV and NDJSON should repeat essential run-level metadata on every row/line so results can be concatenated across runs and engines.
   - Markdown summary must include sweep ranking and aggregates when present in `result.json`.
 
 ## Implementation tasks
@@ -305,7 +317,7 @@ printf "MAGIC_PHRASE=kiwi-42\n" > /tmp/chimera-workloads/minimal-pack/docs/conte
   - Confirm truncation (or explicit failure) matches the documented policy.
 
 
-### Task 6: Persist Workload Digest + Provenance into `result.json`
+### Task 6: Persist Workload + Model Digests and Provenance into `result.json`
 
 - Goal: runs remain comparable even if a filesystem pack changes later.
 - Compute a workload digest for every run:
@@ -314,6 +326,12 @@ printf "MAGIC_PHRASE=kiwi-42\n" > /tmp/chimera-workloads/minimal-pack/docs/conte
     - For every `contextFiles[]` actually used by executed prompts, compute `sha256(contents)`.
     - Record only relative paths + hashes + byte sizes (never absolute paths).
   - Keep ordering deterministic (sort by relative path).
+- Compute a model digest when available:
+  - If the orchestrator can read model bytes locally (local targets, and any model identifiers that resolve to a local file), capture:
+    - `bytes`
+    - `digestSha256` (optional; see performance note below)
+  - If the model identifier refers to a remote path (SSH target), set digest fields to `null` with a stable `unavailableReason`.
+  - Performance note: computing `sha256` over multi-GB model files is expensive. Use a deterministic cache keyed by `{ resolvedPath, bytes, mtimeMs }` so repeated runs do not re-hash unchanged files.
 - Persist provenance into `runs/{runId}/result.json`:
   - Add a top-level `workloadPack` object (additive; keep existing `workloadId` top-level field):
     - `schemaVersion` (pack schema version)
@@ -321,8 +339,14 @@ printf "MAGIC_PHRASE=kiwi-42\n" > /tmp/chimera-workloads/minimal-pack/docs/conte
     - `source` (`built-in` | `filesystem`)
     - `digestSha256`
     - `contextDigests` (array of `{ path, sha256, bytes }`)
+  - Add a top-level `modelInfo` object (additive; keep existing `model.identifier`):
+    - `resolvedPath` (optional; omit for SSH targets)
+    - `bytes` (nullable)
+    - `mtimeMs` (nullable)
+    - `digestSha256` (nullable)
+    - `unavailableReason` (optional string when digests are null)
 - Surface provenance in exports:
-  - `summary.md` should include `workloadId` + `digestSha256`.
+  - `summary.md` should include `workloadId` + `workloadPack.digestSha256` and, when available, `modelInfo.digestSha256`.
   - CSV does not need a digest column (digest is run-level), but the bundle should include `result.json`.
 
 #### Manual Testing
@@ -340,11 +364,16 @@ rg -n "\"workloadPack\"" runs/RUN_ID/result.json
   - Reload workloads (`POST /workloads/reload`).
   - Re-run and confirm `digestSha256` changes.
 
+4) Model digest caching:
+  - Run two identical runs against the same local model file.
+  - Confirm the second run does not re-hash (observe logs) and `modelInfo.digestSha256` is stable.
+
 
 ### Task 7: Implement Exports (`cases.csv`, `summary.md`, `cases.ndjson`, `bundle.tgz`) + `/exports` APIs
 
 - Export behavior:
   - Generate exports from `runs/{runId}/result.json`:
+    - `runs/{runId}/manifest.json`
     - `runs/{runId}/cases.csv`
     - `runs/{runId}/summary.md`
     - `runs/{runId}/cases.ndjson`
@@ -356,14 +385,23 @@ rg -n "\"workloadPack\"" runs/RUN_ID/result.json
 - CSV mapping:
   - Rows correspond 1:1 with result-schema cases.
   - Headers use `snake_case`.
+  - Repeat essential run-level fields on every row:
+    - `run_id`, `schema_version`, `created_at`
+    - `orchestrator_version`, `engine_id`, `engine_version`
+    - `target`, `target_profile_id`
+    - `model_identifier`, `model_digest_sha256`
+    - `workload_id`, `workload_digest_sha256`
   - Include `metricsExtra` as `metrics_extra_json` when present.
   - Include `engine_args_json` and `request_params_json` so sweep case configs can be reconstructed.
 - NDJSON mapping:
   - One JSON object per line.
-  - Each line includes the full case record (using the same key names as `result.json` case objects).
+  - Each line includes:
+    - stable run-level metadata fields
+    - the full case record (using the same key names as `result.json` case objects)
 - Bundle behavior:
   - `bundle.tgz` includes at minimum:
     - `result.json`
+    - `manifest.json`
     - `cases.csv`
     - `cases.ndjson`
     - `summary.md`
@@ -371,6 +409,10 @@ rg -n "\"workloadPack\"" runs/RUN_ID/result.json
     - stable file order
     - fixed timestamps/metadata so the archive is byte-stable for identical inputs
 - API surfaces (raw, not enveloped):
+  - `GET /exports/runs/:runId/result.json` -> `application/json`
+  - `GET /exports/runs/:runId/manifest.json` -> `application/json`
+  - `GET /exports/runs/:runId/engine.stdout.log` -> `text/plain`
+  - `GET /exports/runs/:runId/engine.stderr.log` -> `text/plain`
   - `GET /exports/runs/:runId/cases.csv` -> `text/csv`
   - `GET /exports/runs/:runId/summary.md` -> `text/markdown`
   - `GET /exports/runs/:runId/cases.ndjson` -> `application/x-ndjson`
@@ -387,12 +429,14 @@ rg -n "\"workloadPack\"" runs/RUN_ID/result.json
 2) Confirm files exist:
 
 ```bash
-ls -la runs/RUN_ID/cases.csv runs/RUN_ID/summary.md runs/RUN_ID/cases.ndjson runs/RUN_ID/bundle.tgz
+ls -la runs/RUN_ID/result.json runs/RUN_ID/manifest.json runs/RUN_ID/cases.csv runs/RUN_ID/summary.md runs/RUN_ID/cases.ndjson runs/RUN_ID/bundle.tgz
 ```
 
 3) Fetch via API and confirm content types:
 
 ```bash
+curl -i -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/exports/runs/RUN_ID/result.json
+curl -i -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/exports/runs/RUN_ID/manifest.json
 curl -i -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/exports/runs/RUN_ID/cases.csv
 curl -i -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/exports/runs/RUN_ID/summary.md
 curl -i -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/exports/runs/RUN_ID/cases.ndjson
@@ -410,10 +454,18 @@ tar -tzf /tmp/chimera-bundle.tgz
 
 ### Task 8: Add Run Artifacts Index API (`GET /runs/:runId/artifacts`)
 
-- Add an enveloped JSON endpoint that lists which run artifacts are available.
+- Add an enveloped JSON endpoint that returns a run's artifact manifest.
+- Manifest source of truth:
+  - `runs/{runId}/manifest.json` (generated by Task 7; may be generated on-demand if missing).
+- Manifest shape:
+  - `schemaVersion`
+  - `runId`
+  - `artifacts[]`: `{ name, contentType, bytes, sha256, url }`
+  - Keep ordering deterministic by sorting `name`.
 - Response shape (example):
-  - `artifacts[]`: `{ name, contentType, bytes, url, exists }`
-  - Include at least: `result.json`, `cases.csv`, `cases.ndjson`, `summary.md`, `bundle.tgz`.
+  - Return the manifest contents under `data`.
+  - Include at least: `result.json`, `manifest.json`, `cases.csv`, `cases.ndjson`, `summary.md`, `bundle.tgz`.
+  - Include engine log artifacts when present: `engine.stdout.log`, `engine.stderr.log`.
 - Do not expose absolute filesystem paths.
 - OpenAPI/SDK:
   - Register the endpoint in OpenAPI and regenerate artifacts.
@@ -428,7 +480,7 @@ tar -tzf /tmp/chimera-bundle.tgz
 curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/runs/RUN_ID/artifacts
 ```
 
-3) Confirm URLs match the corresponding `/runs` and `/exports` routes and `exists=true` for generated artifacts.
+3) Confirm the manifest lists expected artifacts with stable ordering and correct URLs.
 
 
 ### Task 9: Add CLI Workload Pack Validator
@@ -467,8 +519,10 @@ echo $?
 - Add tests for:
   - workload pack validation and path confinement
   - `/workloads` responses (includePrompts gating, size ceiling, reload)
-  - workload digest persistence (`workloadPack.digestSha256`)
-  - `/exports` responses (raw content types, bundle contents)
+  - workload digest persistence (`workloadPack.digestSha256`) and model digest persistence (`modelInfo.digestSha256`)
+  - `runs/{runId}/manifest.json` shape and deterministic ordering
+  - engine log artifacts (bounded persistence + redaction) and `/exports` log routes
+  - `/exports` responses (raw content types, bundle contents, run-level join columns)
   - `/runs/:runId/artifacts` index
   - CLI validator behavior and exit codes
 - OpenAPI/SDK:
@@ -492,9 +546,50 @@ bun run openapi:check
 ```
 
 
+### Task 11: Capture Bounded Engine Logs as Run Artifacts
+
+- Goal: preserve enough engine output for debugging and for v0.2.0 deep-metrics parsing.
+- Persist bounded log artifacts for each run:
+  - `runs/{runId}/engine.stdout.log`
+  - `runs/{runId}/engine.stderr.log`
+- Log capture rules:
+  - Capture output from engine subprocesses / SSH-managed sessions when available.
+  - Apply hard size caps (truncate with a stable marker) to avoid disk blowups.
+  - Sanitize control characters.
+  - Redact secrets (API keys, auth headers, passwords) before persistence.
+- Manifest + indexing:
+  - Include these artifacts in `runs/{runId}/manifest.json` and in `GET /runs/:runId/artifacts` when present.
+- Export access:
+  - Expose raw downloads via `/exports` so remote clients can fetch logs when debugging.
+  - Do not include logs in the default shareable `bundle.tgz` unless explicitly requested (separate debug bundle or explicit include flag).
+
+#### Manual Testing
+
+1) Complete a run.
+
+2) Confirm the log artifacts exist:
+
+```bash
+ls -la runs/RUN_ID/engine.stdout.log runs/RUN_ID/engine.stderr.log
+```
+
+3) Confirm logs are accessible via API (once `/exports` log routes exist):
+
+```bash
+curl -i -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/exports/runs/RUN_ID/engine.stdout.log
+curl -i -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/exports/runs/RUN_ID/engine.stderr.log
+```
+
+4) Confirm common secrets are not present in persisted logs:
+
+```bash
+rg -n "Authorization|CHIMERA_SERVER_PASSWORD|api[-_ ]?key" runs/RUN_ID/engine.*.log
+```
+
+
 ## Follow-ups (engine hardening)
 
-### Task 11: Validate Explicit GPU Selector Values for Mixed-GPU SSH Targets
+### Task 12: Validate Explicit GPU Selector Values for Mixed-GPU SSH Targets
 
 - Extend mixed-GPU validation to reject invalid selector values when discovery hints are available:
   - `--device <dev1,dev2,...>`:
@@ -521,7 +616,7 @@ bun run openapi:check
 
 ## Follow-ups (workload scenarios + prompt calibration)
 
-### Task 12: Add Scenario-Style Prompt Variants to Workload Packs
+### Task 13: Add Scenario-Style Prompt Variants to Workload Packs
 
 - Add optional scenario variants (example: `small`, `medium`, `large`) with stable IDs.
 - Each scenario selects a fixed `messages` bundle with stable identifiers.
@@ -534,7 +629,7 @@ bun run openapi:check
 2) Confirm `/workloads/:workloadId` exposes scenario metadata and that prompt selection (once implemented by the sweep spec) can target scenarios deterministically.
 
 
-### Task 13: Add Prompt Calibration Policy Support for Sweeps
+### Task 14: Add Prompt Calibration Policy Support for Sweeps
 
 - Goal: keep a single fixed prompt per sweep run while avoiding repeated prompt-fit failures.
 - Provide a default policy that chooses the largest scenario that fits:
@@ -551,7 +646,7 @@ bun run openapi:check
 2) Confirm the selected scenario is stable and reflected in run artifacts/exports.
 
 
-### Task 14: Reduce Sweep Restart Churn for Guaranteed Prompt-Overflow Cases
+### Task 15: Reduce Sweep Restart Churn for Guaranteed Prompt-Overflow Cases
 
 - Add deterministic preflight bucketing keyed by effective prompt/scenario + `--ctx-size`.
 - When a bucket fails prompt-fit preflight, mark all matching cases as `VALIDATION_PROMPT_TOO_LARGE` without launching engine sessions.

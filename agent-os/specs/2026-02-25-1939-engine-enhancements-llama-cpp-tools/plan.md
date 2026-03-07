@@ -40,6 +40,7 @@ Expand `llama.cpp` engine support beyond `llama-server` while keeping the core r
 
 - `agent-os/standards/plugins/engine-interface.md`
 - `agent-os/standards/runs/result-schema.md`
+- `agent-os/standards/runs/artifact-store.md`
 - `agent-os/standards/server/api-conventions.md`
 
 ## Notes (research summary)
@@ -52,15 +53,20 @@ Expand `llama.cpp` engine support beyond `llama-server` while keeping the core r
 
 1. Define model identifier extensions and `hf` CLI download/resolve behavior.
    - Add an explicit Hugging Face identifier format (example: `hf:<repo_id>#<filename>.gguf`).
+     - Optional extension (recommended): support pinning a revision (example: `hf:<repo_id>@<revision>#<filename>.gguf`).
    - Require the `hf` CLI to be installed and runnable; provide actionable install errors.
-   - Download to a configurable cache dir (default under an XDG cache location) and store resolved metadata:
-     - resolved local path, file size, and a content hash (sha256) for reproducibility.
-   - Ensure downloaded/resolved GGUF paths remain compatible with `CHIMERA_MODEL_ROOTS` confinement.
+   - Download to a configurable cache dir (default under an XDG cache location) and store reproducibility metadata in `result.json`:
+     - `model.identifier` remains the input identifier (the `hf:...` string).
+     - `modelInfo.resolvedPath` points to the downloaded GGUF.
+     - `modelInfo.bytes`, `modelInfo.mtimeMs`, and `modelInfo.digestSha256` are populated when available.
+   - Cache + confinement:
+     - If `CHIMERA_MODEL_ROOTS` is configured (or required due to non-loopback serve), ensure the HF cache dir is within an allowlisted root or is explicitly allowlisted as a model root.
+     - Never allow traversal outside the configured cache/model roots (including via symlinks).
    - Manual testing steps:
      - Verify missing `hf` CLI fails with an actionable error.
      - Resolve a model identifier:
        - `model.identifier: "hf:org/model-repo#model.gguf"`
-       - Confirm the resolved GGUF is downloaded into the cache and the resolved local path is persisted in run metadata.
+       - Confirm the resolved GGUF is downloaded into the cache and `result.json` includes `modelInfo.resolvedPath` + `modelInfo.digestSha256`.
      - Re-run the same identifier and confirm it hits the cache (no re-download).
 
 2. Implement `llama-cpp-cli` plugin with strict-by-default param validation and metrics parsing.
@@ -71,15 +77,20 @@ Expand `llama.cpp` engine support beyond `llama-server` while keeping the core r
    - Execution:
       - Run per-case `llama-cli` subprocesses; capture stdout/stderr with bounded buffers.
       - Map per-case outputs to the run result schema; record errors per case.
+      - Persist optional engine log artifacts via `runs/artifact-store`:
+        - `runs/{runId}/engine.stdout.log` (bounded + redacted)
+        - `runs/{runId}/engine.stderr.log` (bounded + redacted)
    - Manual testing steps:
      - Run a `llama-cpp-cli` case:
        - `POST /runs` with `engineId: "llama-cpp-cli"` and a small workload.
      - Verify strict validation rejects unknown args, and permissive mode accepts them.
      - Verify `result.json` contains per-case outputs and latency fields.
+     - Verify `engine.stdout.log` / `engine.stderr.log` are written when enabled and do not contain secrets.
 
 3. Define `llama-bench` integration approach and map outputs to `runs/result-schema` artifacts.
    - Decide whether this is a separate engine id (`llama-cpp-bench`) or a workload type.
    - Parse `llama-bench` outputs into per-case records (or `metricsExtra`) without breaking required fields.
+   - Persist `llama-bench` raw output as a run artifact (format chosen by implementation; prefer JSON/NDJSON when available) so it is included in `manifest.json` / `bundle.tgz` when those exports are supported.
    - Manual testing steps:
      - Run a `llama-bench` workflow on a known model and verify parsed metrics appear in `result.json` and exports.
 
@@ -98,11 +109,13 @@ Expand `llama.cpp` engine support beyond `llama-server` while keeping the core r
    - Manual testing steps:
      - Run unit/integration tests: `bun test`
      - (Optional, gated) Run engine-required tests: `CHIMERA_E2E=1 bun test`
+     - If exports are enabled, fetch run artifacts and confirm they include expected files:
+       - `GET /runs/{runId}/manifest` and `GET /runs/{runId}/bundle` (or equivalent routes defined by `workload-packs-and-exports`).
 
 ## Exit criteria
 
 - Users can run comparable benchmarks via `llama-server` or `llama-cli` through the same orchestrator APIs.
-- Hugging Face identifiers resolve via the `hf` CLI to local GGUF paths, and runs remain reproducible via persisted resolved paths/metadata.
+- Hugging Face identifiers resolve via the `hf` CLI to local GGUF paths, and runs remain reproducible via `result.json` `modelInfo` fields (especially `digestSha256`).
 
 ## Dependencies
 

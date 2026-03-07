@@ -16,6 +16,10 @@ Add additional engine plugins after the core system proves stable with `llama.cp
 - `exo` plugin implementing the standard engine interface.
 - Capability matrix comparing plugin support (metrics, streaming, remote compatibility, known limitations).
 - Engine-specific docs and configuration examples.
+- Cross-engine artifact parity:
+  - `runs/{runId}/manifest.json` and `GET /runs/:runId/artifacts`
+  - `/exports` downloads (`result.json`, `cases.csv`, `cases.ndjson`, `summary.md`, `bundle.tgz`)
+  - joinable exports (run-level fields repeated per CSV row / NDJSON line)
 
 ## Standards applied
 
@@ -64,13 +68,22 @@ Add additional engine plugins after the core system proves stable with `llama.cp
      - Run the same workload on `llama-cpp` and on the new engine and compare which metrics are populated.
 
 4. Validate schema/export compatibility for multi-engine runs.
-   - Ensure `result.json` always conforms to required fields.
-   - Ensure `cases.csv` and `summary.md` generation works for the new engines.
-   - Manual testing steps:
-     - Complete a run on each engine and verify:
-       - `runs/RUN_ID/result.json`
-       - `runs/RUN_ID/cases.csv`
-       - `runs/RUN_ID/summary.md`
+    - Ensure `result.json` always conforms to required fields.
+    - Ensure export generation works for the new engines:
+      - `cases.csv`, `cases.ndjson`, `summary.md`, `bundle.tgz`, `manifest.json`
+    - Ensure engine log artifacts are handled safely:
+      - if persisted, they are bounded and redacted
+    - Manual testing steps:
+      - Complete a run on each engine and verify:
+        - `runs/RUN_ID/result.json`
+        - `runs/RUN_ID/manifest.json`
+        - `runs/RUN_ID/cases.csv`
+        - `runs/RUN_ID/cases.ndjson`
+        - `runs/RUN_ID/summary.md`
+        - `runs/RUN_ID/bundle.tgz`
+      - Verify API parity:
+        - `GET /runs/RUN_ID/artifacts`
+        - `GET /exports/runs/RUN_ID/bundle.tgz`
 
 5. Document caveats and unsupported features by engine.
    - Add per-engine docs:
