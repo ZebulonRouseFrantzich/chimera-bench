@@ -10,6 +10,9 @@ Do not duplicate standards text here; use the source files below directly.
 - `agent-os/standards/runs/artifact-store.md`
 - `agent-os/standards/runs/built-in-workload-hardening.md`
 - `agent-os/standards/global/sanitization-and-safe-errors.md`
+- `agent-os/standards/server/log-line-format.md`
+- `agent-os/standards/global/ttl-cache-and-inflight-dedupe.md`
+- `agent-os/standards/global/time-based-testing.md`
 - `agent-os/standards/server/openapi-and-sdk-artifacts.md`
 - `agent-os/standards/server/request-param-budgets.md`
 - `agent-os/standards/cli/arg-parsing.md`

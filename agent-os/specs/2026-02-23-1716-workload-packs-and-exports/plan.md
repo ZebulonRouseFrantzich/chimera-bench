@@ -50,6 +50,9 @@ Define realistic benchmark workloads and produce portable run outputs for analys
 - `agent-os/standards/runs/artifact-store.md`
 - `agent-os/standards/runs/built-in-workload-hardening.md`
 - `agent-os/standards/global/sanitization-and-safe-errors.md`
+- `agent-os/standards/server/log-line-format.md`
+- `agent-os/standards/global/ttl-cache-and-inflight-dedupe.md`
+- `agent-os/standards/global/time-based-testing.md`
 - `agent-os/standards/server/openapi-and-sdk-artifacts.md`
 - `agent-os/standards/server/request-param-budgets.md`
 - `agent-os/standards/cli/arg-parsing.md`
@@ -74,6 +77,20 @@ Define realistic benchmark workloads and produce portable run outputs for analys
   - CSV must include per-case `engine_args_json` + `request_params_json` so sweep configs can be reconstructed.
   - CSV and NDJSON should repeat essential run-level metadata on every row/line so results can be concatenated across runs and engines.
   - Markdown summary must include sweep ranking and aggregates when present in `result.json`.
+
+
+## Parallelizable workstreams
+
+- Workstream A (Tasks 2-4): workload IDs, pack schema, registry, and `/workloads` routes.
+  - Coordination point: define shared constants once (workloadId regex, budgets).
+- Workstream B (Tasks 5-6): context ingestion + provenance/digest persistence.
+  - Low conflict with A; integrates at “select workload at run creation” seam.
+- Workstream C (Task 7): exports and `/exports` routes.
+  - Renderer modules (CSV/NDJSON/summary/bundle) can be developed in parallel behind a single orchestration owner.
+- Workstream D (Tasks 9-10): CLI validator + fixtures/tests.
+  - Task 9 depends on Task 3; Task 10 should land after export formats stabilize.
+- Workstream E (Task 11): bounded engine logs.
+  - Can be parallel with Task 7; integrates via manifest + `/exports` allowlist.
 
 ## Implementation tasks
 
@@ -107,15 +124,28 @@ rg -n "^### Task |^#### Manual Testing" agent-os/specs/2026-02-23-1716-workload-
 - Goal: all built-in workload IDs follow `type.vN` so version bumps are explicit and stable.
 - Update built-in workload IDs:
   - Keep `starter.v1` unchanged.
-  - Rename the tuning workload from `tuning.v0_0_1` to `tuning.v1`.
-    - Update its `caseId` and `promptId` to match the new workload ID prefix.
+  - Introduce the tuning workload as `tuning.v1`.
+    - Update its `caseId` and `promptId` to match the new workload ID prefix (`tuning.v1.`).
     - Re-baseline any regression hash tests that intentionally lock the prompt contract.
+  - Back-compat for existing automation:
+    - Treat `tuning.v0_0_1` as a deprecated alias of `tuning.v1` for at least one release line (v0.1.x).
+    - Runs created using the alias must persist the canonical ID (`tuning.v1`) in `result.json` and exports.
 - Default workload selection:
   - Add a new high-quality starter pack as `starter.v2` (do not mutate `starter.v1`).
   - Set the server default workload ID to `starter.v2` for v0.1.0.
   - Keep `starter.v1` and `tuning.v1` selectable explicitly.
+- `starter.v2` content and intent:
+  - Include 4 prompts designed to resemble real technical usage:
+    - TypeScript bugfix + tests (small but non-trivial).
+    - API/architecture explanation with explicit trade-offs.
+    - Data transformation task with structured output requirements.
+    - Multi-turn follow-up where the assistant must carry constraints across turns.
+  - Every prompt must be deterministic, bounded, and regression-locked per `runs/built-in-workload-hardening`.
+  - Prompt IDs and case IDs must be stable and prefixed with `starter.v2.`.
 - Documentation:
   - Update any curl examples in specs that reference `tuning.v0_0_1` to `tuning.v1`.
+  - Call out the default workload change (`starter.v2`) as a compatibility note in the v0.1.0 release notes.
+  - When the server chooses the default workload because the client omitted `workloadId`, emit a structured log line (include `defaultWorkloadId` and `requestedWorkloadId=unset`).
 
 #### Manual Testing
 
@@ -164,6 +194,9 @@ bun run serve
     - max messages per prompt
     - max message content bytes
     - max context files per prompt
+  - `workloadId` regex enforcement:
+    - The regex requirement applies to pack definitions (`workload.json`).
+    - Run creation must validate that the requested `workloadId` exists in the registry and return a stable `WORKLOAD_NOT_FOUND` error when missing.
   - Errors:
     - Use stable `VALIDATION_*` codes.
     - Client messages must not include absolute filesystem paths; log detailed `logReason` instead.
@@ -207,11 +240,16 @@ EOF
 - Loader sources:
   - Built-in packs (compiled into the binary).
   - File-based packs under allowlisted roots.
+  - Normalize both sources into the same internal pack shape and validate built-ins with the same zod schema used for filesystem packs.
 - `CHIMERA_WORKLOAD_ROOTS` parsing:
   - Prefer one delimiter across platforms if feasible, but for correctness use OS delimiter via `node:path` `delimiter`.
     - Linux/macOS: `:`
     - Windows: `;`
   - Rationale: aligns with existing `CHIMERA_MODEL_ROOTS` parsing and avoids Windows drive-letter ambiguity.
+- Trust + safety model:
+  - `CHIMERA_WORKLOAD_ROOTS` is operator-controlled and must point to trusted directories.
+  - Workload packs are treated as untrusted inputs within those trusted roots (validate and bound everything).
+  - Defense-in-depth (POSIX): reject workload roots that resolve under `/proc`, `/sys`, or `/dev`.
 - Discovery strategy (perf + safety):
   - For each root, scan one directory level for subdirectories containing `workload.json`.
   - Do not recurse deeply.
@@ -225,10 +263,17 @@ EOF
     - Fields: `workloadId`, `displayName`, `version`, `promptCount`, `source` (`built-in` | `filesystem`).
   - `GET /workloads/:workloadId` (enveloped JSON):
     - default: metadata + `promptIds` list (no messages/prompt bodies)
-    - `?includePrompts=1`: include prompt message bodies (bounded by a response-size limit).
+    - `?includePrompts=1`: include prompt message bodies.
+      - Hard response ceiling: 2 MiB (UTF-8 bytes) for the JSON payload.
+      - If the response would exceed the ceiling, return HTTP 413 with a stable `RESPONSE_TOO_LARGE` error (do not truncate silently).
   - `POST /workloads/reload` (enveloped JSON): rescan `CHIMERA_WORKLOAD_ROOTS` and refresh the in-memory index.
     - Response includes counts (example: discovered packs, skipped invalid packs, duplicate-id skips).
+    - Auth required.
+    - Add a simple cooldown (minimum 5s between reloads) and in-flight dedupe so concurrent callers do not trigger duplicate scans.
+      - Within the cooldown window, return HTTP 429 with a stable `WORKLOADS_RELOAD_COOLDOWN` error and a `retryAfterMs` hint.
   - Do not expose absolute filesystem paths in API responses.
+- Observability:
+  - Log one structured line per scan/reload with pack counts, skipped counts, and elapsedMs (per `server/log-line-format`).
 - OpenAPI/SDK:
   - Add route schemas and OpenAPI path registrations for `/workloads`.
   - Regenerate artifacts per `server/openapi-and-sdk-artifacts`.
@@ -284,8 +329,9 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD -X POST http://127.0.0.1:4096/workl
   - max combined context bytes per prompt
   - max number of context files per prompt
 - Truncation policy:
-  - Prefer deterministic truncation with a stable marker (example: `\n...[truncated]...\n`).
-  - Document whether truncation occurs per-file or after concatenation.
+  - Deterministic, per-file truncation.
+  - Read at most `maxBytesPerContextFile` from each file (UTF-8 bytes); if the file is larger, truncate and append the stable marker `\n...[truncated]...\n`.
+  - Enforce `maxCombinedContextBytesPerPrompt` by limiting each context file read to the remaining budget; when the combined budget is exhausted, omit remaining context files and append a stable marker indicating omission.
 - Injection format:
   - Prepend a system message containing context docs with explicit markers:
     - `BEGIN_CONTEXT <relative_path>`
@@ -294,6 +340,11 @@ curl -sS -u chimera:$CHIMERA_SERVER_PASSWORD -X POST http://127.0.0.1:4096/workl
 - Token-fit preflight alignment:
   - Ensure the string used for preflight token estimation includes the injected context.
   - Keep behavior deterministic (same pack -> same injected message text).
+- Notes (security):
+  - Perform realpath-based containment checks immediately before reading each file.
+  - Treat symlink/TOCTOU hardening as best-effort; rely on trusted workload roots for the primary safety boundary.
+- Observability:
+  - Log context ingestion with bytes, truncated flags, and elapsedMs (per `server/log-line-format`).
 
 #### Manual Testing
 
@@ -320,11 +371,16 @@ printf "MAGIC_PHRASE=kiwi-42\n" > /tmp/chimera-workloads/minimal-pack/docs/conte
 ### Task 6: Persist Workload + Model Digests and Provenance into `result.json`
 
 - Goal: runs remain comparable even if a filesystem pack changes later.
+- Invariant:
+  - Snapshot provenance at run creation time (or immediately after pack selection) and persist it with the run.
+  - Exports must use only persisted run artifacts (`result.json` and derived files) and must not re-resolve workload packs from the live registry.
 - Compute a workload digest for every run:
   - Base input: canonicalized `workload.json`.
   - Include referenced context docs:
-    - For every `contextFiles[]` actually used by executed prompts, compute `sha256(contents)`.
+    - For every `contextFiles[]` actually used by executed prompts, compute `sha256(contentsUsed)`.
+      - `contentsUsed` is the exact UTF-8 bytes injected into the prompt (post-truncation / post-budget enforcement).
     - Record only relative paths + hashes + byte sizes (never absolute paths).
+    - Include a `truncated` boolean when the injected content differs from the full file contents.
   - Keep ordering deterministic (sort by relative path).
 - Compute a model digest when available:
   - If the orchestrator can read model bytes locally (local targets, and any model identifiers that resolve to a local file), capture:
@@ -332,13 +388,17 @@ printf "MAGIC_PHRASE=kiwi-42\n" > /tmp/chimera-workloads/minimal-pack/docs/conte
     - `digestSha256` (optional; see performance note below)
   - If the model identifier refers to a remote path (SSH target), set digest fields to `null` with a stable `unavailableReason`.
   - Performance note: computing `sha256` over multi-GB model files is expensive. Use a deterministic cache keyed by `{ resolvedPath, bytes, mtimeMs }` so repeated runs do not re-hash unchanged files.
+  - Trust note: model roots must be operator-controlled and not writable by untrusted users.
+  - Add an operator/debug option to bypass/disable the model digest cache for re-verification (for example: `CHIMERA_MODEL_DIGEST_CACHE_MAX_ENTRIES=0`).
+- Observability:
+  - Log workload digest computation and model digest cache hit/miss with stable keys (per `server/log-line-format`).
 - Persist provenance into `runs/{runId}/result.json`:
   - Add a top-level `workloadPack` object (additive; keep existing `workloadId` top-level field):
     - `schemaVersion` (pack schema version)
     - `version` (from `workload.json`)
     - `source` (`built-in` | `filesystem`)
     - `digestSha256`
-    - `contextDigests` (array of `{ path, sha256, bytes }`)
+    - `contextDigests` (array of `{ path, sha256, bytes, truncated }`)
   - Add a top-level `modelInfo` object (additive; keep existing `model.identifier`):
     - `resolvedPath` (optional; omit for SSH targets)
     - `bytes` (nullable)
@@ -379,9 +439,17 @@ rg -n "\"workloadPack\"" runs/RUN_ID/result.json
     - `runs/{runId}/cases.ndjson`
     - `runs/{runId}/bundle.tgz`
   - Write atomically (temp + rename) and keep outputs deterministic.
+    - Create temp files in the destination run directory to preserve atomic rename semantics (do not write to a different filesystem like `/tmp`).
   - Provide idempotent regeneration: safe to re-run without semantic drift.
   - Generate exports automatically on run completion.
   - If an export is requested before it exists, generate on-demand from `result.json`.
+    - Use in-flight dedupe (single-flight) keyed by `{ runId, artifactName }` so concurrent requests do not start duplicate generation.
+    - Follow `global/ttl-cache-and-inflight-dedupe`.
+  - Source validation:
+    - Parse and schema-validate `result.json` before generating derived exports.
+    - If validation fails, do not write exports; return HTTP 500 with a safe, stable error (example code: `EXPORT_SOURCE_INVALID`) and log `logReason` with details.
+  - Observability:
+    - Log export generation (artifactName, bytes, elapsedMs, onDemand=0|1) per `server/log-line-format`.
 - CSV mapping:
   - Rows correspond 1:1 with result-schema cases.
   - Headers use `snake_case`.
@@ -393,8 +461,12 @@ rg -n "\"workloadPack\"" runs/RUN_ID/result.json
     - `workload_id`, `workload_digest_sha256`
   - Include `metricsExtra` as `metrics_extra_json` when present.
   - Include `engine_args_json` and `request_params_json` so sweep case configs can be reconstructed.
+  - Stability contract:
+    - Columns are append-only. Do not rename/reorder/remove columns within a schema version.
+    - If columns are added in future versions, append at the end.
 - NDJSON mapping:
   - One JSON object per line.
+  - Stream the response (do not buffer the entire file in memory).
   - Each line includes:
     - stable run-level metadata fields
     - the full case record (using the same key names as `result.json` case objects)
@@ -405,10 +477,18 @@ rg -n "\"workloadPack\"" runs/RUN_ID/result.json
     - `cases.csv`
     - `cases.ndjson`
     - `summary.md`
-  - Bundle generation is deterministic:
-    - stable file order
-    - fixed timestamps/metadata so the archive is byte-stable for identical inputs
+  - Bundle generation is deterministic (byte-stable for identical inputs):
+    - Stable file order.
+    - Deterministic tar headers for every entry:
+      - `mtime=0`, `uid=0`, `gid=0`, fixed `mode` (for example `0644`), empty owner/group names.
+    - Deterministic gzip header:
+      - `mtime=0`, no filename, stable OS byte (use `255` / unknown).
+  - Logs are excluded from the default bundle.
+    - Support explicit inclusion via `GET /exports/runs/:runId/bundle.tgz?includeLogs=1`.
+    - When included, logs must appear at stable paths in the archive (`engine.stdout.log`, `engine.stderr.log`) and use a stable file order.
 - API surfaces (raw, not enveloped):
+  - These routes are intentionally an allowlist of known artifacts.
+  - Do not implement a generic `:filename` route.
   - `GET /exports/runs/:runId/result.json` -> `application/json`
   - `GET /exports/runs/:runId/manifest.json` -> `application/json`
   - `GET /exports/runs/:runId/engine.stdout.log` -> `text/plain`
@@ -418,6 +498,10 @@ rg -n "\"workloadPack\"" runs/RUN_ID/result.json
   - `GET /exports/runs/:runId/cases.ndjson` -> `application/x-ndjson`
   - `GET /exports/runs/:runId/bundle.tgz` -> `application/gzip`
   - Include `Content-Disposition` filenames.
+    - Filenames must be ASCII-safe and include the `runId` (example: `run_<runId>_cases.csv`).
+  - Error responses:
+    - Success responses return raw artifact bytes.
+    - Errors return standard enveloped JSON errors with safe messages (content-type `application/json`).
 - OpenAPI/SDK:
   - Register `/exports` paths with correct content types.
   - Regenerate OpenAPI/SDK artifacts.
@@ -450,6 +534,13 @@ tar -tzf /tmp/chimera-bundle.tgz
 ```
 
 5) Delete one export file and re-fetch; confirm it is regenerated deterministically.
+
+6) Path traversal negative checks (should 404):
+
+```bash
+curl -i -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/exports/runs/RUN_ID/..%2f..%2fetc%2fpasswd
+curl -i -sS -u chimera:$CHIMERA_SERVER_PASSWORD http://127.0.0.1:4096/exports/runs/RUN_ID/unknown.file
+```
 
 
 ### Task 8: Add Run Artifacts Index API (`GET /runs/:runId/artifacts`)
@@ -514,8 +605,10 @@ echo $?
 
 - Add fixtures:
   - `result.json` fixture (small but representative; includes errors + metricsExtra when possible).
+    - Prefer a fixture generated by `server-plugin-llama-cpp-foundation` and validate it against `runs/result-schema`.
   - golden `cases.csv`, `cases.ndjson`, `summary.md` outputs.
 - Fail tests on output drift unless explicitly updated.
+- Add a documented, deterministic regeneration workflow for goldens (helper script or test harness), so updates are intentional.
 - Add tests for:
   - workload pack validation and path confinement
   - `/workloads` responses (includePrompts gating, size ceiling, reload)
@@ -523,6 +616,7 @@ echo $?
   - `runs/{runId}/manifest.json` shape and deterministic ordering
   - engine log artifacts (bounded persistence + redaction) and `/exports` log routes
   - `/exports` responses (raw content types, bundle contents, run-level join columns)
+  - bundle determinism (two generations produce identical bytes for identical inputs)
   - `/runs/:runId/artifacts` index
   - CLI validator behavior and exit codes
 - OpenAPI/SDK:
@@ -556,12 +650,20 @@ bun run openapi:check
   - Capture output from engine subprocesses / SSH-managed sessions when available.
   - Apply hard size caps (truncate with a stable marker) to avoid disk blowups.
   - Sanitize control characters.
-  - Redact secrets (API keys, auth headers, passwords) before persistence.
+  - Redact secrets (best-effort) before persistence.
+    - Baseline patterns to redact (case-insensitive where applicable):
+      - `Authorization:` headers (including `Bearer` tokens)
+      - `CHIMERA_SERVER_PASSWORD`
+      - `api[-_ ]?key`
+      - SSH private key markers (`BEGIN OPENSSH PRIVATE KEY`, `BEGIN RSA PRIVATE KEY`)
+    - Document that redaction is not complete; operators should avoid passing secrets via args/env that engines may print.
+  - Provide an operator option to disable log persistence entirely (when disabled, omit from manifest and `/exports` routes return 404).
 - Manifest + indexing:
   - Include these artifacts in `runs/{runId}/manifest.json` and in `GET /runs/:runId/artifacts` when present.
 - Export access:
   - Expose raw downloads via `/exports` so remote clients can fetch logs when debugging.
-  - Do not include logs in the default shareable `bundle.tgz` unless explicitly requested (separate debug bundle or explicit include flag).
+  - Do not include logs in the default shareable `bundle.tgz`.
+    - Include logs only when explicitly requested via `?includeLogs=1` on the bundle endpoint.
 
 #### Manual Testing
 
@@ -657,6 +759,22 @@ rg -n "Authorization|CHIMERA_SERVER_PASSWORD|api[-_ ]?key" runs/RUN_ID/engine.*.
 1) Run a sweep where every case is known oversize and confirm no repeated engine startup loops.
 
 2) Run a mixed sweep and confirm only fit-capable buckets launch engine sessions.
+
+
+## Follow-ups (operations)
+
+### Task 16: Add Run Artifact Retention Policy
+
+- Goal: prevent long-running servers from filling disk with exports and logs.
+- v0.1.0 policy:
+  - Document that retention/cleanup is operator-managed (no automatic deletion).
+- Follow-up implementation:
+  - Add optional server-side retention (TTL and/or max-bytes) with a safe, observable cleanup routine.
+  - Provide a dry-run mode and structured logs for deletions.
+
+#### Manual Testing
+
+1) Simulate many runs and confirm the retention routine deletes only eligible artifacts and never escapes the artifact root.
 
 
 ## Already implemented (validated)

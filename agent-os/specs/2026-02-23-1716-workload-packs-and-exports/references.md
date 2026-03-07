@@ -9,7 +9,11 @@
 
 - Applied standards (embedded for offline review): `agent-os/specs/2026-02-23-1716-workload-packs-and-exports/standards.md`
 - API conventions: `agent-os/standards/server/api-conventions.md`
+- Server log line format: `agent-os/standards/server/log-line-format.md`
 - Run result schema: `agent-os/standards/runs/result-schema.md`
+- Run artifact store standard: `agent-os/standards/runs/artifact-store.md`
+- TTL cache + in-flight dedupe: `agent-os/standards/global/ttl-cache-and-inflight-dedupe.md`
+- Time-based testing helpers: `agent-os/standards/global/time-based-testing.md`
 - Run artifact persistence: `agent-os/specs/2026-02-23-1715-server-plugin-llama-cpp-foundation/plan.md`
 - v0.1.0 sweep orchestration dependency: `agent-os/specs/2026-02-23-1717-sweep-engine-run-orchestration/plan.md`
 - SSH mixed-GPU validation context (v0.0.1): `agent-os/specs/2026-03-03-1200-tuning-workload-mvp/plan.md`
