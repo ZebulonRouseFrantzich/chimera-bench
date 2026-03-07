@@ -6,15 +6,14 @@ Use a tag-driven, binary-first release pipeline where GitHub Releases are the so
 
 - Keep `main` releasable (trunk-based flow with short-lived feature branches).
 - Cut releases from tags on `main`, not from long-lived release branches.
-- Release tags use `vX.Y.Z` format and trigger `.github/workflows/release.yml`.
+- Release tags are stable-only: `vX.Y.Z` (no prerelease) and trigger `.github/workflows/release.yml`.
 
 ## Version alignment
 
 - Application release version source of truth is root `package.json#version`.
 - Keep git tag version aligned with root `package.json#version`.
 - The release workflow must fail when tag and `package.json` versions do not match.
-- Keep `npm/chimera-bench/package.json#version` aligned to the release tag in CI
-  (the release workflow syncs shim version before publish).
+- CI publishes npm packages at the tag version (shim + platform packages) by rewriting versions in `dist/npm-staging/*`.
 - API contract version source of truth is `SERVER_API_VERSION` in
   `src/server/version-metadata.ts`, which follows semver independently from app
   release cadence.
@@ -41,8 +40,11 @@ Publish these exact file names to each GitHub Release:
 
 Rules:
 
-- Keep asset names stable across versions for downstream packaging compatibility.
+- Keep asset names stable across versions (no version suffix). Installers + npm packaging hardcode these names.
+- Keep `chimera-bench-linux-x64-baseline` as the x64 Linux release target to maximize glibc compatibility.
 - `chimera-bench-sha256sums.txt` must include all published binary artifacts.
+- musl builds are not published yet.
+- Add new platforms (for example Windows/musl) by adding new assets + checksum lines; do not rename or repurpose existing assets.
 - Build artifacts with `scripts/build-release-artifacts.ts` to keep target and naming policy centralized.
 
 ## Integrity and trust model
@@ -60,9 +62,11 @@ Rules:
 ## Distribution channels
 
 - GitHub Releases: primary distribution source.
-- curl installer (`install`): download binary + checksum from release, validate checksum, install to user bin directory.
+- curl installer (`install`): download asset + `chimera-bench-sha256sums.txt`, verify sha256 (no skip), install to user bin directory.
+  - Custom release repos are blocked by default; require explicit unsafe opt-in (`CHIMERA_BENCH_ALLOW_CUSTOM_REPO=1`).
+  - Keep installer interface stable: `--version`, `--no-modify-path`, and env overrides (`CHIMERA_BENCH_INSTALL_DIR`, `CHIMERA_BENCH_VERSION`, `CHIMERA_BENCH_RELEASE_REPO`).
 - npm package (`npm/chimera-bench`): wrapper resolves a platform binary from
-  optional dependency packages.
+  optional dependency packages (no `postinstall` binary downloads).
   - required optional dependency packages:
     - `chimera-bench-darwin-arm64`
     - `chimera-bench-darwin-x64`
@@ -78,6 +82,7 @@ Rules:
   - npm package README and LICENSE source of truth are repo-root `README.md` and
     `LICENSE`, synced via `npm/chimera-bench/scripts/sync-root-publish-files.js`
     during `prepack`/publish.
+  - Publish via npm trusted publishing (GitHub OIDC) + provenance (no long-lived npm token secrets).
 - Bun global install support is provided through the same npm package.
 
 ## Platform policy
@@ -88,18 +93,20 @@ Rules:
 
 ## Change management for release plumbing
 
-When changing release targets, artifact names, or download URLs, update all dependent components together:
+- Treat workflow + build + installers + docs as an atomic change set to avoid cross-channel breakage.
+- When changing release targets, artifact names, or download URLs, update all dependent components together:
 
-- `.github/workflows/release.yml`
-- `scripts/build-release-artifacts.ts`
-- `install`
-- `npm/chimera-bench/bin/chimera-bench.js`
-- `npm/chimera-bench/scripts/prepare-platform-packages.js`
-- `npm/chimera-bench/scripts/sync-root-publish-files.js`
-- `npm/platform-packages.json`
-- user-facing install docs (`README.md`)
+  - `.github/workflows/release.yml`
+  - `scripts/build-release-artifacts.ts`
+  - `install`
+  - `npm/chimera-bench/bin/chimera-bench.js`
+  - `npm/chimera-bench/scripts/prepare-platform-packages.js`
+  - `npm/chimera-bench/scripts/sync-root-publish-files.js`
+  - `npm/platform-packages.json`
+  - user-facing install docs (`README.md`)
 
-Do not ship partial pipeline updates that break installer or npm channel compatibility.
+- When touching release plumbing, run `bun run release:build` locally and verify `dist/release/` contains the full artifact contract + `chimera-bench-sha256sums.txt`.
+- Do not ship partial pipeline updates that break installer or npm channel compatibility.
 
 ## CI workflow supply chain hardening
 
