@@ -29,7 +29,6 @@ import {
   DEFAULT_CASE_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
 } from "../../runs/defaults.ts";
-import type { ModelDigestService } from "../../runs/model-digest-service.ts";
 import {
   computeMaxSweepAdditionalServerArgs,
   validateAndPlanSweepConfig,
@@ -55,9 +54,7 @@ import {
 } from "../../logging.ts";
 import type { RuntimeControl } from "../../runtime-control.ts";
 import { registerRunSupplementalRoutes } from "./supplemental.ts";
-import { buildEngineRunConfig } from "./run-config.ts";
 import { buildValidationFailurePayload } from "./shared.ts";
-import { prepareRunWorkloadAndProvenance } from "./workload-preparation.ts";
 
 const RUN_CREATE_BODY_LIMIT_BYTES = 64 * 1024;
 
@@ -68,7 +65,6 @@ interface RegisterRunRoutesOptions {
   runArtifacts: RunArtifactStore;
   targetProfiles: TargetProfileStore;
   workloads: WorkloadRegistry;
-  modelDigests: ModelDigestService;
   engines: EngineCatalog;
   logger?: ServerLogger;
 }
@@ -269,23 +265,7 @@ export function registerRunRoutes(
     request.engine.requestParams = validationResult.normalized.requestParams;
     request.model.identifier = validationResult.normalized.modelIdentifier;
 
-    const preparation = await prepareRunWorkloadAndProvenance({
-      context,
-      requestId,
-      logger,
-      workload: selectedWorkload,
-      workloadId: request.workloadId,
-      target: request.target.type,
-      modelIdentifier: request.model.identifier,
-      modelDigests: options.modelDigests,
-    });
-    if (preparation instanceof Response) {
-      return preparation;
-    }
-
-    const preparedWorkload = preparation.workload;
-    const workloadPack = preparation.workloadPack;
-    const modelInfo = preparation.modelInfo;
+    const workload = selectedWorkload;
 
     if (request.sweep) {
       const baseServerArgsCount = request.engine.serverArgs.length;
@@ -313,7 +293,7 @@ export function registerRunRoutes(
 
     let sweepCases: ExpandedSweepCase[] | undefined;
     if (request.sweep) {
-      const workloadCase = preparedWorkload.cases[0];
+      const workloadCase = workload.cases[0];
       if (!workloadCase) {
         return jsonError(context, 400, {
           code: "VALIDATION_SWEEP_WORKLOAD_NOT_SUPPORTED",
@@ -379,8 +359,6 @@ export function registerRunRoutes(
         : {}),
       modelIdentifier: request.model.identifier,
       workloadId: request.workloadId,
-      workloadPack,
-      modelInfo,
       engineArgs: request.engine.serverArgs,
       ...(request.sweep && sweepCases
         ? {
@@ -395,7 +373,7 @@ export function registerRunRoutes(
             },
           }
         : {}),
-      totalCases: sweepCases?.length ?? preparedWorkload.cases.length,
+      totalCases: sweepCases?.length ?? workload.cases.length,
       caseTimeoutMs,
       runTimeoutMs,
     });
@@ -420,16 +398,33 @@ export function registerRunRoutes(
       `[chimera-bench] requestId=${requestId} runId=${runId} event=run.created engineId=${sanitizeControlCharacters(request.engineId)} workloadId=${sanitizeControlCharacters(request.workloadId)}`,
     );
 
-    const runConfig = buildEngineRunConfig({
-      request,
-      caseTimeoutMs,
-      runTimeoutMs,
-    });
+    const runConfig = {
+      engineId: request.engineId,
+      target: request.target,
+      model: request.model,
+      workloadId: request.workloadId,
+      validationMode: request.validationMode,
+      engine: {
+        serverArgs: [...request.engine.serverArgs],
+        requestParams: {
+          ...request.engine.requestParams,
+        },
+      },
+      ...(request.sweep
+        ? {
+            sweep: request.sweep,
+          }
+        : {}),
+      timeouts: {
+        caseMs: caseTimeoutMs,
+        runMs: runTimeoutMs,
+      },
+    };
 
     runOrchestrator.start({
       runId,
       runConfig,
-      workload: preparedWorkload,
+      workload,
       ...(sweepCases
         ? {
             sweepCases,

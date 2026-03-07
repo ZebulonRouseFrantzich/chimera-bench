@@ -62,16 +62,6 @@ export function buildRunResult(run: RunRecord): StoredRunResult {
     model: {
       identifier: run.modelIdentifier,
     },
-    ...(run.modelInfo
-      ? {
-          modelInfo: cloneModelInfo(run.modelInfo),
-        }
-      : {}),
-    ...(run.workloadPack
-      ? {
-          workloadPack: cloneWorkloadPack(run.workloadPack),
-        }
-      : {}),
     status: run.status,
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
@@ -220,41 +210,4 @@ function cloneRequestParams(value: Record<string, unknown>): Record<string, unkn
       ...value,
     };
   }
-}
-
-function cloneWorkloadPack(
-  workloadPack: NonNullable<RunRecord["workloadPack"]>,
-): NonNullable<RunRecord["workloadPack"]> {
-  return {
-    schemaVersion: workloadPack.schemaVersion,
-    version: workloadPack.version,
-    source: workloadPack.source,
-    digestSha256: workloadPack.digestSha256,
-    contextDigests: workloadPack.contextDigests.map((digest) => ({
-      path: digest.path,
-      sha256: digest.sha256,
-      bytes: digest.bytes,
-      truncated: digest.truncated,
-    })),
-  };
-}
-
-function cloneModelInfo(
-  modelInfo: NonNullable<RunRecord["modelInfo"]>,
-): NonNullable<RunRecord["modelInfo"]> {
-  return {
-    ...(typeof modelInfo.resolvedPath === "string"
-      ? {
-          resolvedPath: modelInfo.resolvedPath,
-        }
-      : {}),
-    bytes: modelInfo.bytes,
-    mtimeMs: modelInfo.mtimeMs,
-    digestSha256: modelInfo.digestSha256,
-    ...(typeof modelInfo.unavailableReason === "string"
-      ? {
-          unavailableReason: modelInfo.unavailableReason,
-        }
-      : {}),
-  };
 }

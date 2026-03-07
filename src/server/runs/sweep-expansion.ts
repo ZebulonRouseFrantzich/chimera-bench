@@ -9,7 +9,6 @@ import {
   MAX_SWEEP_CASES,
   type NormalizedSweepConfig,
 } from "../api/schemas.ts";
-import type { WorkloadMessage } from "./starter-workload.ts";
 
 type CanonicalJsonValue =
   | null
@@ -38,7 +37,6 @@ export class SweepCaseCanonicalizationError extends Error {
 export interface SweepExpansionWorkloadCase {
   promptId: string;
   prompt: string;
-  messages: readonly WorkloadMessage[];
 }
 
 export interface ExpandedSweepCase {
@@ -48,10 +46,6 @@ export interface ExpandedSweepCase {
   repetitionIndex: number;
   promptId: string;
   prompt: string;
-  messages: Array<{
-    role: "system" | "user" | "assistant";
-    content: string;
-  }>;
   engineArgs: string[];
   requestParams: Record<string, unknown>;
 }
@@ -158,10 +152,6 @@ export function expandSweepCases(input: {
         repetitionIndex,
         promptId: input.workloadCase.promptId,
         prompt: input.workloadCase.prompt,
-        messages: input.workloadCase.messages.map((message) => ({
-          role: message.role,
-          content: message.content,
-        })),
         engineArgs: [...engineArgs],
         requestParams: cloneJsonRecord(requestParams),
       });

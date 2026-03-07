@@ -4,8 +4,6 @@ import {
   RunStatusSchema,
   RunSummaryDataSchema,
 } from "../../api/schemas.ts";
-import type { WorkloadPackProvenance } from "../../workloads/context-ingestion.ts";
-import type { ModelInfoProvenance } from "../model-digest-service.ts";
 
 export const DEFAULT_MAX_TRACKED_RUNS = 1000;
 export const DEFAULT_TERMINAL_RUN_RETENTION_MS = 6 * 60 * 60 * 1000;
@@ -108,8 +106,6 @@ export interface RunRecord {
   targetProfileId: string | null;
   modelIdentifier: string;
   workloadId: string;
-  workloadPack: WorkloadPackProvenance | null;
-  modelInfo: ModelInfoProvenance | null;
   engineArgs: string[];
   sweep: StoredSweepConfig | null;
   status: RunStatus;
@@ -134,8 +130,6 @@ export interface CreateQueuedRunInput {
   targetProfileId?: string;
   modelIdentifier: string;
   workloadId: string;
-  workloadPack?: WorkloadPackProvenance;
-  modelInfo?: ModelInfoProvenance;
   engineArgs?: string[];
   sweep?: StoredSweepConfig;
   totalCases?: number;

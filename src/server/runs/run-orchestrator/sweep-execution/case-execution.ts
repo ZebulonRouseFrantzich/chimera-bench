@@ -242,10 +242,12 @@ export async function executeSweepCase(input: {
           promptId: input.sweepCase.promptId,
           index: input.caseIndex,
           prompt: input.sweepCase.prompt,
-          messages: input.sweepCase.messages.map((message) => ({
-            role: message.role,
-            content: message.content,
-          })),
+          messages: [
+            {
+              role: "user",
+              content: input.sweepCase.prompt,
+            },
+          ],
           requestParams: {
             ...caseRequestParams,
           },

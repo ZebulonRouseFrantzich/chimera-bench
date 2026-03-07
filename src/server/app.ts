@@ -23,7 +23,6 @@ import {
   RunArtifactStore,
 } from "./runs/run-artifact-store.ts";
 import { InMemoryRunStore } from "./runs/in-memory-run-store/index.ts";
-import { ModelDigestService } from "./runs/model-digest-service.ts";
 import { TargetProfileStore } from "./targets/target-profile-store.ts";
 import { WorkloadRegistry } from "./workloads/registry.ts";
 import type { RuntimeControl } from "./runtime-control.ts";
@@ -38,7 +37,6 @@ interface AppOptions {
   logger?: ServerLogger;
   modelRoots?: string[];
   workloadRoots?: string[];
-  modelDigestCacheMaxEntries?: number;
   engines?: EngineCatalog;
   engineEnvironmentValidation?: EngineEnvironmentValidationSettings;
   runArtifactsRootDir?: string;
@@ -56,14 +54,6 @@ export function createApp(options: AppOptions): Hono {
   const runArtifacts = new RunArtifactStore(
     options.runArtifactsRootDir ?? DEFAULT_RUN_ARTIFACTS_ROOT_DIR,
   );
-  const modelDigests = new ModelDigestService({
-    logger,
-    ...(typeof options.modelDigestCacheMaxEntries === "number"
-      ? {
-          maxEntries: options.modelDigestCacheMaxEntries,
-        }
-      : {}),
-  });
   const workloads = new WorkloadRegistry({
     workloadRoots: options.workloadRoots ?? [],
     logger,
@@ -132,7 +122,6 @@ export function createApp(options: AppOptions): Hono {
     runArtifacts,
     targetProfiles,
     workloads,
-    modelDigests,
     engines,
     logger,
   });

@@ -17,7 +17,6 @@ export async function startServer(config: ServeConfig): Promise<ServerHandle> {
     corsAllowlist: config.corsAllowlist,
     modelRoots: config.modelRoots,
     workloadRoots: config.workloadRoots,
-    modelDigestCacheMaxEntries: config.modelDigestCacheMaxEntries,
     devMode: config.devMode,
     runtime,
   });

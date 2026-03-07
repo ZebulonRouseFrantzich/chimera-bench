@@ -141,8 +141,6 @@ export class InMemoryRunStore {
         input.target === "ssh" && input.targetProfileId ? input.targetProfileId : null,
       modelIdentifier: input.modelIdentifier,
       workloadId: input.workloadId,
-      workloadPack: input.workloadPack ?? null,
-      modelInfo: input.modelInfo ?? null,
       engineArgs: [...(input.engineArgs ?? [])],
       sweep: input.sweep ? cloneStoredSweepConfig(input.sweep) : null,
       status: "queued",

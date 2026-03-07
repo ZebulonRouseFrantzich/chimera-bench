@@ -21,7 +21,6 @@ export interface ServeConfig {
   mdnsDomain: string;
   modelRoots: string[];
   workloadRoots: string[];
-  modelDigestCacheMaxEntries: number;
   auth: BasicAuthSettings;
   startupWarnings: string[];
   version: string;

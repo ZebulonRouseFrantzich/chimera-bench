@@ -6,7 +6,6 @@
  * configuration consumed by server startup.
  */
 import { delimiter } from "node:path";
-import { DEFAULT_MODEL_DIGEST_CACHE_MAX_ENTRIES } from "./runs/model-digest-service.ts";
 import { isLoopbackHost } from "./network.ts";
 import type { ServeCliFlags, ServeConfig } from "./types.ts";
 
@@ -94,9 +93,6 @@ export async function resolveServeConfig(
 
   const modelRoots = parseModelRoots(env.CHIMERA_MODEL_ROOTS);
   const workloadRoots = parseWorkloadRoots(env.CHIMERA_WORKLOAD_ROOTS);
-  const modelDigestCacheMaxEntries = parseModelDigestCacheMaxEntries(
-    env.CHIMERA_MODEL_DIGEST_CACHE_MAX_ENTRIES,
-  );
   if (nonLoopback && modelRoots.length === 0) {
     throw new ServeConfigurationError(
       "Refusing non-loopback bind without CHIMERA_MODEL_ROOTS. Set CHIMERA_MODEL_ROOTS to a path-delimited list of model root directories.",
@@ -111,7 +107,6 @@ export async function resolveServeConfig(
     mdnsDomain: sanitizeMdnsDomain(flags.mdnsDomain),
     modelRoots,
     workloadRoots,
-    modelDigestCacheMaxEntries,
     auth: password
       ? {
           enabled: true,
@@ -128,26 +123,6 @@ export async function resolveServeConfig(
     version: appVersion,
     devMode,
   };
-}
-
-function parseModelDigestCacheMaxEntries(rawValue: string | undefined): number {
-  if (!rawValue) {
-    return DEFAULT_MODEL_DIGEST_CACHE_MAX_ENTRIES;
-  }
-
-  const normalized = rawValue.trim();
-  if (normalized.length === 0) {
-    return DEFAULT_MODEL_DIGEST_CACHE_MAX_ENTRIES;
-  }
-
-  const parsed = Number.parseInt(normalized, 10);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new ServeConfigurationError(
-      "CHIMERA_MODEL_DIGEST_CACHE_MAX_ENTRIES must be a non-negative integer.",
-    );
-  }
-
-  return parsed;
 }
 
 function parseModelRoots(rawModelRoots: string | undefined): string[] {

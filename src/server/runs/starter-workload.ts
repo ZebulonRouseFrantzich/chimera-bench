@@ -6,7 +6,6 @@
  * converted into runtime-ready case payloads with deterministic prompt text.
  */
 import { Buffer } from "node:buffer";
-import { stableJsonStringify } from "../workloads/canonical-json.ts";
 
 export type WorkloadMessageRole = "system" | "user" | "assistant";
 
@@ -46,7 +45,6 @@ export interface StarterWorkload {
   displayName: string;
   version: string;
   source: "built-in" | "filesystem";
-  canonicalPackJson: string;
   cases: readonly StarterWorkloadCase[];
   packRootDir?: string | undefined;
 }
@@ -396,7 +394,6 @@ export function convertPackToStarterWorkload(
     displayName: pack.displayName,
     version: pack.version,
     source,
-    canonicalPackJson: stableJsonStringify(pack),
     cases: pack.prompts.map((prompt) => {
       return {
         caseId: prompt.caseId,
@@ -423,7 +420,7 @@ export function getBuiltInWorkload(workloadId: string): StarterWorkload | null {
   return BUILT_IN_WORKLOADS.get(workloadId) ?? null;
 }
 
-export function buildPromptText(messages: readonly WorkloadMessage[]): string {
+function buildPromptText(messages: readonly WorkloadMessage[]): string {
   if (messages.length === 1 && messages[0]?.role === "user") {
     return messages[0].content;
   }
